@@ -5,16 +5,18 @@ import type { ChatHistoryItem } from '@proj-airi/stage-ui/types/chat'
 import { errorMessageFrom } from '@moeru/std'
 import { ChatHistory, JournalPreviewModal } from '@proj-airi/stage-ui/components'
 import { useBackgroundStore } from '@proj-airi/stage-ui/stores/background'
+import { useCharacterStore } from '@proj-airi/stage-ui/stores/character'
 import { useChatOrchestratorStore } from '@proj-airi/stage-ui/stores/chat'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
 import { useChatStreamStore } from '@proj-airi/stage-ui/stores/chat/stream-store'
 import { useJournalPreviewStore } from '@proj-airi/stage-ui/stores/journal-preview'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
+import { estimateMessageArrayTokens, formatTokenCount } from '@proj-airi/stage-ui/utils'
 import { BasicTextarea } from '@proj-airi/ui'
 import { useLocalStorage } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from 'reka-ui'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
@@ -34,10 +36,60 @@ const chatSyncStore = useChatSyncStore()
 const backgroundStore = useBackgroundStore()
 const journalPreviewStore = useJournalPreviewStore()
 const airiCardStore = useAiriCardStore()
+const characterStore = useCharacterStore()
 
 const { messages } = storeToRefs(chatSession)
 const { streamingMessage } = storeToRefs(chatStream)
 const { sending } = storeToRefs(chatOrchestrator)
+const { systemPrompt } = storeToRefs(characterStore)
+
+/**
+ * Assembles the full context that would be sent to the model right now:
+ * system prompt + message history (including tool messages) +
+ * current streaming output + current user input.
+ *
+ * JSON-stringifies the array and counts tokens so that JSON structure,
+ * role keys, tool_calls, and tool_call_id all contribute to the total.
+ */
+const allContextTokens = computed(() => {
+  const context: unknown[] = []
+
+  if (systemPrompt.value) {
+    context.push({ role: 'system', content: systemPrompt.value })
+  }
+
+  for (const msg of messages.value) {
+    const raw = toRaw(msg) as unknown as Record<string, unknown>
+    // Keep only the fields actually sent to the API.
+    const clean: Record<string, unknown> = { role: raw.role }
+    if ('content' in raw)
+      clean.content = raw.content
+    if ('name' in raw)
+      clean.name = raw.name
+    if ('tool_call_id' in raw)
+      clean.tool_call_id = raw.tool_call_id
+    if ('tool_calls' in raw)
+      clean.tool_calls = raw.tool_calls
+    context.push(clean)
+  }
+
+  const rawStreaming = toRaw(streamingMessage.value)
+  if (rawStreaming.content || rawStreaming.tool_calls?.length) {
+    context.push({
+      role: 'assistant',
+      content: rawStreaming.content,
+      ...(rawStreaming.tool_calls?.length ? { tool_calls: rawStreaming.tool_calls } : {}),
+    })
+  }
+
+  if (messageInput.value) {
+    context.push({ role: 'user', content: messageInput.value })
+  }
+
+  return estimateMessageArrayTokens(context)
+})
+
+const displayContextTotal = allContextTokens
 const { activeCardId } = storeToRefs(airiCardStore)
 const { t } = useI18n()
 const { openImagePreview } = journalPreviewStore
@@ -372,22 +424,27 @@ async function handleRetryMessage(index: number) {
         @change="handleFileSelect"
       >
     </div>
-    <BasicTextarea
-      v-model="messageInput"
-      :submit-on-enter="false"
-      :placeholder="t('stage.message')"
-      class="ph-no-capture [scrollbar-gutter:stable]"
-      text="primary-600 dark:primary-100  placeholder:primary-500 dark:placeholder:primary-200"
-      border="solid 2 primary-200/20 dark:primary-400/20"
-      bg="primary-100/50 dark:primary-900/70"
-      max-h="[10lh]" min-h="[1lh]"
-      w-full shrink-0 resize-none overflow-y-auto rounded-xl p-2 font-medium outline-none
-      transition="all duration-250 ease-in-out placeholder:all placeholder:duration-250 placeholder:ease-in-out"
-      @compositionstart="isComposing = true"
-      @compositionend="isComposing = false"
-      @keydown="handleMessageInputKeydown"
-      @paste-file="handleFilePaste"
-    />
+    <div class="relative w-full">
+      <BasicTextarea
+        v-model="messageInput"
+        :submit-on-enter="false"
+        :placeholder="t('stage.message')"
+        class="ph-no-capture [scrollbar-gutter:stable] pb-5"
+        text="primary-600 dark:primary-100  placeholder:primary-500 dark:placeholder:primary-200"
+        border="solid 2 primary-200/20 dark:primary-400/20"
+        bg="primary-100/50 dark:primary-900/70"
+        max-h="[10lh]" min-h="[1lh]"
+        w-full shrink-0 resize-none overflow-y-auto rounded-xl p-2 font-medium outline-none
+        transition="all duration-250 ease-in-out placeholder:all placeholder:duration-250 placeholder:ease-in-out"
+        @compositionstart="isComposing = true"
+        @compositionend="isComposing = false"
+        @keydown="handleMessageInputKeydown"
+        @paste-file="handleFilePaste"
+      />
+      <div class="absolute bottom-1 left-2 z-10 rounded bg-white/80 px-1.5 py-0.5 text-[10px] text-neutral-500 font-medium shadow-sm dark:bg-black/50 dark:text-neutral-400">
+        <span>context: {{ formatTokenCount(displayContextTotal) }}</span>
+      </div>
+    </div>
 
     <!-- Shared Preview Modal -->
     <JournalPreviewModal />

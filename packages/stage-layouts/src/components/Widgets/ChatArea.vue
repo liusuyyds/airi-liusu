@@ -7,10 +7,12 @@ import { useAudioAnalyzer } from '@proj-airi/stage-ui/composables'
 import { useAudioContext } from '@proj-airi/stage-ui/stores/audio'
 import { useChatOrchestratorStore } from '@proj-airi/stage-ui/stores/chat'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
+import { useChatStreamStore } from '@proj-airi/stage-ui/stores/chat/stream-store'
 import { useConsciousnessStore } from '@proj-airi/stage-ui/stores/modules/consciousness'
 import { useHearingSpeechInputPipeline, useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
 import { useProvidersStore } from '@proj-airi/stage-ui/stores/providers'
 import { useSettings, useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings'
+import { estimateTokens, formatTokenCount } from '@proj-airi/stage-ui/utils'
 import { BasicTextarea, FieldCombobox } from '@proj-airi/ui'
 import { until, useLocalStorage } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
@@ -39,7 +41,11 @@ const { askPermission, startStream } = useSettingsAudioDevice()
 const { enabled, selectedAudioInput, stream, audioInputs } = storeToRefs(useSettingsAudioDevice())
 const chatOrchestrator = useChatOrchestratorStore()
 const chatSession = useChatSessionStore()
+const chatStream = useChatStreamStore()
+const { contextTokenCount } = storeToRefs(chatStream)
 const { ingest, onAfterMessageComposed } = chatOrchestrator
+
+const inputTokenCount = computed(() => estimateTokens(messageInput.value))
 const { messages } = storeToRefs(chatSession)
 const { audioContext } = useAudioContext()
 const { t } = useI18n()
@@ -478,6 +484,12 @@ watch(sendMode, () => {
         @compositionstart="isComposing = true"
         @compositionend="isComposing = false"
       />
+      <div v-if="messageInput.length > 0" class="absolute bottom-2 left-4 text-[10px] text-neutral-400 dark:text-neutral-500">
+        <span>{{ formatTokenCount(inputTokenCount) }} tokens</span>
+      </div>
+      <div v-else-if="contextTokenCount > 0" class="absolute bottom-2 left-4 text-[10px] text-neutral-400 dark:text-neutral-500">
+        <span>{{ formatTokenCount(contextTokenCount) }} tokens</span>
+      </div>
 
       <!-- Bottom-left action button: Microphone -->
       <div

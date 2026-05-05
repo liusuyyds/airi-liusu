@@ -1,6 +1,6 @@
 import type { WebSocketEventOf } from '@proj-airi/server-sdk'
 import type { ChatProvider, ChatProviderWithExtraOptions, EmbedProvider, EmbedProviderWithExtraOptions, SpeechProvider, SpeechProviderWithExtraOptions, TranscriptionProvider, TranscriptionProviderWithExtraOptions } from '@xsai-ext/providers/utils'
-import type { Message, Tool, ToolChoice } from '@xsai/shared-chat'
+import type { Message, Tool, ToolChoice, Usage } from '@xsai/shared-chat'
 
 import type { StreamEvent } from '../../types/llm'
 import type { SparkNotifyCommandDraft } from './tools'
@@ -213,7 +213,7 @@ export interface SparkNotifyAgentDeps extends SparkNotifyTracingHooks {
       toolChoice?: ToolChoice
       onStreamEvent?: (event: StreamEvent) => void | Promise<void>
     },
-  ) => Promise<void>
+  ) => Promise<Usage | undefined>
   /** Returns the currently selected provider name, if any. */
   getActiveProvider: () => string | undefined
   /** Returns the currently selected model name, if any. */

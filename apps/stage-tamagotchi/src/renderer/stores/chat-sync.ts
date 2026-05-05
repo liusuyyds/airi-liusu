@@ -35,6 +35,8 @@ interface SessionSnapshotPayload {
 interface StreamSnapshotPayload {
   sending: boolean
   streamingMessage: StreamingAssistantMessage
+  contextTokenCount: number
+  completionTokenCount: number
 }
 
 interface IngestCommandPayload {
@@ -170,7 +172,7 @@ export const useChatSyncStore = defineStore('stage-tamagotchi:chat-sync', () => 
   const consciousnessStore = useConsciousnessStore()
   const { activeProvider, activeModel } = storeToRefs(consciousnessStore)
   const { activeSessionId, sessionMessages, sessionMetas } = storeToRefs(chatSession)
-  const { streamingMessage } = storeToRefs(chatStream)
+  const { streamingMessage, contextTokenCount, completionTokenCount } = storeToRefs(chatStream)
   const { sending } = storeToRefs(chatOrchestrator)
 
   const pendingRequests = new Map<string, PendingRequest>()
@@ -179,7 +181,12 @@ export const useChatSyncStore = defineStore('stage-tamagotchi:chat-sync', () => 
   let channel: BroadcastChannel | null = null
 
   function post(message: ChatSyncMessage) {
-    channel?.postMessage(message)
+    try {
+      channel?.postMessage(message)
+    }
+    catch (err) {
+      console.error('[chat-sync] BroadcastChannel postMessage failed:', err)
+    }
   }
 
   function buildSessionSnapshot(): SessionSnapshotPayload {
@@ -187,9 +194,18 @@ export const useChatSyncStore = defineStore('stage-tamagotchi:chat-sync', () => 
   }
 
   function buildStreamSnapshot(): StreamSnapshotPayload {
+    let clonedStreamingMessage: StreamingAssistantMessage
+    try {
+      clonedStreamingMessage = JSON.parse(JSON.stringify(streamingMessage.value)) as StreamingAssistantMessage
+    }
+    catch {
+      clonedStreamingMessage = { role: 'assistant', content: '', slices: [], tool_results: [], tool_calls: [], createdAt: Date.now() }
+    }
     return {
       sending: sending.value,
-      streamingMessage: JSON.parse(JSON.stringify(streamingMessage.value)) as StreamingAssistantMessage,
+      streamingMessage: clonedStreamingMessage,
+      contextTokenCount: contextTokenCount.value,
+      completionTokenCount: completionTokenCount.value,
     }
   }
 
@@ -245,7 +261,7 @@ export const useChatSyncStore = defineStore('stage-tamagotchi:chat-sync', () => 
       watch([activeSessionId, sessionMessages, sessionMetas], () => {
         broadcastSessionSnapshot()
       }, { deep: true, immediate: true }),
-      watch([sending, streamingMessage], () => {
+      watch([sending, streamingMessage, contextTokenCount], () => {
         broadcastStreamSnapshot()
       }, { deep: true, immediate: true }),
     )
@@ -274,6 +290,8 @@ export const useChatSyncStore = defineStore('stage-tamagotchi:chat-sync', () => 
   function applyStreamSnapshot(snapshot: StreamSnapshotPayload) {
     chatOrchestrator.sending = snapshot.sending
     chatStream.streamingMessage = snapshot.streamingMessage
+    chatStream.contextTokenCount = snapshot.contextTokenCount
+    chatStream.completionTokenCount = snapshot.completionTokenCount
   }
 
   function resolveTools(toolset?: ToolsetId) {

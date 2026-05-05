@@ -1,17 +1,27 @@
 import type { StreamOptions } from '@proj-airi/core-agent'
 import type { WebSocketEvents } from '@proj-airi/server-sdk'
 import type { ChatProvider } from '@xsai-ext/providers/utils'
-import type { Message, Tool } from '@xsai/shared-chat'
+import type { Message, Tool, Usage } from '@xsai/shared-chat'
 
 import { streamFrom as coreStreamFrom, isContentArrayRelatedError, isToolRelatedError, modelKey } from '@proj-airi/core-agent'
 import { listModels } from '@xsai/model'
 import { uniqBy } from 'es-toolkit'
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, toRaw } from 'vue'
 
 import { createSparkCommandTool, debug, mcp } from '../tools'
 import { useLlmToolsStore } from './llm-tools'
 import { useModsServerChannelStore } from './mods/api/channel-server'
+
+/**
+ * Recursively strips Vue reactivity proxies from a value by round-tripping through
+ * JSON. toRaw() only unwraps the top-level proxy, leaving nested arrays/objects
+ * as reactive Proxies that break structuredClone() inside downstream libraries
+ * (e.g. @xsai/stream-text).
+ */
+function deepToRaw<T>(value: T): T {
+  return JSON.parse(JSON.stringify(toRaw(value)))
+}
 
 export type { StreamEvent, StreamOptions } from '@proj-airi/core-agent'
 export { isContentArrayRelatedError, isToolRelatedError } from '@proj-airi/core-agent'
@@ -33,7 +43,7 @@ export const useLLM = defineStore('llm', () => {
   const modsServerChannelStore = useModsServerChannelStore()
   const llmToolsStore = useLlmToolsStore()
 
-  async function stream(model: string, chatProvider: ChatProvider, messages: Message[], options?: StreamOptions) {
+  async function stream(model: string, chatProvider: ChatProvider, messages: Message[], options?: StreamOptions): Promise<Usage | undefined> {
     const key = modelKey(model, chatProvider)
     // TODO(@nekomeowww,@shinohara-rin): we should not register the command callback on every stream anyway...
     const sendSparkCommand = (command: WebSocketEvents['spark:command']) => {
@@ -66,10 +76,17 @@ export const useLLM = defineStore('llm', () => {
       ).toReversed()
     }
 
+    // NOTICE:
+    // Messages arrive from Pinia stores and may carry Vue reactive Proxy wrappers
+    // on nested arrays/objects (e.g. content parts). Downstream xsai functions
+    // (streamText) call structuredClone() on messages, which fails on Proxies.
+    // Deep-strip reactivity here at the Vue → library boundary.
+    const plainMessages = deepToRaw(messages)
+
     const runStream = () => coreStreamFrom({
       model,
       chatProvider,
-      messages,
+      messages: plainMessages,
       options: {
         ...options,
         toolsCompatibility: toolsCompatibility.value,
@@ -79,12 +96,14 @@ export const useLLM = defineStore('llm', () => {
     })
 
     try {
-      await runStream()
+      return await runStream()
     }
     catch (err) {
+      let shouldRetry = false
       if (isToolRelatedError(err)) {
         console.warn(`[llm] Auto-disabling tools for "${key}" due to tool-related error`)
         toolsCompatibility.value.set(key, false)
+        shouldRetry = true
       }
       // NOTICE:
       // Auto-degrade content-part arrays to plain strings on the next attempt
@@ -95,9 +114,10 @@ export const useLLM = defineStore('llm', () => {
       if (isContentArrayRelatedError(err) && contentArrayCompatibility.value.get(key) !== false) {
         console.warn(`[llm] Auto-disabling content-part arrays for "${key}" and retrying once`)
         contentArrayCompatibility.value.set(key, false)
-        await runStream()
-        return
+        shouldRetry = true
       }
+      if (shouldRetry)
+        return await runStream()
       throw err
     }
   }

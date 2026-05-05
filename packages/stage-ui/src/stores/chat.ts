@@ -15,6 +15,7 @@ import { useAnalytics } from '../composables'
 import { useLlmmarkerParser } from '../composables/llm-marker-parser'
 import { categorizeResponse, createStreamingCategorizer } from '../composables/response-categoriser'
 import { activeTurnSpan, startSpan } from '../composables/use-io-tracer'
+import { sanitizeToolContent } from '../utils'
 import { formatContextPromptText } from './chat/context-prompt'
 import { createMinecraftContext } from './chat/context-providers'
 import { useChatContextStore } from './chat/context-store'
@@ -118,7 +119,7 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
   const cardStore = useAiriCardStore()
   const contextObservability = useContextObservabilityStore()
   const { activeSessionId } = storeToRefs(chatSession)
-  const { streamingMessage } = storeToRefs(chatStream)
+  const { streamingMessage, contextTokenCount, completionTokenCount } = storeToRefs(chatStream)
 
   const sending = ref(false)
   const pendingQueuedSends = ref<QueuedSend[]>([])
@@ -206,7 +207,7 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
 
     const isForegroundSession = () => sessionId === activeSessionId.value
 
-    const buildingMessage: StreamingAssistantMessage = { role: 'assistant', content: '', slices: [], tool_results: [], createdAt: Date.now(), id: nanoid() }
+    const buildingMessage: StreamingAssistantMessage = { role: 'assistant', content: '', slices: [], tool_results: [], tool_calls: [], createdAt: Date.now(), id: nanoid() }
 
     const updateUI = () => {
       if (isForegroundSession()) {
@@ -325,6 +326,16 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
               return
             if (ctx.data.type === 'tool-call') {
               buildingMessage.slices.push(ctx.data)
+              const tc = ctx.data.toolCall
+              buildingMessage.tool_calls ??= []
+              buildingMessage.tool_calls.push({
+                id: tc.toolCallId,
+                type: 'function',
+                function: {
+                  name: tc.toolName,
+                  arguments: tc.args,
+                },
+              })
               updateUI()
               return
             }
@@ -358,7 +369,13 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
 
         if (rawMessage.role === 'assistant') {
           const { slices: _slices, tool_results: _toolResults, categorization: _categorization, ...rest } = rawMessage as ChatAssistantMessage
-          return prependTextToContent(toRaw(rest), formatTimePrefix(ts))
+          const cleaned = toRaw(rest)
+          // Some providers reject assistant messages with an empty tool_calls array.
+          // Strip it when no tool calls were actually made.
+          if (Array.isArray(cleaned.tool_calls) && cleaned.tool_calls.length === 0) {
+            delete (cleaned as Record<string, unknown>).tool_calls
+          }
+          return prependTextToContent(cleaned, formatTimePrefix(ts))
         }
 
         return rawMessage
@@ -438,7 +455,7 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       let llmFirstTokenEmitted = false
 
       try {
-        await llmStore.stream(options.model, options.chatProvider, newMessages as Message[], {
+        const usage = await llmStore.stream(options.model, options.chatProvider, newMessages as Message[], {
           headers,
           tools: options.tools,
           // NOTICE: xsai stream may emit `finish` before tool steps continue, so keep waiting until
@@ -509,6 +526,8 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
         })
 
         llmSpan.setAttribute(IOAttributes.LLMTextLength, fullText.length)
+        contextTokenCount.value = usage?.prompt_tokens ?? 0
+        completionTokenCount.value = usage?.completion_tokens ?? 0
       }
       finally {
         // TODO: Record errors on llmSpan
@@ -519,6 +538,16 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
 
       if (!isStaleGeneration() && buildingMessage.slices.length > 0) {
         chatSession.appendSessionMessage(sessionId, toRaw(buildingMessage))
+        // Append tool results after the assistant message so the next turn sees them
+        // in the correct order (assistant with tool_calls → tool results).
+        for (const tr of buildingMessage.tool_results) {
+          const rawContent = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result ?? '')
+          chatSession.appendSessionMessage(sessionId, {
+            role: 'tool',
+            tool_call_id: tr.id,
+            content: sanitizeToolContent(rawContent),
+          } as ToolMessage)
+        }
       }
 
       await hooks.emitStreamEndHooks(streamingMessageContext)
@@ -529,7 +558,14 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       await hooks.emitChatTurnCompleteHooks({
         output: { ...buildingMessage },
         outputText: fullText,
-        toolCalls: sessionMessagesForSend.filter(msg => msg.role === 'tool') as ToolMessage[],
+        toolCalls: buildingMessage.tool_results.map((tr) => {
+          const rawContent = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result ?? '')
+          return {
+            role: 'tool',
+            tool_call_id: tr.id,
+            content: sanitizeToolContent(rawContent),
+          } as ToolMessage
+        }),
       }, streamingMessageContext)
 
       // --- AUTONOMOUS ARTISTRY HOOK (ASSISTANT-CENTRIC) ---
@@ -540,7 +576,7 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       // ---------------------------------------------------
 
       if (isForegroundSession()) {
-        streamingMessage.value = { role: 'assistant', content: '', slices: [], tool_results: [] }
+        streamingMessage.value = { role: 'assistant', content: '', slices: [], tool_results: [], tool_calls: [] }
       }
     }
     catch (error) {

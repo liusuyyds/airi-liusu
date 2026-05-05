@@ -23,6 +23,7 @@ describe('setupAgentSparkNotifyHandler', () => {
           ],
         })
         await options.onStreamEvent?.({ type: 'finish' } as any)
+        return undefined
       },
       getActiveProvider: () => 'mock-provider',
       getActiveModel: () => 'mock-model',
@@ -59,6 +60,7 @@ describe('setupAgentSparkNotifyHandler', () => {
   it('routes forceSparkCommandResponse to the model call', async () => {
     const stream = vi.fn(async (_model, _provider, _messages, options) => {
       await options.onStreamEvent?.({ type: 'finish' } as any)
+      return undefined
     })
 
     const handler = setupAgentSparkNotifyHandler({
@@ -107,6 +109,7 @@ describe('setupAgentSparkNotifyHandler', () => {
       expect(String(messages[1]?.content)).toContain('"headline": "override update"')
       expect(String(messages[1]?.content)).toContain('Rendered board: white to move, fen=...')
       await options.onStreamEvent?.({ type: 'finish' } as any)
+      return undefined
     })
 
     const handler = setupAgentSparkNotifyHandler({

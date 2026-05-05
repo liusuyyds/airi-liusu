@@ -354,6 +354,7 @@ export const useMarkdownStressStore = defineStore('markdownStress', () => {
       finally {
         mockStreamCancel = undefined
       }
+      return undefined
     }
     runCleanups.push(() => {
       llm.stream = originalStream

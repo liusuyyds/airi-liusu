@@ -157,6 +157,7 @@ describe('store character-orchestrator', () => {
 
       await options?.onStreamEvent?.({ type: 'text-delta', text: 'Ahhh, got hit by zombie!' } satisfies StreamEvent)
       await options?.onStreamEvent?.({ type: 'finish' } satisfies StreamEvent)
+      return undefined
     })
 
     const mockOnSparkNotifyReactionStreamEvent = vi.fn()
@@ -203,6 +204,7 @@ describe('store character-orchestrator', () => {
     mockedStore(useLLM).stream.mockImplementation(async (_model: string, _provider: unknown, _messages: unknown, options: any) => {
       await options?.onStreamEvent?.({ type: 'text-delta', text: 'I choose d5 to pressure the center.' } satisfies StreamEvent)
       await options?.onStreamEvent?.({ type: 'finish' } satisfies StreamEvent)
+      return undefined
     })
 
     const onDelta = vi.fn()
@@ -254,6 +256,7 @@ describe('store character-orchestrator', () => {
       } satisfies z.infer<typeof sparkNotifyCommandSchema>)
       await options?.onStreamEvent?.({ type: 'text-delta', text: 'This should be ignored.' } satisfies StreamEvent)
       await options?.onStreamEvent?.({ type: 'finish' } satisfies StreamEvent)
+      return undefined
     })
 
     const onDelta = vi.fn()
@@ -297,6 +300,7 @@ describe('store character-orchestrator', () => {
     mockedStore(useLLM).stream.mockImplementation(async (_model: string, _provider: unknown, _messages: unknown, options: any) => {
       await options?.onStreamEvent?.({ type: 'text-delta', text: 'legacy-safe text' } satisfies StreamEvent)
       await options?.onStreamEvent?.({ type: 'finish' } satisfies StreamEvent)
+      return undefined
     })
 
     const store = useCharacterOrchestratorStore()

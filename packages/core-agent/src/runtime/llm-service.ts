@@ -1,5 +1,5 @@
 import type { ChatProvider } from '@xsai-ext/providers/utils'
-import type { Message, Tool } from '@xsai/shared-chat'
+import type { Message, Tool, Usage } from '@xsai/shared-chat'
 
 import type { StreamFromOptions, StreamOptions } from '../types/llm'
 
@@ -167,7 +167,7 @@ export async function streamFrom({
   messages,
   options,
   builtinToolsResolver,
-}: StreamFromOptions) {
+}: StreamFromOptions): Promise<Usage | undefined> {
   const chatConfig = chatProvider.chat(model)
   const supportsContentArray = streamOptionsContentArrayCompatibilityOk(model, chatProvider, options)
   const sanitized = sanitizeMessages(messages as unknown[], supportsContentArray)
@@ -184,13 +184,15 @@ export async function streamFrom({
     ? withCapturedToolErrors(tools, capturedToolErrorByCallId)
     : tools
 
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<Usage | undefined>((resolve, reject) => {
     let settled = false
+    let usage: Usage | undefined
+
     const resolveOnce = () => {
       if (settled)
         return
       settled = true
-      resolve()
+      resolve(usage)
     }
     const rejectOnce = (error: unknown) => {
       if (settled)
@@ -253,7 +255,7 @@ export async function streamFrom({
         console.error('Stream steps error:', error)
       })
       void streamResult.messages.catch(error => console.error('Stream messages error:', error))
-      void streamResult.usage.catch(error => console.error('Stream usage error:', error))
+      void streamResult.usage.then((u) => { usage = u }).catch(error => console.error('Stream usage error:', error))
       void streamResult.totalUsage.catch(error => console.error('Stream totalUsage error:', error))
     }
     catch (error) {

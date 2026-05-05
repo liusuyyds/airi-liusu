@@ -4,6 +4,8 @@ import { errorMessageFrom } from '@moeru/std'
 import { tool } from '@xsai/tool'
 import { z } from 'zod'
 
+import { sanitizeToolContent } from '../utils'
+
 /**
  * Describes an MCP tool that can be exposed to the shared LLM runtime.
  *
@@ -112,7 +114,28 @@ export function createMcpTools(runtime: McpToolRuntime): Array<Promise<Tool>> {
       execute: async ({ name, arguments: argsJson }) => {
         try {
           const args = argsJson ? JSON.parse(argsJson) : {}
-          return await runtime.callTool({ name, arguments: args })
+          const result = await runtime.callTool({ name, arguments: args })
+          // Sanitize verbose MCP tool outputs (e.g. Nocturne Memory read_memory)
+          // before they reach the LLM. Strips decorative separators, GLOSSARY
+          // blocks, and child-memory snippets while preserving core content.
+          if (result.content) {
+            result.content = result.content.map((part) => {
+              if (part && typeof part === 'object' && part.type === 'text' && typeof part.text === 'string') {
+                return { ...part, text: sanitizeToolContent(part.text) }
+              }
+              return part
+            })
+          }
+          // Also sanitize structuredContent when it carries a raw text result,
+          // so the LLM sees the compact form no matter which field the provider
+          // serializes from.
+          if (result.structuredContent && typeof result.structuredContent.result === 'string') {
+            result.structuredContent = {
+              ...result.structuredContent,
+              result: sanitizeToolContent(result.structuredContent.result),
+            }
+          }
+          return result
         }
         catch (error) {
           return {

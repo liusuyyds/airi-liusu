@@ -2,7 +2,7 @@
 import { Select } from '@proj-airi/ui'
 import { onClickOutside } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
-import { computed, nextTick, ref, toRaw, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { useAiriCardStore } from '../../stores/modules/airi-card'
@@ -125,7 +125,7 @@ function confirmCreate() {
   }
 
   const newId = cardStore.addCard({
-    ...structuredClone(toRaw(current)),
+    ...JSON.parse(JSON.stringify(current)),
     name,
   })
 
