@@ -16,6 +16,7 @@ export const useChatMaintenanceStore = defineStore('chat-maintenance', () => {
     chatContext.resetContexts()
     chatOrchestrator.cancelPendingSends(sessionId)
     chatStream.resetStream()
+    chatStream.resetTotalTokens()
   }
 
   return {

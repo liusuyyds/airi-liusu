@@ -15,7 +15,7 @@ import { useAnalytics } from '../composables'
 import { useLlmmarkerParser } from '../composables/llm-marker-parser'
 import { categorizeResponse, createStreamingCategorizer } from '../composables/response-categoriser'
 import { activeTurnSpan, startSpan } from '../composables/use-io-tracer'
-import { sanitizeToolContent } from '../utils'
+import { estimateMessagesTokens, estimateTokens, sanitizeToolContent } from '../utils'
 import { formatContextPromptText } from './chat/context-prompt'
 import { createMinecraftContext } from './chat/context-providers'
 import { useChatContextStore } from './chat/context-store'
@@ -545,8 +545,40 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
         })
 
         llmSpan.setAttribute(IOAttributes.LLMTextLength, fullText.length)
-        const promptTokens = usage?.prompt_tokens ?? 0
-        const completionTokens = usage?.completion_tokens ?? 0
+        // Guard against empty usage objects ({}) that some providers return instead
+        // of undefined. An empty object is truthy but has no usable token counts.
+        const hasValidUsage = usage
+          && typeof usage.prompt_tokens === 'number'
+          && typeof usage.completion_tokens === 'number'
+          && usage.prompt_tokens > 0
+
+        let promptTokens = hasValidUsage ? usage.prompt_tokens : 0
+        let completionTokens = hasValidUsage ? usage.completion_tokens : 0
+
+        // Some providers (e.g. GLM) don't report usage in stream mode.
+        // Fall back to client-side estimation so the lifetime counter still
+        // progresses and the user sees meaningful token metrics.
+        if (!hasValidUsage) {
+          console.warn('[chat] usage unavailable from provider, falling back to estimation')
+          try {
+            const estimatedPrompt = await estimateMessagesTokens(newMessages as any, { tools: options.tools })
+            // Completion includes both the spoken reply and the reasoning/thinking
+            // process that the model generated internally (e.g. GLM's <think> block).
+            const speechText = fullText
+            const reasoningText = buildingMessage.categorization?.reasoning ?? ''
+            const estimatedCompletion = estimateTokens(speechText) + estimateTokens(reasoningText)
+            promptTokens = estimatedPrompt
+            completionTokens = estimatedCompletion
+            console.log('[chat] estimated tokens — prompt:', estimatedPrompt, 'completion:', estimatedCompletion, 'reasoning:', estimateTokens(reasoningText))
+          }
+          catch (err) {
+            console.error('[chat] token estimation failed:', err)
+          }
+        }
+        else {
+          console.log('[chat] provider usage — prompt:', usage.prompt_tokens, 'completion:', usage.completion_tokens)
+        }
+
         contextTokenCount.value = promptTokens
         completionTokenCount.value = completionTokens
         chatStream.accumulateTokens(promptTokens, completionTokens)

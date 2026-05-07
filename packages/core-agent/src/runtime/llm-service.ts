@@ -187,12 +187,28 @@ export async function streamFrom({
   return new Promise<Usage | undefined>((resolve, reject) => {
     let settled = false
     let usage: Usage | undefined
+    let streamResultRef: Awaited<ReturnType<typeof streamText>> | undefined
 
     const resolveOnce = () => {
       if (settled)
         return
-      settled = true
-      resolve(usage)
+      // Wait for the usage promise to settle so callers get real token counts
+      // instead of undefined. Most providers return usage within a few ms of
+      // stream end, so a short timeout is enough.
+      if (!streamResultRef) {
+        settled = true
+        resolve(usage)
+        return
+      }
+      Promise.race([
+        streamResultRef.usage.then((u) => { usage = u }).catch(() => {}),
+        new Promise<void>(resolve => setTimeout(resolve, 500)),
+      ]).then(() => {
+        if (settled)
+          return
+        settled = true
+        resolve(usage)
+      })
     }
     const rejectOnce = (error: unknown) => {
       if (settled)
@@ -235,6 +251,7 @@ export async function streamFrom({
         tools: streamTools,
         onEvent,
       })
+      streamResultRef = streamResult
 
       // NOTICE: Consume underlying promises to prevent unhandled rejections from
       // @xsai/stream-text's SSE parser surfacing as faulted app state.

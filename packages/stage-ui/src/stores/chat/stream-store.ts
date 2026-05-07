@@ -53,6 +53,14 @@ export const useChatStreamStore = defineStore('chat-stream', () => {
     totalTokensConsumed.value += promptTokens + completionTokens
   }
 
+  /**
+   * Resets the lifetime token counter. Use when the user clears chat history
+   * to start a fresh accounting session.
+   */
+  function resetTotalTokens() {
+    totalTokensConsumed.value = 0
+  }
+
   return {
     streamingMessage,
     contextTokenCount,
@@ -63,5 +71,6 @@ export const useChatStreamStore = defineStore('chat-stream', () => {
     finalizeStream,
     resetStream,
     accumulateTokens,
+    resetTotalTokens,
   }
 })
