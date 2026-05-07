@@ -10,6 +10,7 @@ import { useChatOrchestratorStore } from '@proj-airi/stage-ui/stores/chat'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
 import { useChatStreamStore } from '@proj-airi/stage-ui/stores/chat/stream-store'
 import { useJournalPreviewStore } from '@proj-airi/stage-ui/stores/journal-preview'
+import { useLlmToolsStore } from '@proj-airi/stage-ui/stores/llm-tools'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
 import { estimateMessageArrayTokens, formatTokenCount, formatTokenCountCN } from '@proj-airi/stage-ui/utils'
 import { BasicTextarea } from '@proj-airi/ui'
@@ -37,6 +38,7 @@ const backgroundStore = useBackgroundStore()
 const journalPreviewStore = useJournalPreviewStore()
 const airiCardStore = useAiriCardStore()
 const characterStore = useCharacterStore()
+const llmToolsStore = useLlmToolsStore()
 
 const { messages } = storeToRefs(chatSession)
 const { streamingMessage, totalTokensConsumed } = storeToRefs(chatStream)
@@ -84,6 +86,18 @@ const allContextTokens = computed(() => {
 
   if (messageInput.value) {
     context.push({ role: 'user', content: messageInput.value })
+  }
+
+  // Include tool definitions in the context estimate — they are sent with every
+  // request and can be thousands of tokens (especially MCP tools with large schemas).
+  const tools = llmToolsStore.activeTools
+  if (tools.length > 0) {
+    for (const tool of tools) {
+      context.push({
+        role: 'system',
+        content: JSON.stringify(tool),
+      })
+    }
   }
 
   return estimateMessageArrayTokens(context)
