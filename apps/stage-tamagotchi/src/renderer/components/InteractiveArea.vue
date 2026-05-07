@@ -11,7 +11,7 @@ import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-sto
 import { useChatStreamStore } from '@proj-airi/stage-ui/stores/chat/stream-store'
 import { useJournalPreviewStore } from '@proj-airi/stage-ui/stores/journal-preview'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
-import { estimateMessageArrayTokens, formatTokenCount } from '@proj-airi/stage-ui/utils'
+import { estimateMessageArrayTokens, formatTokenCount, formatTokenCountCN } from '@proj-airi/stage-ui/utils'
 import { BasicTextarea } from '@proj-airi/ui'
 import { useLocalStorage } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
@@ -443,7 +443,7 @@ async function handleRetryMessage(index: number) {
       />
       <div class="absolute bottom-1 left-2 z-10 flex gap-2 rounded bg-white/80 px-1.5 py-0.5 text-[10px] text-neutral-500 font-medium shadow-sm dark:bg-black/50 dark:text-neutral-400">
         <span>context: {{ formatTokenCount(displayContextTotal) }}</span>
-        <span>total: {{ formatTokenCount(totalTokensConsumed) }}</span>
+        <span>tokens: {{ formatTokenCountCN(totalTokensConsumed) }}</span>
       </div>
     </div>
 

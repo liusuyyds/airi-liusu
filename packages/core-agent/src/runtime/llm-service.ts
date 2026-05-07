@@ -1,11 +1,71 @@
 import type { ChatProvider } from '@xsai-ext/providers/utils'
-import type { Message, Tool, Usage } from '@xsai/shared-chat'
+import type { CompletionStep, Message, Tool, Usage } from '@xsai/shared-chat'
 
 import type { StreamFromOptions, StreamOptions } from '../types/llm'
 
 import { errorMessageFrom } from '@moeru/std'
 import { stepCountAtLeast } from '@xsai/shared-chat'
 import { streamText } from '@xsai/stream-text'
+
+/**
+ * Coerce a usage field to a finite number, handling providers that return
+ * token counts as strings (e.g. `"123"` instead of `123`).
+ */
+function coerceTokens(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value))
+    return value
+  if (typeof value === 'string') {
+    const n = Number.parseInt(value, 10)
+    return Number.isFinite(n) ? n : 0
+  }
+  return 0
+}
+
+/**
+ * Aggregate usage across all multi-step tool-call rounds so the caller sees
+ * the full token cost of the interaction, not just the final step's usage.
+ *
+ * Each step's `usage` is the last SSE chunk's cumulative value for that API
+ * call (correct per-step).  The top-level `streamText.usage` field is
+ * overwritten on each step's final chunk, so it only retains the last step's
+ * totals — losing intermediate tool-call step tokens.
+ *
+ * Before (per-step, correct individually):
+ * - Step 1 (tool call):  { prompt_tokens: 100, completion_tokens: 50 }
+ * - Step 2 (final):      { prompt_tokens: 120, completion_tokens: 200 }
+ *
+ * Top-level `usage` = { prompt_tokens: 120, completion_tokens: 200 }  ← step 1 lost
+ *
+ * After (aggregated):
+ * - { prompt_tokens: 220, completion_tokens: 250 }
+ *
+ * Returns `undefined` when no steps carry usage data.
+ */
+function aggregateStepUsage(steps: CompletionStep[]): Usage | undefined {
+  let hasAny = false
+  let prompt = 0
+  let completion = 0
+  let total = 0
+
+  for (const step of steps) {
+    const u = (step as any).usage as Usage | undefined
+    if (!u)
+      continue
+    hasAny = true
+    prompt += coerceTokens(u.prompt_tokens)
+    completion += coerceTokens(u.completion_tokens)
+    total += coerceTokens(u.total_tokens)
+  }
+
+  if (!hasAny)
+    return undefined
+
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: total || prompt + completion,
+  }
+}
 
 /**
  * Normalize chat messages so they match the wire format the active provider
@@ -192,18 +252,37 @@ export async function streamFrom({
     const resolveOnce = () => {
       if (settled)
         return
-      // Wait for the usage promise to settle so callers get real token counts
-      // instead of undefined. Most providers return usage within a few ms of
-      // stream end, so a short timeout is enough.
+
       if (!streamResultRef) {
         settled = true
         resolve(usage)
         return
       }
-      Promise.race([
-        streamResultRef.usage.then((u) => { usage = u }).catch(() => {}),
-        new Promise<void>(resolve => setTimeout(resolve, 500)),
-      ]).then(() => {
+
+      // NOTICE:
+      // Aggregate usage across all multi-step tool-call rounds by reading
+      // `steps[i].usage` from the completed steps array.
+      //
+      // The top-level `streamText.usage` field is overwritten on each step's
+      // final chunk, so it only retains the last step's totals — losing
+      // intermediate tool-call step tokens.  `totalUsage` cannot be used
+      // either, because some providers embed cumulative counters in every SSE
+      // chunk and xsAI's totalUsage naively sums those, producing inflated
+      // numbers (e.g. prompt_tokens × chunk_count).
+      //
+      // Each step's `usage` is the last chunk's cumulative value for that
+      // API call (correct per-step), so summing across steps gives the true
+      // total for the entire interaction.
+      //
+      // Source/context: xsai stream-text dist/index.js:46-52 (pushUsage + totalUsage),
+      // llm-service.ts comment block 195-200 (original rationale for not using totalUsage).
+      streamResultRef.steps.then((completedSteps) => {
+        if (settled)
+          return
+        settled = true
+        const aggregated = aggregateStepUsage(completedSteps)
+        resolve(aggregated ?? usage)
+      }).catch(() => {
         if (settled)
           return
         settled = true
@@ -250,6 +329,7 @@ export async function streamFrom({
         // AIRI captures tool failures by wrapping local tool executors instead.
         tools: streamTools,
         onEvent,
+        streamOptions: { includeUsage: true },
       })
       streamResultRef = streamResult
 
@@ -272,8 +352,6 @@ export async function streamFrom({
         console.error('Stream steps error:', error)
       })
       void streamResult.messages.catch(error => console.error('Stream messages error:', error))
-      void streamResult.usage.then((u) => { usage = u }).catch(error => console.error('Stream usage error:', error))
-      void streamResult.totalUsage.catch(error => console.error('Stream totalUsage error:', error))
     }
     catch (error) {
       rejectOnce(error)

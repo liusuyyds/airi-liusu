@@ -545,21 +545,26 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
         })
 
         llmSpan.setAttribute(IOAttributes.LLMTextLength, fullText.length)
-        // Guard against empty usage objects ({}) that some providers return instead
-        // of undefined. An empty object is truthy but has no usable token counts.
+        // Guard against empty usage objects ({}) or string-typed fields that some
+        // providers return. Coerce strings to numbers so we don't silently fall
+        // back to estimation when real usage is available.
+        const rawPrompt = (usage as any)?.prompt_tokens
+        const rawCompletion = (usage as any)?.completion_tokens
+        const promptFromUsage = typeof rawPrompt === 'string' ? Number.parseInt(rawPrompt, 10) : rawPrompt
+        const completionFromUsage = typeof rawCompletion === 'string' ? Number.parseInt(rawCompletion, 10) : rawCompletion
         const hasValidUsage = usage
-          && typeof usage.prompt_tokens === 'number'
-          && typeof usage.completion_tokens === 'number'
-          && usage.prompt_tokens > 0
+          && typeof promptFromUsage === 'number' && !Number.isNaN(promptFromUsage)
+          && typeof completionFromUsage === 'number' && !Number.isNaN(completionFromUsage)
+          && promptFromUsage > 0
 
-        let promptTokens = hasValidUsage ? usage.prompt_tokens : 0
-        let completionTokens = hasValidUsage ? usage.completion_tokens : 0
+        let promptTokens = hasValidUsage ? promptFromUsage : 0
+        let completionTokens = hasValidUsage ? completionFromUsage : 0
 
         // Some providers (e.g. GLM) don't report usage in stream mode.
         // Fall back to client-side estimation so the lifetime counter still
         // progresses and the user sees meaningful token metrics.
         if (!hasValidUsage) {
-          console.warn('[chat] usage unavailable from provider, falling back to estimation')
+          console.info('[chat] usage unavailable from provider, falling back to estimation')
           try {
             const estimatedPrompt = await estimateMessagesTokens(newMessages as any, { tools: options.tools })
             // Completion includes both the spoken reply and the reasoning/thinking
@@ -569,14 +574,14 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
             const estimatedCompletion = estimateTokens(speechText) + estimateTokens(reasoningText)
             promptTokens = estimatedPrompt
             completionTokens = estimatedCompletion
-            console.log('[chat] estimated tokens — prompt:', estimatedPrompt, 'completion:', estimatedCompletion, 'reasoning:', estimateTokens(reasoningText))
+            console.info('[chat] estimated tokens — prompt:', estimatedPrompt, 'completion:', estimatedCompletion, 'reasoning:', estimateTokens(reasoningText))
           }
           catch (err) {
             console.error('[chat] token estimation failed:', err)
           }
         }
         else {
-          console.log('[chat] provider usage — prompt:', usage.prompt_tokens, 'completion:', usage.completion_tokens)
+          console.info('[chat] provider usage — prompt:', usage.prompt_tokens, 'completion:', usage.completion_tokens)
         }
 
         contextTokenCount.value = promptTokens

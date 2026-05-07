@@ -211,10 +211,32 @@ export function estimateMessageArrayTokens(messages: unknown[]): number {
   return estimateTokens(JSON.stringify(plain))
 }
 
+/**
+ * Formats a token count for display with standard k/m units.
+ *
+ * Before:
+ * - 38900 → 38.9k
+ * - 1200000 → 1.2m
+ */
 export function formatTokenCount(count: number): string {
   if (count >= 1_000_000)
     return `${(count / 1_000_000).toFixed(1)}m`
   if (count >= 1000)
     return `${(count / 1000).toFixed(1)}k`
+  return String(count)
+}
+
+/**
+ * Formats a token count for display using Chinese-friendly units (w/e).
+ *
+ * Before:
+ * - 38900 → 3.89w
+ * - 120000000 → 1.2e
+ */
+export function formatTokenCountCN(count: number): string {
+  if (count >= 100_000_000)
+    return `${(count / 100_000_000).toFixed(1)}e`
+  if (count >= 10_000)
+    return `${(count / 10_000).toFixed(2)}w`
   return String(count)
 }
