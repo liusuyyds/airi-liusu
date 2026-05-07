@@ -1,5 +1,6 @@
 import { useElectronEventaInvoke } from '@proj-airi/electron-vueuse'
 import { useLlmToolsStore } from '@proj-airi/stage-ui/stores/llm-tools'
+import { useMcpStore } from '@proj-airi/stage-ui/stores/mcp'
 import { createMcpTools } from '@proj-airi/stage-ui/tools/mcp'
 import { defineStore } from 'pinia'
 
@@ -19,6 +20,7 @@ import { electronMcpCallTool, electronMcpListTools } from '../../shared/eventa'
  */
 export const useTamagotchiMcpToolsStore = defineStore('tamagotchi-mcp-tools', () => {
   const llmToolsStore = useLlmToolsStore()
+  const mcpStore = useMcpStore()
   const listMcpTools = useElectronEventaInvoke(electronMcpListTools)
   const callMcpTool = useElectronEventaInvoke(electronMcpCallTool)
 
@@ -26,7 +28,7 @@ export const useTamagotchiMcpToolsStore = defineStore('tamagotchi-mcp-tools', ()
     return llmToolsStore.registerTools('mcp', Promise.all(createMcpTools({
       listTools: () => listMcpTools(),
       callTool: payload => callMcpTool(payload),
-    })))
+    }, { sanitizeToolResults: mcpStore.sanitizeToolResults })))
   }
 
   function dispose() {

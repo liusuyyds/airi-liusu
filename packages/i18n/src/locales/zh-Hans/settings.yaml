@@ -674,6 +674,7 @@ pages:
     mcp-server:
       title: MCP 集成
       description: 配置其他 MCP 服务器并将能力拓展至 AIRI
+      sanitize-tool-results: 保留工具调用结果到历史
       config-path: 配置文件
       runtime-title: 运行状态
       empty: 尚无已配置的 MCP 集成 - 点击「添加服务器」来创建一个，或者通过「编辑 JSON」直接粘贴配置

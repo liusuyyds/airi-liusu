@@ -6,17 +6,20 @@ export const useMcpStore = defineStore('mcp', () => {
   const serverCmd = useLocalStorageManualReset<string>('settings/mcp/server-cmd', '')
   const serverArgs = useLocalStorageManualReset<string>('settings/mcp/server-args', '')
   const connected = useLocalStorageManualReset<boolean>('mcp/connected', false) // use local storage to sync between windows
+  const sanitizeToolResults = useLocalStorageManualReset<boolean>('settings/mcp/sanitize-tool-results', false)
 
   function resetState() {
     serverCmd.reset()
     serverArgs.reset()
     connected.reset()
+    sanitizeToolResults.reset()
   }
 
   return {
     serverCmd,
     serverArgs,
     connected,
+    sanitizeToolResults,
     resetState,
   }
 })

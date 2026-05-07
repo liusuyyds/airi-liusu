@@ -25,6 +25,7 @@ import { useChatSessionStore } from './chat/session-store'
 import { useChatStreamStore } from './chat/stream-store'
 import { useContextObservabilityStore } from './devtools/context-observability'
 import { useLLM } from './llm'
+import { useMcpStore } from './mcp'
 import { useAiriCardStore } from './modules/airi-card'
 import { useAutonomousArtistryStore } from './modules/artistry-autonomous'
 import { useConsciousnessStore } from './modules/consciousness'
@@ -118,6 +119,7 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
   const chatContext = useChatContextStore()
   const cardStore = useAiriCardStore()
   const contextObservability = useContextObservabilityStore()
+  const mcpStore = useMcpStore()
   const { activeSessionId } = storeToRefs(chatSession)
   const { streamingMessage, contextTokenCount, completionTokenCount } = storeToRefs(chatStream)
 
@@ -207,7 +209,13 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
 
     const isForegroundSession = () => sessionId === activeSessionId.value
 
-    const buildingMessage: StreamingAssistantMessage = { role: 'assistant', content: '', slices: [], tool_results: [], tool_calls: [], createdAt: Date.now(), id: nanoid() }
+    // When sanitize is enabled, track tool_calls so the assistant message can
+    // reference them for provider validation. When disabled, omit tool_calls
+    // entirely to match the pre-sanitize behavior where tool results are not
+    // persisted and assistant messages carry no tool metadata.
+    const buildingMessage: StreamingAssistantMessage = mcpStore.sanitizeToolResults
+      ? { role: 'assistant', content: '', slices: [], tool_results: [], tool_calls: [], createdAt: Date.now(), id: nanoid() }
+      : { role: 'assistant', content: '', slices: [], tool_results: [], createdAt: Date.now(), id: nanoid() }
 
     const updateUI = () => {
       if (isForegroundSession()) {
@@ -326,16 +334,21 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
               return
             if (ctx.data.type === 'tool-call') {
               buildingMessage.slices.push(ctx.data)
-              const tc = ctx.data.toolCall
-              buildingMessage.tool_calls ??= []
-              buildingMessage.tool_calls.push({
-                id: tc.toolCallId,
-                type: 'function',
-                function: {
-                  name: tc.toolName,
-                  arguments: tc.args,
-                },
-              })
+              // Only populate tool_calls when sanitize is enabled; when disabled,
+              // tool calls are ephemeral and their results are not persisted,
+              // matching the pre-sanitize behavior.
+              if (mcpStore.sanitizeToolResults) {
+                const tc = ctx.data.toolCall
+                buildingMessage.tool_calls ??= []
+                buildingMessage.tool_calls.push({
+                  id: tc.toolCallId,
+                  type: 'function',
+                  function: {
+                    name: tc.toolName,
+                    arguments: tc.args,
+                  },
+                })
+              }
               updateUI()
               return
             }
@@ -373,6 +386,12 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
           // Some providers reject assistant messages with an empty tool_calls array.
           // Strip it when no tool calls were actually made.
           if (Array.isArray(cleaned.tool_calls) && cleaned.tool_calls.length === 0) {
+            delete (cleaned as Record<string, unknown>).tool_calls
+          }
+          // When sanitize is disabled, also strip any non-empty tool_calls to
+          // match the pre-sanitize behavior where assistant messages carry no
+          // tool metadata.
+          if (!mcpStore.sanitizeToolResults && 'tool_calls' in cleaned) {
             delete (cleaned as Record<string, unknown>).tool_calls
           }
           return prependTextToContent(cleaned, formatTimePrefix(ts))
@@ -538,15 +557,18 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
 
       if (!isStaleGeneration() && buildingMessage.slices.length > 0) {
         chatSession.appendSessionMessage(sessionId, toRaw(buildingMessage))
-        // Append tool results after the assistant message so the next turn sees them
-        // in the correct order (assistant with tool_calls → tool results).
-        for (const tr of buildingMessage.tool_results) {
-          const rawContent = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result ?? '')
-          chatSession.appendSessionMessage(sessionId, {
-            role: 'tool',
-            tool_call_id: tr.id,
-            content: sanitizeToolContent(rawContent),
-          } as ToolMessage)
+        // When sanitize is enabled, append tool results to history so the model
+        // can reference them in future turns. When disabled, discard them to
+        // match the pre-sanitize behavior and avoid history bloat.
+        if (mcpStore.sanitizeToolResults) {
+          for (const tr of buildingMessage.tool_results) {
+            const rawContent = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result ?? '')
+            chatSession.appendSessionMessage(sessionId, {
+              role: 'tool',
+              tool_call_id: tr.id,
+              content: sanitizeToolContent(rawContent),
+            } as ToolMessage)
+          }
         }
       }
 
@@ -558,14 +580,19 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       await hooks.emitChatTurnCompleteHooks({
         output: { ...buildingMessage },
         outputText: fullText,
-        toolCalls: buildingMessage.tool_results.map((tr) => {
-          const rawContent = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result ?? '')
-          return {
-            role: 'tool',
-            tool_call_id: tr.id,
-            content: sanitizeToolContent(rawContent),
-          } as ToolMessage
-        }),
+        // When sanitize is enabled, pass the current turn's tool results to hooks.
+        // When disabled, fall back to reading from session history (pre-sanitize
+        // behavior) so hooks that depend on tool context still work.
+        toolCalls: mcpStore.sanitizeToolResults
+          ? buildingMessage.tool_results.map((tr) => {
+              const rawContent = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result ?? '')
+              return {
+                role: 'tool',
+                tool_call_id: tr.id,
+                content: sanitizeToolContent(rawContent),
+              } as ToolMessage
+            })
+          : sessionMessagesForSend.filter(msg => msg.role === 'tool') as ToolMessage[],
       }, streamingMessageContext)
 
       // --- AUTONOMOUS ARTISTRY HOOK (ASSISTANT-CENTRIC) ---
@@ -576,7 +603,11 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       // ---------------------------------------------------
 
       if (isForegroundSession()) {
-        streamingMessage.value = { role: 'assistant', content: '', slices: [], tool_results: [], tool_calls: [] }
+        // When sanitize is disabled, reset without tool_calls to match the
+        // pre-sanitize StreamingAssistantMessage shape.
+        streamingMessage.value = mcpStore.sanitizeToolResults
+          ? { role: 'assistant', content: '', slices: [], tool_results: [], tool_calls: [] }
+          : { role: 'assistant', content: '', slices: [], tool_results: [] }
       }
     }
     catch (error) {

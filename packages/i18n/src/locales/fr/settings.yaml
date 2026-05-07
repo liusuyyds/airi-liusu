@@ -674,6 +674,7 @@ pages:
     mcp-server:
       title: MCP servers
       description: Configure MCP servers and bring their tools into AIRI.
+      sanitize-tool-results: Keep tool results in history
       config-path: Config file
       runtime-title: État de l'exécution
       empty: No MCP servers yet — click "Add server" below to create one, or paste a config via "Edit JSON".

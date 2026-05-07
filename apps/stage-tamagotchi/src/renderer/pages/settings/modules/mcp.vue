@@ -8,6 +8,7 @@ import type { ServerForm } from './mcp-config'
 
 import { errorMessageFrom } from '@moeru/std'
 import { useElectronEventaInvoke } from '@proj-airi/electron-vueuse'
+import { useMcpStore } from '@proj-airi/stage-ui/stores/mcp'
 import {
   Button,
   Callout,
@@ -42,6 +43,8 @@ import {
 
 const { t } = useI18n()
 const tn = (key: string, params?: Record<string, unknown>) => t(`settings.pages.modules.mcp-server.${key}`, params ?? {})
+
+const mcpStore = useMcpStore()
 
 const invokeOpenConfigFile = useElectronEventaInvoke(electronMcpOpenConfigFile)
 const invokeApplyAndRestart = useElectronEventaInvoke(electronMcpApplyAndRestart)
@@ -351,6 +354,13 @@ onMounted(async () => {
       </p>
       <div class="break-all text-xs text-neutral-500 dark:text-neutral-400">
         <span class="font-medium">{{ tn('config-path') }}:</span> {{ configPath || '-' }}
+      </div>
+      <div class="flex items-center gap-2">
+        <Checkbox
+          :model-value="mcpStore.sanitizeToolResults"
+          @update:model-value="mcpStore.sanitizeToolResults = $event"
+        />
+        <span class="text-sm text-neutral-600 dark:text-neutral-300">{{ tn('sanitize-tool-results') }}</span>
       </div>
       <div class="flex justify-end">
         <Button

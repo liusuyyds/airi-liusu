@@ -92,7 +92,17 @@ export interface McpToolRuntime {
  * Returns:
  * - xsai tool definition promises for MCP listing and invocation
  */
-export function createMcpTools(runtime: McpToolRuntime): Array<Promise<Tool>> {
+export interface CreateMcpToolsOptions {
+  /**
+   * Whether to sanitize verbose MCP tool outputs before they reach the LLM.
+   * When true, strips decorative separators, GLOSSARY blocks, and child-memory
+   * snippets while preserving core content. Defaults to true.
+   */
+  sanitizeToolResults?: boolean
+}
+
+export function createMcpTools(runtime: McpToolRuntime, options?: CreateMcpToolsOptions): Array<Promise<Tool>> {
+  const { sanitizeToolResults = true } = options ?? {}
   return [
     tool({
       name: 'builtIn_mcpListTools',
@@ -118,7 +128,9 @@ export function createMcpTools(runtime: McpToolRuntime): Array<Promise<Tool>> {
           // Sanitize verbose MCP tool outputs (e.g. Nocturne Memory read_memory)
           // before they reach the LLM. Strips decorative separators, GLOSSARY
           // blocks, and child-memory snippets while preserving core content.
-          if (result.content) {
+          // Can be disabled via settings to preserve raw tool output for debugging
+          // or when the full verbose format is needed by the model.
+          if (sanitizeToolResults && result.content) {
             result.content = result.content.map((part) => {
               if (part && typeof part === 'object' && part.type === 'text' && typeof part.text === 'string') {
                 return { ...part, text: sanitizeToolContent(part.text) }
@@ -129,7 +141,7 @@ export function createMcpTools(runtime: McpToolRuntime): Array<Promise<Tool>> {
           // Also sanitize structuredContent when it carries a raw text result,
           // so the LLM sees the compact form no matter which field the provider
           // serializes from.
-          if (result.structuredContent && typeof result.structuredContent.result === 'string') {
+          if (sanitizeToolResults && result.structuredContent && typeof result.structuredContent.result === 'string') {
             result.structuredContent = {
               ...result.structuredContent,
               result: sanitizeToolContent(result.structuredContent.result),

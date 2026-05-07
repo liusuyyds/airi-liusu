@@ -5,6 +5,7 @@ pages:
   modules:
     mcp-server:
       description: Connect and manage MCP server and tools
+      sanitize-tool-results: Keep tool results in history
       title: MCP Server
   system:
     sections:
