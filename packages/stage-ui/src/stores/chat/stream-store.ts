@@ -3,12 +3,14 @@ import type { StreamingAssistantMessage } from '../../types/chat'
 import { defineStore } from 'pinia'
 import { ref, toRaw } from 'vue'
 
+import { useLocalStorageManualReset } from '../../../../stage-shared/src/composables/use-local-storage-manual-reset'
 import { useChatSessionStore } from './session-store'
 
 export const useChatStreamStore = defineStore('chat-stream', () => {
   const chatSession = useChatSessionStore()
   const contextTokenCount = ref(0)
   const completionTokenCount = ref(0)
+  const totalTokensConsumed = useLocalStorageManualReset<number>('chat/total-tokens-consumed', 0)
   const streamingMessage = ref<StreamingAssistantMessage>({ role: 'assistant', content: '', slices: [], tool_results: [], tool_calls: [], createdAt: Date.now() })
 
   function beginStream() {
@@ -43,13 +45,23 @@ export const useChatStreamStore = defineStore('chat-stream', () => {
     streamingMessage.value = { role: 'assistant', content: '', slices: [], tool_results: [], tool_calls: [] }
   }
 
+  /**
+   * Accumulates prompt + completion tokens into the running lifetime total.
+   * Call once per successful stream after the provider reports usage.
+   */
+  function accumulateTokens(promptTokens: number, completionTokens: number) {
+    totalTokensConsumed.value += promptTokens + completionTokens
+  }
+
   return {
     streamingMessage,
     contextTokenCount,
     completionTokenCount,
+    totalTokensConsumed,
     beginStream,
     appendStreamLiteral,
     finalizeStream,
     resetStream,
+    accumulateTokens,
   }
 })

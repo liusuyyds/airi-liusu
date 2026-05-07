@@ -39,7 +39,7 @@ const airiCardStore = useAiriCardStore()
 const characterStore = useCharacterStore()
 
 const { messages } = storeToRefs(chatSession)
-const { streamingMessage } = storeToRefs(chatStream)
+const { streamingMessage, totalTokensConsumed } = storeToRefs(chatStream)
 const { sending } = storeToRefs(chatOrchestrator)
 const { systemPrompt } = storeToRefs(characterStore)
 
@@ -441,8 +441,9 @@ async function handleRetryMessage(index: number) {
         @keydown="handleMessageInputKeydown"
         @paste-file="handleFilePaste"
       />
-      <div class="absolute bottom-1 left-2 z-10 rounded bg-white/80 px-1.5 py-0.5 text-[10px] text-neutral-500 font-medium shadow-sm dark:bg-black/50 dark:text-neutral-400">
+      <div class="absolute bottom-1 left-2 z-10 flex gap-2 rounded bg-white/80 px-1.5 py-0.5 text-[10px] text-neutral-500 font-medium shadow-sm dark:bg-black/50 dark:text-neutral-400">
         <span>context: {{ formatTokenCount(displayContextTotal) }}</span>
+        <span>total: {{ formatTokenCount(totalTokensConsumed) }}</span>
       </div>
     </div>
 

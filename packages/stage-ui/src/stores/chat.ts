@@ -545,8 +545,11 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
         })
 
         llmSpan.setAttribute(IOAttributes.LLMTextLength, fullText.length)
-        contextTokenCount.value = usage?.prompt_tokens ?? 0
-        completionTokenCount.value = usage?.completion_tokens ?? 0
+        const promptTokens = usage?.prompt_tokens ?? 0
+        const completionTokens = usage?.completion_tokens ?? 0
+        contextTokenCount.value = promptTokens
+        completionTokenCount.value = completionTokens
+        chatStream.accumulateTokens(promptTokens, completionTokens)
       }
       finally {
         // TODO: Record errors on llmSpan
