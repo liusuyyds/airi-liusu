@@ -61,13 +61,20 @@ function prependTextToContent<T extends { content?: unknown }>(msg: T, text: str
   return msg
 }
 
+// NOTICE:
+// Shallow copy instead of structuredClone. The stream store now uses
+// shallowRef, so Vue only triggers reactivity on .value reassignment.
+// We need new array references (so Vue detects the change) but do NOT
+// need to deep-clone every nested object. This avoids O(message_size)
+// structuredClone overhead every 24 tokens during streaming.
 function cloneStreamingMessage(message: StreamingAssistantMessage): StreamingAssistantMessage {
-  try {
-    return structuredClone(message)
-  }
-  catch {
-    return JSON.parse(JSON.stringify(message)) as StreamingAssistantMessage
-  }
+  return {
+    ...message,
+    slices: [...message.slices],
+    tool_results: [...message.tool_results],
+    tool_calls: message.tool_calls ? [...message.tool_calls] : undefined,
+    categorization: message.categorization ? { ...message.categorization } : undefined,
+  } as StreamingAssistantMessage
 }
 
 interface SendOptions {

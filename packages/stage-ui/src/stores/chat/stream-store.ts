@@ -1,7 +1,7 @@
 import type { StreamingAssistantMessage } from '../../types/chat'
 
 import { defineStore } from 'pinia'
-import { ref, toRaw } from 'vue'
+import { ref, shallowRef, toRaw } from 'vue'
 
 import { useLocalStorageManualReset } from '../../../../stage-shared/src/composables/use-local-storage-manual-reset'
 import { useChatSessionStore } from './session-store'
@@ -11,7 +11,14 @@ export const useChatStreamStore = defineStore('chat-stream', () => {
   const contextTokenCount = ref(0)
   const completionTokenCount = ref(0)
   const totalTokensConsumed = useLocalStorageManualReset<number>('chat/total-tokens-consumed', 0)
-  const streamingMessage = ref<StreamingAssistantMessage>({ role: 'assistant', content: '', slices: [], tool_results: [], tool_calls: [], createdAt: Date.now() })
+  // NOTICE:
+  // shallowRef avoids wrapping the streaming message in a deep reactive proxy.
+  // The main streaming path (chat.ts orchestrator) reassigns `.value` entirely
+  // via `updateUI()` → `streamingMessage.value = cloneStreamingMessage(...)`,
+  // which is the trigger point for shallowRef reactivity. In-place mutations
+  // (appendStreamLiteral) are only used by secondary consumers and do not need
+  // deep tracking — they are followed by explicit `.value` reassignment.
+  const streamingMessage = shallowRef<StreamingAssistantMessage>({ role: 'assistant', content: '', slices: [], tool_results: [], tool_calls: [], createdAt: Date.now() })
 
   function beginStream() {
     streamingMessage.value = { role: 'assistant', content: '', slices: [], tool_results: [], tool_calls: [], createdAt: Date.now() }

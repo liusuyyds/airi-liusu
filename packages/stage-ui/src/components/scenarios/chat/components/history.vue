@@ -56,6 +56,12 @@ function shouldShowPlaceholder(message: ChatHistoryItem) {
 
   return message.context?.createdAt === ts || message.createdAt === ts
 }
+
+// NOTICE:
+// Previous implementation used `messages.some(...)` which is O(N) over all
+// messages. Since the streaming message is always appended at the end when
+// present, checking only the last message is O(1) and avoids scanning the
+// entire array on every 24-token UI flush during streaming.
 const renderMessages = computed<ChatHistoryItem[]>(() => {
   if (!props.sending)
     return props.messages
@@ -64,8 +70,8 @@ const renderMessages = computed<ChatHistoryItem[]>(() => {
   if (!streamTs)
     return props.messages
 
-  const hasStreamAlready = streamTs && props.messages.some(msg => msg?.role === 'assistant' && msg?.createdAt === streamTs)
-  if (hasStreamAlready)
+  const lastMsg = props.messages.at(-1)
+  if (lastMsg?.role === 'assistant' && lastMsg?.createdAt === streamTs)
     return props.messages
 
   return [...props.messages, streaming.value]
@@ -103,7 +109,11 @@ function emitRetryMessage(message: ChatHistoryItem, index: number) {
 </script>
 
 <template>
-  <div ref="chatHistoryRef" v-auto-animate flex="~ col" relative h-full w-full overflow-y-auto rounded-xl px="<sm:2" py="<sm:2" :class="variant === 'mobile' ? 'gap-1' : 'gap-2'">
+  <!-- NOTICE: `v-auto-animate` was removed here. It ran FLIP animations
+       (getBoundingClientRect on every child) on each DOM mutation, causing
+       O(N) layout reads per new message — devastating at 200+ messages.
+       The scroll composable already handles scroll-to-bottom. -->
+  <div ref="chatHistoryRef" flex="~ col" relative h-full w-full overflow-y-auto rounded-xl px="<sm:2" py="<sm:2" :class="variant === 'mobile' ? 'gap-1' : 'gap-2'">
     <template v-for="(message, index) in renderMessages" :key="getChatHistoryItemKey(message, index)">
       <div
         :data-chat-message-index="index"

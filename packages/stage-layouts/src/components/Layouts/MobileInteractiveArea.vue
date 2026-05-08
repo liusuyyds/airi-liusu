@@ -14,6 +14,7 @@ import { useL2dViewControl } from '@proj-airi/stage-ui/stores/live2d'
 import { useConsciousnessStore } from '@proj-airi/stage-ui/stores/modules/consciousness'
 import { useProvidersStore } from '@proj-airi/stage-ui/stores/providers'
 import { useSettings, useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings'
+import { deleteMessageWithToolCascade } from '@proj-airi/stage-ui/utils'
 import { BasicTextarea, useTheme } from '@proj-airi/ui'
 import { useResizeObserver, useScreenSafeArea } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
@@ -39,7 +40,7 @@ const { sending } = storeToRefs(chatOrchestrator)
 const historyMessages = computed(() => messages.value as unknown as ChatHistoryItem[])
 
 function handleDeleteMessage(index: number) {
-  messages.value = messages.value.filter((_, messageIndex) => messageIndex !== index)
+  messages.value = deleteMessageWithToolCascade(messages.value, index)
 }
 
 const messageInput = ref('')

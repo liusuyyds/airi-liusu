@@ -10,6 +10,8 @@ import { useAuthStore } from '../auth'
 import { useAiriCardStore } from '../modules/airi-card'
 import { mergeLoadedSessionMessages } from './session-message-merge'
 
+const PERSIST_DEBOUNCE_MS = 300
+
 export const useChatSessionStore = defineStore('chat-session', () => {
   const { userId } = storeToRefs(useAuthStore())
   const { activeCardId, systemPrompt } = storeToRefs(useAiriCardStore())
@@ -26,6 +28,12 @@ export const useChatSessionStore = defineStore('chat-session', () => {
   let initializePromise: Promise<void> | null = null
 
   let persistQueue = Promise.resolve()
+  // NOTICE:
+  // Per-session debounce timers to avoid cloning the entire message array on
+  // every appendSessionMessage call (which fires multiple times per turn: user
+  // msg, assistant msg, tool results). Each session gets its own timer so that
+  // cleanup writes for one session are never clobbered by a persist for another.
+  const persistTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const loadedSessions = new Set<string>()
   const loadingSessions = new Map<string, Promise<void>>()
 
@@ -151,15 +159,44 @@ export const useChatSessionStore = defineStore('chat-session', () => {
     })
   }
 
+  /**
+   * Schedules a debounced persist for the given session. Multiple rapid calls
+   * (e.g. during streaming where user msg + assistant msg + tool results all
+   * fire appendSessionMessage) coalesce into a single persist.
+   *
+   * Uses a per-session timer so that writes for different sessions do not
+   * interfere with each other — preventing a race where cleanup writes for
+   * one session could be lost if another session triggers a persist.
+   */
   function persistSessionMessages(sessionId: string) {
-    void persistSession(sessionId)
+    const existing = persistTimers.get(sessionId)
+    if (existing)
+      clearTimeout(existing)
+    persistTimers.set(sessionId, setTimeout(() => {
+      persistTimers.delete(sessionId)
+      void persistSession(sessionId)
+    }, PERSIST_DEBOUNCE_MS))
+  }
+
+  /**
+   * Immediately flushes any pending debounced persist for the given session.
+   * Must be called before critical operations (session switch, cleanup, delete)
+   * to avoid losing the last batch of unsaved messages.
+   */
+  function flushPersist(sessionId: string) {
+    const timer = persistTimers.get(sessionId)
+    if (timer) {
+      clearTimeout(timer)
+      persistTimers.delete(sessionId)
+      void persistSession(sessionId)
+    }
   }
 
   function replaceSessionMessages(sessionId: string, next: ChatHistoryItem[], options?: { persist?: boolean }) {
     sessionMessages.value[sessionId] = next
 
     if (options?.persist !== false)
-      void persistSession(sessionId)
+      void persistSessionMessages(sessionId)
   }
 
   function setSessionMessages(sessionId: string, next: ChatHistoryItem[]) {
@@ -321,6 +358,7 @@ export const useChatSessionStore = defineStore('chat-session', () => {
   })
 
   function setActiveSession(sessionId: string) {
+    flushPersist(activeSessionId.value)
     activeSessionId.value = sessionId
 
     const characterId = getCurrentCharacterId()
@@ -369,6 +407,7 @@ export const useChatSessionStore = defineStore('chat-session', () => {
   }
 
   function cleanupMessages(sessionId = activeSessionId.value) {
+    flushPersist(sessionId)
     ensureGeneration(sessionId)
     sessionGenerations.value[sessionId] += 1
     setSessionMessages(sessionId, [generateInitialMessage()])
@@ -379,6 +418,8 @@ export const useChatSessionStore = defineStore('chat-session', () => {
   }
 
   async function resetAllSessions() {
+    for (const sessionId of persistTimers.keys())
+      flushPersist(sessionId)
     const currentUserId = getCurrentUserId()
     const characterId = getCurrentCharacterId()
     const sessionIds = new Set<string>()
@@ -515,6 +556,7 @@ export const useChatSessionStore = defineStore('chat-session', () => {
     applyRemoteSnapshot,
     getSnapshot,
     cleanupMessages,
+    flushPersist,
     getAllSessions,
     resetAllSessions,
 
