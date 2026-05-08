@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import type { MaybeComputedElementRef } from '@vueuse/core'
-import type { ComponentPublicInstance } from 'vue'
+import type { ComponentPublicInstance, Ref } from 'vue'
 
 import type { ChatActionMenuAction } from '.'
 
 import { isStageCapacitor, isStageWeb } from '@proj-airi/stage-shared'
-import { useElementVisibility, useIntervalFn } from '@vueuse/core'
+import { useIntervalFn } from '@vueuse/core'
 import { createTimeline } from 'animejs'
-import { clamp } from 'es-toolkit'
 import {
   ContextMenuContent,
   ContextMenuItem,
@@ -20,14 +18,12 @@ import {
   DropdownMenuRoot,
   DropdownMenuTrigger,
 } from 'reka-ui'
-import { computed, inject, reactive, ref, shallowRef, toRef, useTemplateRef, watch } from 'vue'
+import { computed, reactive, ref, shallowRef, toRef, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWebHaptics } from 'web-haptics/vue'
 
 import { createChatActionMenuItems } from '.'
 import { useBreakpoints } from '../../../../../composables/use-breakpoints'
-import { useElementScroll } from '../../composables/use-element-scroll'
-import { chatScrollContainerKey } from '../../constants'
 
 const props = withDefaults(defineProps<{
   canCopy?: boolean
@@ -56,30 +52,7 @@ defineSlots<{
 
 const measuredElementRef = shallowRef<HTMLElement | null>(null)
 const contextMenuContainerElementRef = useTemplateRef<HTMLElement>('contextMenuContainer')
-const topSentinelRef = useTemplateRef<HTMLDivElement>('topSentinel')
-const bottomSentinelRef = useTemplateRef<HTMLDivElement>('bottomSentinel')
-const injectedScrollContainer = inject(chatScrollContainerKey, undefined)
-const scrollTarget = computed(() => injectedScrollContainer?.value ?? null)
 const contextMenuOpen = shallowRef(false)
-const {
-  innerHeight,
-  innerTop,
-  elementHeight,
-  elementTop,
-  hasMeasuredElement,
-  isVisible: messageIsVisible,
-  scrollTarget: effectiveScrollTarget,
-} = useElementScroll(measuredElementRef, scrollTarget)
-
-const topSentinelVisible = useElementVisibility(topSentinelRef, {
-  initialValue: false,
-  scrollTarget: effectiveScrollTarget,
-})
-
-const bottomSentinelVisible = useElementVisibility(bottomSentinelRef, {
-  initialValue: false,
-  scrollTarget: effectiveScrollTarget,
-})
 
 const { trigger } = useWebHaptics()
 const { isMobile } = useBreakpoints()
@@ -92,7 +65,6 @@ const menuItems = computed(() => createChatActionMenuItems({
   canDelete: props.canDelete,
   retryLabel: t('stage.chat.actions.retry'),
 }))
-const hasMenuItems = computed(() => menuItems.value.length > 0)
 const forceVisible = computed(() => contextMenuOpen.value)
 
 const contentClasses = [
@@ -108,38 +80,6 @@ const itemClasses = [
   'data-[disabled]:pointer-events-none data-[highlighted]:bg-primary-50/80 dark:data-[highlighted]:bg-primary-900/40',
   'transition-colors duration-150 ease-in-out',
 ]
-
-const topIsVisible = computed(() => topSentinelVisible.value)
-const bottomIsVisible = computed(() => bottomSentinelVisible.value)
-const floatingInMiddle = computed(() => !topIsVisible.value && !bottomIsVisible.value)
-
-const floatingTop = computed(() => {
-  if (!hasMeasuredElement.value || !messageIsVisible.value || !floatingInMiddle.value)
-    return 0
-
-  const buttonSize = 32
-  const relativeInnerMiddle = innerTop.value - elementTop.value + innerHeight.value / 2 - buttonSize / 2
-  return clamp(relativeInnerMiddle, 0, Math.max(elementHeight.value - buttonSize, 0))
-})
-
-const showFloatingTrigger = computed(() => {
-  if (!hasMenuItems.value || !messageIsVisible.value)
-    return false
-
-  return !topIsVisible.value || forceVisible.value
-})
-
-const floatingTriggerStyle = computed(() => (
-  bottomIsVisible.value
-    ? undefined
-    : { top: `${floatingTop.value}px` }
-))
-
-const inlineTriggerStyle = computed(() => (
-  bottomIsVisible.value
-    ? undefined
-    : { top: `${floatingTop.value}px` }
-))
 
 async function handleAction(action: ChatActionMenuAction) {
   if (action === 'copy') {
@@ -166,7 +106,18 @@ function setMeasuredElement(element: Element | ComponentPublicInstance | null) {
   measuredElementRef.value = element instanceof HTMLElement ? element : null
 }
 
-function useTouching(element: MaybeComputedElementRef) {
+// NOTICE:
+// Previously each ChatActionMenu instance created its own:
+//   - 2× useElementVisibility → 2 IntersectionObservers
+//   - 1× useElementScroll → 2 useElementBounding + 1 ResizeObserver + 1 window resize listener
+// With 200 messages that means 400+ IntersectionObservers, 200+ ResizeObservers, and
+// 200+ window resize listeners — all competing for the same scroll/resize events.
+//
+// Replaced with a simple CSS-only approach: the trigger button is positioned at the
+// vertical center of the message using `top-1/2 -translate-y-1/2` (line 255). The
+// inline trigger sits outside the message on hover
+// (group-hover/chat-action:opacity-100) — no JS observers needed.
+function useTouching(element: Ref<HTMLElement | null>) {
   const elementRef = toRef(element)
 
   const pressStartTime = ref(0)
@@ -175,16 +126,6 @@ function useTouching(element: MaybeComputedElementRef) {
   const { resume, pause } = useIntervalFn(() => pressNow.value = Date.now(), 50)
 
   const isTouching = ref(false)
-  const pressedFor = computed(() => {
-    if (!isTouching.value || pressStartTime.value === 0)
-      return 0
-
-    const result = pressNow.value - pressStartTime.value
-    if (result < 0)
-      return 0
-
-    return result
-  })
 
   function handleTouchStart() {
     isTouching.value = true
@@ -208,28 +149,23 @@ function useTouching(element: MaybeComputedElementRef) {
     pause()
   }
 
-  watch(elementRef, (newElement) => {
-    if (newElement) {
-      const el = newElement as HTMLElement
-
-      el.addEventListener('touchstart', handleTouchStart, { passive: true })
-      el.addEventListener('touchmove', handleTouchMove, { passive: true })
-      el.addEventListener('touchend', handleTouchEnd, { passive: true })
-      el.addEventListener('touchcancel', handleTouchCancel, { passive: true })
+  watch(elementRef, (newElement, oldElement) => {
+    if (oldElement) {
+      oldElement.removeEventListener('touchstart', handleTouchStart)
+      oldElement.removeEventListener('touchmove', handleTouchMove)
+      oldElement.removeEventListener('touchend', handleTouchEnd)
+      oldElement.removeEventListener('touchcancel', handleTouchCancel)
     }
-    else if (elementRef.value) {
-      const el = elementRef.value as HTMLElement
-
-      el.removeEventListener('touchstart', handleTouchStart)
-      el.removeEventListener('touchmove', handleTouchMove)
-      el.removeEventListener('touchend', handleTouchEnd)
-      el.removeEventListener('touchcancel', handleTouchCancel)
+    if (newElement) {
+      newElement.addEventListener('touchstart', handleTouchStart, { passive: true })
+      newElement.addEventListener('touchmove', handleTouchMove, { passive: true })
+      newElement.addEventListener('touchend', handleTouchEnd, { passive: true })
+      newElement.addEventListener('touchcancel', handleTouchCancel, { passive: true })
     }
   }, { immediate: true })
 
   return {
     isTouching,
-    pressedFor,
   }
 }
 
@@ -307,17 +243,6 @@ watch(isTouching, (val) => {
           transform: `scale(${pressedAnimatable.scale / 100})`,
         }"
       >
-        <div
-          ref="topSentinel"
-          aria-hidden="true"
-          class="pointer-events-none absolute inset-x-0 top-0 h-px opacity-0"
-        />
-        <div
-          ref="bottomSentinel"
-          aria-hidden="true"
-          class="pointer-events-none absolute inset-x-0 bottom-0 h-px opacity-0"
-        />
-
         <DropdownMenuRoot>
           <DropdownMenuTrigger
             v-if="!shouldDisableDropdownMenu"
@@ -326,9 +251,10 @@ watch(isTouching, (val) => {
               'absolute z-10 opacity-0 transition-opacity duration-200',
               'group-hover/chat-action:opacity-100 group-focus-within/chat-action:opacity-100',
               forceVisible ? 'opacity-100' : '',
-              props.placement === 'left' ? 'left-0 top-0 translate-x-[calc(-100%-8px)]' : 'right-0 top-0 translate-x-[calc(100%+8px)]',
+              props.placement === 'left'
+                ? 'left-0 top-1/2 translate-x-[calc(-100%-8px)] -translate-y-1/2'
+                : 'right-0 top-1/2 translate-x-[calc(100%+8px)] -translate-y-1/2',
             ]"
-            :style="inlineTriggerStyle"
           >
             <button
               :class="[
@@ -355,62 +281,6 @@ watch(isTouching, (val) => {
               <DropdownMenuItem
                 v-for="item in menuItems"
                 :key="item.action"
-                :class="[
-                  ...itemClasses,
-                  item.danger
-                    ? 'text-red-500 data-[highlighted]:bg-red-50/80 dark:data-[highlighted]:bg-red-950/40'
-                    : '',
-                ]"
-                @select="() => void handleAction(item.action)"
-              >
-                <div :class="[item.icon, 'text-xs']" />
-                <span>{{ item.label }}</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenuPortal>
-        </DropdownMenuRoot>
-
-        <DropdownMenuRoot v-if="showFloatingTrigger">
-          <div
-            :class="[
-              'pointer-events-none flex absolute',
-              'group-hover/chat-action:opacity-100 group-focus-within/chat-action:opacity-100',
-              'transition-opacity duration-200',
-              forceVisible ? 'opacity-100' : '',
-              props.placement === 'left' ? 'left-0' : 'right-0',
-              props.placement === 'left' ? 'translate-x-[calc(-100%-8px)]' : 'translate-x-[calc(100%+8px)]',
-              bottomIsVisible ? 'bottom-0' : 'top-0',
-            ]"
-            :style="floatingTriggerStyle"
-          >
-            <DropdownMenuTrigger
-              v-if="!shouldDisableDropdownMenu"
-              as-child
-            >
-              <button
-                :class="[
-                  'pointer-events-auto h-8 w-8 flex items-center justify-center rounded-lg',
-                  'bg-white/85 text-neutral-500 backdrop-blur-sm',
-                  'dark:bg-neutral-900/85 dark:text-neutral-300',
-                  'transition-colors hover:text-primary-500 dark:hover:text-primary-300',
-                ]"
-                :aria-label="menuLabel"
-              >
-                <div class="i-solar:menu-dots-bold text-base" />
-              </button>
-            </DropdownMenuTrigger>
-          </div>
-
-          <DropdownMenuPortal>
-            <DropdownMenuContent
-              align="end"
-              side="bottom"
-              :side-offset="6"
-              :class="contentClasses"
-            >
-              <DropdownMenuItem
-                v-for="item in menuItems"
-                :key="`${item.action}-floating`"
                 :class="[
                   ...itemClasses,
                   item.danger

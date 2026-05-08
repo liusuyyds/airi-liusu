@@ -242,18 +242,18 @@ export function useChatHistoryScroll<TMessage extends { role?: string }>({
     })
   }
 
+  /**
+   * NOTICE:
+   * Previous implementation used querySelectorAll('[data-chat-message-key]') and
+   * iterated every element — O(N) where N = total messages.
+   * querySelector with an attribute-equals selector stops at the first match.
+   */
   function findMessageElementByKey(key: string | number) {
     const container = getContainer()
     if (!container)
       return null
 
-    const messageElements = Array.from(container.querySelectorAll<HTMLElement>('[data-chat-message-key]'))
-    for (const element of messageElements) {
-      if (element.dataset.chatMessageKey === `${key}`)
-        return element
-    }
-
-    return null
+    return container.querySelector<HTMLElement>(`[data-chat-message-key="${key}"]`)
   }
 
   function bindContainer(container: HTMLDivElement) {

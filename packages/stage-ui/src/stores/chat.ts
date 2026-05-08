@@ -15,8 +15,8 @@ import { useAnalytics } from '../composables'
 import { useLlmmarkerParser } from '../composables/llm-marker-parser'
 import { categorizeResponse, createStreamingCategorizer } from '../composables/response-categoriser'
 import { activeTurnSpan, startSpan } from '../composables/use-io-tracer'
-import { estimateMessagesTokens, estimateTokens, sanitizeToolContent } from '../utils'
 import { extractMessageText, isCloudSyncableMessage } from '../libs/chat-sync'
+import { estimateMessagesTokens, estimateTokens, sanitizeToolContent } from '../utils'
 import { formatContextPromptText } from './chat/context-prompt'
 import { createMinecraftContext } from './chat/context-providers'
 import { useChatContextStore } from './chat/context-store'
@@ -615,22 +615,22 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
 
       await parser.end()
 
+      // NOTICE:
+      // Previously each tool result called appendSessionMessage individually
+      // (40 calls = 40 array spreads) and JSON.stringify + sanitize ran twice
+      // (once for persist, once for hooks). Now we compute tool messages once
+      // and batch-append in a single spread.
+      let sanitizedToolMessages: ToolMessage[] = []
+      if (mcpStore.sanitizeToolResults) {
+        sanitizedToolMessages = buildingMessage.tool_results.map((tr) => {
+          const rawContent = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result ?? '')
+          return { role: 'tool', tool_call_id: tr.id, content: sanitizeToolContent(rawContent) } as ToolMessage
+        })
+      }
+
       if (!isStaleGeneration() && buildingMessage.slices.length > 0) {
         const finalAssistant = toRaw(buildingMessage)
-        chatSession.appendSessionMessage(sessionId, finalAssistant)
-        // When sanitize is enabled, append tool results to history so the model
-        // can reference them in future turns. When disabled, discard them to
-        // match the pre-sanitize behavior and avoid history bloat.
-        if (mcpStore.sanitizeToolResults) {
-          for (const tr of buildingMessage.tool_results) {
-            const rawContent = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result ?? '')
-            chatSession.appendSessionMessage(sessionId, {
-              role: 'tool',
-              tool_call_id: tr.id,
-              content: sanitizeToolContent(rawContent),
-            } as ToolMessage)
-          }
-        }
+        chatSession.appendSessionMessages(sessionId, [finalAssistant, ...sanitizedToolMessages])
         // Cloud sync v1: push assistant message to server
         if (isCloudSyncableMessage(finalAssistant) && finalAssistant.id) {
           void chatSession.pushMessageToCloud(sessionId, {
@@ -649,18 +649,8 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       await hooks.emitChatTurnCompleteHooks({
         output: { ...buildingMessage },
         outputText: fullText,
-        // When sanitize is enabled, pass the current turn's tool results to hooks.
-        // When disabled, fall back to reading from session history (pre-sanitize
-        // behavior) so hooks that depend on tool context still work.
-        toolCalls: mcpStore.sanitizeToolResults
-          ? buildingMessage.tool_results.map((tr) => {
-              const rawContent = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result ?? '')
-              return {
-                role: 'tool',
-                tool_call_id: tr.id,
-                content: sanitizeToolContent(rawContent),
-              } as ToolMessage
-            })
+        toolCalls: sanitizedToolMessages.length > 0
+          ? sanitizedToolMessages
           : sessionMessagesForSend.filter(msg => msg.role === 'tool') as ToolMessage[],
       }, streamingMessageContext)
 

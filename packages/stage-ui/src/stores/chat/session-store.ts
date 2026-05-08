@@ -308,6 +308,20 @@ export const useChatSessionStore = defineStore('chat-session', () => {
     ])
   }
 
+  // NOTICE:
+  // appendSessionMessage spreads the entire array on every call. When 40 MCP
+  // tool results arrive at the end of a turn, that produces 40 intermediate
+  // array copies. appendSessionMessages batches them into a single spread.
+  function appendSessionMessages(sessionId: string, messages: ChatHistoryItem[]) {
+    if (messages.length === 0)
+      return
+    ensureSession(sessionId)
+    replaceSessionMessages(sessionId, [
+      ...(sessionMessages.value[sessionId] ?? []),
+      ...messages,
+    ])
+  }
+
   /**
    * Hydrate a single session's messages from IDB into memory. Idempotent —
    * subsequent calls for the same id are no-ops.
@@ -1449,6 +1463,7 @@ export const useChatSessionStore = defineStore('chat-session', () => {
     ensureSession,
     setSessionMessages,
     appendSessionMessage,
+    appendSessionMessages,
     persistSessionMessages,
     getSessionMessages,
     sessionMessages,
