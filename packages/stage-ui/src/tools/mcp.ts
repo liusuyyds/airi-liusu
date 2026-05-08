@@ -147,7 +147,13 @@ export function createMcpTools(runtime: McpToolRuntime, options?: CreateMcpTools
               result: sanitizeToolContent(result.structuredContent.result),
             }
           }
-          return result
+          // NOTICE:
+          // xsAI's wrapToolResult() JSON-stringifies plain objects, so returning
+          // the full {content, structuredContent} wrapper sends *both* fields to
+          // the LLM as duplicate text.  Return only the standard `content` array
+          // (OpenAI-compatible content parts) so the model sees a single clean
+          // tool result.
+          return result.content ?? result.structuredContent ?? result
         }
         catch (error) {
           return {
