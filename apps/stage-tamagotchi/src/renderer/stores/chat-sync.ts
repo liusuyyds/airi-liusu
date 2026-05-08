@@ -10,6 +10,7 @@ import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-sto
 import { useChatStreamStore } from '@proj-airi/stage-ui/stores/chat/stream-store'
 import { useConsciousnessStore } from '@proj-airi/stage-ui/stores/modules/consciousness'
 import { useProvidersStore } from '@proj-airi/stage-ui/stores/providers'
+import { deleteMessageWithToolCascade } from '@proj-airi/stage-ui/utils'
 import { defineStore, storeToRefs } from 'pinia'
 import { ref, watch } from 'vue'
 
@@ -361,13 +362,19 @@ export const useChatSyncStore = defineStore('stage-tamagotchi:chat-sync', () => 
 
   function executeDeleteMessage(payload: { sessionId?: string, messageId?: string, index?: number }) {
     const sessionId = payload.sessionId || chatSession.activeSessionId
-    const nextMessages = chatSession.getSessionMessages(sessionId).filter((message, index) => {
-      if (payload.messageId)
-        return message.id !== payload.messageId
-      if (payload.index !== undefined)
-        return index !== payload.index
-      return true
-    })
+    const currentMessages = chatSession.getSessionMessages(sessionId)
+    let nextMessages: ChatHistoryItem[]
+
+    if (payload.messageId) {
+      const index = currentMessages.findIndex(m => m.id === payload.messageId)
+      nextMessages = index >= 0 ? deleteMessageWithToolCascade(currentMessages, index) : currentMessages
+    }
+    else if (payload.index !== undefined) {
+      nextMessages = deleteMessageWithToolCascade(currentMessages, payload.index)
+    }
+    else {
+      nextMessages = currentMessages
+    }
 
     chatSession.setSessionMessages(sessionId, nextMessages)
   }

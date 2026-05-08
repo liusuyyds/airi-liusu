@@ -5,6 +5,7 @@ import { ChatHistory } from '@proj-airi/stage-ui/components'
 import { useChatOrchestratorStore } from '@proj-airi/stage-ui/stores/chat'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
 import { useChatStreamStore } from '@proj-airi/stage-ui/stores/chat/stream-store'
+import { deleteMessageWithToolCascade } from '@proj-airi/stage-ui/utils'
 import { useDeferredMount } from '@proj-airi/ui'
 import { storeToRefs } from 'pinia'
 import { computed, ref } from 'vue'
@@ -22,7 +23,7 @@ const isLoading = ref(true)
 const historyMessages = computed(() => messages.value as unknown as ChatHistoryItem[])
 
 function handleDeleteMessage(index: number) {
-  messages.value = messages.value.filter((_, messageIndex) => messageIndex !== index)
+  messages.value = deleteMessageWithToolCascade(messages.value, index)
 }
 </script>
 

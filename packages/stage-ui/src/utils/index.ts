@@ -1,3 +1,4 @@
+export { deleteMessageWithToolCascade } from './delete-message'
 export { getEventSourceKey } from './event-source'
 export { sanitizeToolContent } from './sanitize-tool-content'
 export { estimateMessageArrayTokens, estimateMessagesTokens, estimateTokens, formatTokenCount, formatTokenCountCN } from './token-estimate'
