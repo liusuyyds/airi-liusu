@@ -138,14 +138,29 @@ export function createMcpTools(runtime: McpToolRuntime, options?: CreateMcpTools
               return part
             })
           }
-          // Also sanitize structuredContent when it carries a raw text result,
-          // so the LLM sees the compact form no matter which field the provider
-          // serializes from.
           if (sanitizeToolResults && result.structuredContent && typeof result.structuredContent.result === 'string') {
             result.structuredContent = {
               ...result.structuredContent,
               result: sanitizeToolContent(result.structuredContent.result),
             }
+          }
+          // NOTICE:
+          // MCP servers (e.g. read_memory) often populate both `content` and
+          // `structuredContent` with near-identical data. When xsAI's
+          // `wrapToolResult` receives the full object, it JSON-stringifies the
+          // whole thing, so the LLM sees both fields — doubling token usage.
+          //
+          // We still return the full result object (so xsAI recognises the shape
+          // and processes it correctly), but we null-out whichever field is
+          // empty or redundant so the serialized form only contains one copy.
+          if (result.content && result.content.length > 0) {
+            // `content` has real data — drop `structuredContent` to avoid
+            // duplicating the same information in the JSON-stringified form.
+            result.structuredContent = undefined
+          }
+          else if (result.structuredContent) {
+            // `content` is empty/absent — keep only `structuredContent`.
+            result.content = undefined
           }
           return result
         }
