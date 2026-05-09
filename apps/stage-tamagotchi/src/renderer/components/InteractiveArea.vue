@@ -12,12 +12,12 @@ import { useChatStreamStore } from '@proj-airi/stage-ui/stores/chat/stream-store
 import { useJournalPreviewStore } from '@proj-airi/stage-ui/stores/journal-preview'
 import { useLlmToolsStore } from '@proj-airi/stage-ui/stores/llm-tools'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
-import { estimateMessageArrayTokens, formatTokenCount, formatTokenCountCN } from '@proj-airi/stage-ui/utils'
+import { estimateTokens, formatTokenCount, formatTokenCountCN } from '@proj-airi/stage-ui/utils'
 import { BasicTextarea } from '@proj-airi/ui'
-import { useLocalStorage } from '@vueuse/core'
+import { useDebounceFn, useLocalStorage } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from 'reka-ui'
-import { computed, onMounted, ref, toRaw, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
@@ -46,14 +46,15 @@ const { sending } = storeToRefs(chatOrchestrator)
 const { systemPrompt } = storeToRefs(characterStore)
 
 /**
- * Assembles the full context that would be sent to the model right now:
- * system prompt + message history (including tool messages) +
- * current streaming output + current user input.
+ * 显示的上下文 token 计数，与流式 UI 刷新频率解耦。
+ * 原先每 24 token（~30Hz）对 50k+ 上下文 JSON 做全量 tiktoken 编码会阻塞主线程。
  *
- * JSON-stringifies the array and counts tokens so that JSON structure,
- * role keys, tool_calls, and tool_call_id all contribute to the total.
+ * 流式期间以 250ms 防抖估算；流式结束后（streamingMessage 重置为空且 sending 为
+ * false），全量重算延迟到 nextTick，避免阻塞流式消息移除时的 DOM 更新。
  */
-const allContextTokens = computed(() => {
+const contextTokensDisplay = ref(0)
+
+function buildContextArray(): unknown[] {
   const context: unknown[] = []
 
   if (systemPrompt.value) {
@@ -62,7 +63,6 @@ const allContextTokens = computed(() => {
 
   for (const msg of messages.value) {
     const raw = toRaw(msg) as unknown as Record<string, unknown>
-    // Keep only the fields actually sent to the API.
     const clean: Record<string, unknown> = { role: raw.role }
     if ('content' in raw)
       clean.content = raw.content
@@ -88,8 +88,6 @@ const allContextTokens = computed(() => {
     context.push({ role: 'user', content: messageInput.value })
   }
 
-  // Include tool definitions in the context estimate — they are sent with every
-  // request and can be thousands of tokens (especially MCP tools with large schemas).
   const tools = llmToolsStore.activeTools
   if (tools.length > 0) {
     for (const tool of tools) {
@@ -100,10 +98,36 @@ const allContextTokens = computed(() => {
     }
   }
 
-  return estimateMessageArrayTokens(context)
-})
+  return context
+}
 
-const displayContextTotal = allContextTokens
+function computeAndSetContextTokens() {
+  const ctx = buildContextArray()
+  // NOTICE: 跳过 estimateMessageArrayTokens 的 JSON.parse(JSON.stringify(...))
+  // 回路——context 数组已是 toRaw() + 手动字段拷贝构建的纯对象。
+  contextTokensDisplay.value = estimateTokens(JSON.stringify(ctx))
+}
+
+const debouncedCompute = useDebounceFn(computeAndSetContextTokens, 250)
+
+// NOTICE: 只监听 messages 长度和 streamingMessage，不监听 sending。
+// 将 sending 加入依赖会导致流式→空闲过渡期间，重量级 tiktoken 计算在
+// pre-flush watcher 回调中同步执行，阻塞流式消息移除的 DOM 更新。
+watch(
+  [() => messages.value.length, streamingMessage],
+  () => {
+    if (sending.value) {
+      debouncedCompute()
+    }
+    else {
+      // 延迟到 nextTick，避免流式消息从列表移除时阻塞 DOM 更新
+      void nextTick(() => computeAndSetContextTokens())
+    }
+  },
+  { immediate: true },
+)
+
+const displayContextTotal = contextTokensDisplay
 const { activeCardId } = storeToRefs(airiCardStore)
 const { t } = useI18n()
 const { openImagePreview } = journalPreviewStore

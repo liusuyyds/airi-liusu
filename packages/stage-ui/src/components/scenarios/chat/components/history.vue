@@ -58,23 +58,25 @@ function shouldShowPlaceholder(message: ChatHistoryItem) {
 }
 
 // NOTICE:
-// Previous implementation used `messages.some(...)` which is O(N) over all
-// messages. Since the streaming message is always appended at the end when
-// present, checking only the last message is O(1) and avoids scanning the
-// entire array on every 24-token UI flush during streaming.
+// 原先用 `messages.some(...)` 对所有消息做 O(N) 扫描。由于流式消息始终追加
+// 在末尾，仅检查最后一条消息是 O(1)，避免流式期间每 24 token 遍历整个数组。
 const renderMessages = computed<ChatHistoryItem[]>(() => {
+  // NOTICE: 过滤 role: 'tool' 消息——它们产生空的 DOM 容器但仍占 flex gap
+  // 间距（gap-2 = 8px），在对话轮次间积累大段空白（如 50 次工具调用 = 400px）。
+  const visible = props.messages.filter(m => m.role !== 'tool')
+
   if (!props.sending)
-    return props.messages
+    return visible
 
   const streamTs = streamingTs.value
   if (!streamTs)
-    return props.messages
+    return visible
 
   const lastMsg = props.messages.at(-1)
   if (lastMsg?.role === 'assistant' && lastMsg?.createdAt === streamTs)
-    return props.messages
+    return visible
 
-  return [...props.messages, streaming.value]
+  return [...visible, streaming.value]
 })
 
 useChatHistoryScroll({
@@ -92,27 +94,30 @@ function emitCopyMessage(message: ChatHistoryItem, index: number) {
 }
 
 function emitDeleteMessage(message: ChatHistoryItem, index: number) {
+  // NOTICE: 此处的 index 来自过滤后的 renderMessages（已排除 role: 'tool'）。
+  // 通过 findIndex 找回在原始 messages 数组中的真实索引，确保删除操作准确定位。
+  const realIndex = props.messages.findIndex(m => m === message)
   emit('deleteMessage', {
     message,
-    index,
+    index: realIndex >= 0 ? realIndex : index,
     key: getChatHistoryItemKey(message, index),
   })
 }
 
 function emitRetryMessage(message: ChatHistoryItem, index: number) {
+  const realIndex = props.messages.findIndex(m => m === message)
   emit('retryMessage', {
     message,
-    index,
+    index: realIndex >= 0 ? realIndex : index,
     key: getChatHistoryItemKey(message, index),
   })
 }
 </script>
 
 <template>
-  <!-- NOTICE: `v-auto-animate` was removed here. It ran FLIP animations
-       (getBoundingClientRect on every child) on each DOM mutation, causing
-       O(N) layout reads per new message — devastating at 200+ messages.
-       The scroll composable already handles scroll-to-bottom. -->
+  <!-- NOTICE: 移除了 `v-auto-animate`。它会在每次 DOM 变更时对所有子元素执行
+       FLIP 动画（getBoundingClientRect），每条新消息产生 O(N) 次布局读取——
+       200+ 条消息时性能灾难。滚动合成器已处理滚动到底部。 -->
   <div ref="chatHistoryRef" flex="~ col" relative h-full w-full overflow-y-auto rounded-xl px="<sm:2" py="<sm:2" :class="variant === 'mobile' ? 'gap-1' : 'gap-2'">
     <template v-for="(message, index) in renderMessages" :key="getChatHistoryItemKey(message, index)">
       <div
