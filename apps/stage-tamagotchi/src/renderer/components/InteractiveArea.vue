@@ -12,7 +12,7 @@ import { useChatStreamStore } from '@proj-airi/stage-ui/stores/chat/stream-store
 import { useJournalPreviewStore } from '@proj-airi/stage-ui/stores/journal-preview'
 import { useLlmToolsStore } from '@proj-airi/stage-ui/stores/llm-tools'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
-import { estimateTokens, formatTokenCount, formatTokenCountCN } from '@proj-airi/stage-ui/utils'
+import { cleanupNocturneMemoryContext, estimateTokens, formatTokenCount, formatTokenCountCN } from '@proj-airi/stage-ui/utils'
 import { BasicTextarea } from '@proj-airi/ui'
 import { useDebounceFn, useLocalStorage } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
@@ -55,13 +55,14 @@ const { systemPrompt } = storeToRefs(characterStore)
 const contextTokensDisplay = ref(0)
 
 function buildContextArray(): unknown[] {
+  const cleanMessages = cleanupNocturneMemoryContext(messages.value as ChatHistoryItem[])
   const context: unknown[] = []
 
   if (systemPrompt.value) {
     context.push({ role: 'system', content: systemPrompt.value })
   }
 
-  for (const msg of messages.value) {
+  for (const msg of cleanMessages) {
     const raw = toRaw(msg) as unknown as Record<string, unknown>
     const clean: Record<string, unknown> = { role: raw.role }
     if ('content' in raw)

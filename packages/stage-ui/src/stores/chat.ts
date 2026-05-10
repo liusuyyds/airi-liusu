@@ -16,7 +16,7 @@ import { useLlmmarkerParser } from '../composables/llm-marker-parser'
 import { categorizeResponse, createStreamingCategorizer } from '../composables/response-categoriser'
 import { activeTurnSpan, startSpan } from '../composables/use-io-tracer'
 import { extractMessageText, isCloudSyncableMessage } from '../libs/chat-sync'
-import { estimateMessagesTokens, estimateTokens, sanitizeToolContent } from '../utils'
+import { cleanupNocturneMemoryContext, cleanupNocturneMemoryResults, estimateMessagesTokens, estimateTokens, sanitizeToolContent } from '../utils'
 import { formatContextPromptText } from './chat/context-prompt'
 import { createMinecraftContext } from './chat/context-providers'
 import { useChatContextStore } from './chat/context-store'
@@ -392,7 +392,12 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       // See `./chat/datetime-prefix.ts` for the rationale.
       const nowTs = Date.now()
 
-      const newMessages = sessionMessagesForSend.map((msg) => {
+      // NOTICE:
+      // Cross-turn dedup for Nocturne Memory: across all turns, keep only
+      // the last read_memory per URI, last N search_memory, and remove errors.
+      const contextMessages = cleanupNocturneMemoryContext(sessionMessagesForSend)
+
+      const newMessages = contextMessages.map((msg) => {
         const { context: _context, id: _id, createdAt, ...withoutContext } = msg
         const rawMessage = toRaw(withoutContext)
 
@@ -622,16 +627,47 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       await parser.end()
 
       // NOTICE:
+      // createQueue.enqueue() starts async drain without awaiting it.
+      // parser.end() only signals text stream completion; the tool-call
+      // queue may still be draining. Yield to macrotask queue so any
+      // in-flight handler completes, then wait for drain if not empty.
+      await new Promise<void>(r => setTimeout(r, 0))
+      if (toolCallQueue.length() > 0) {
+        await new Promise<void>((resolve) => {
+          toolCallQueue.on('drain', () => resolve())
+        })
+      }
+
+      // NOTICE:
+      // Identify redundant or errored Nocturne Memory tool calls to exclude
+      // from the LLM context. slices and tool_results stay intact for UI display.
+      // - read_memory(uri): same URI → only last call's toolCallId kept
+      // - read_memory(uri) error → excluded entirely
+      // - search_memory: only last 2 calls kept
+      const nocturneCleanup = cleanupNocturneMemoryResults(
+        buildingMessage.slices,
+        buildingMessage.tool_results,
+      )
+      // Only prune tool_calls — slices and tool_results remain for UI
+      if (buildingMessage.tool_calls) {
+        buildingMessage.tool_calls = buildingMessage.tool_calls.filter(
+          tc => !nocturneCleanup.removeToolCallIds.has(tc.id),
+        )
+      }
+
+      // NOTICE:
       // Previously each tool result called appendSessionMessage individually
       // (40 calls = 40 array spreads) and JSON.stringify + sanitize ran twice
       // (once for persist, once for hooks). Now we compute tool messages once
       // and batch-append in a single spread.
       let sanitizedToolMessages: ToolMessage[] = []
       if (mcpStore.sanitizeToolResults) {
-        sanitizedToolMessages = buildingMessage.tool_results.map((tr) => {
-          const rawContent = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result ?? '')
-          return { role: 'tool', tool_call_id: tr.id, content: sanitizeToolContent(rawContent) } as ToolMessage
-        })
+        sanitizedToolMessages = buildingMessage.tool_results
+          .filter(tr => !nocturneCleanup.removeToolCallIds.has(tr.id))
+          .map((tr) => {
+            const rawContent = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result ?? '')
+            return { role: 'tool', tool_call_id: tr.id, content: sanitizeToolContent(rawContent) } as ToolMessage
+          })
       }
 
       if (!isStaleGeneration() && buildingMessage.slices.length > 0) {
