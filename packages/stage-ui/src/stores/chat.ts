@@ -643,7 +643,6 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       // from the LLM context. slices and tool_results stay intact for UI display.
       // - read_memory(uri): same URI → only last call's toolCallId kept
       // - read_memory(uri) error → excluded entirely
-      // - search_memory: only last 2 calls kept
       const nocturneCleanup = cleanupNocturneMemoryResults(
         buildingMessage.slices,
         buildingMessage.tool_results,

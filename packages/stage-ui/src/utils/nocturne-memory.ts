@@ -197,8 +197,6 @@ export interface NocturneCleanupResult {
  * Rules:
  * - `read_memory(uri)`: same URI — keep only the LAST call
  * - `read_memory(uri)` with error result: remove entirely
- * - `search_memory`: all removed when the turn also has read_memory
- *   (search is consumed once the model actually reads the found URIs)
  *
  * Does NOT modify slices or tool_results — those remain intact for UI.
  *
@@ -230,15 +228,6 @@ export function cleanupNocturneMemoryResults(
     }
   }
 
-  // --- search_memory: consumed when turn also has read_memory ---
-  if (readCalls.length > 0) {
-    for (const call of calls) {
-      if (call.toolName === 'search_memory') {
-        removeSet.add(call.toolCallId)
-      }
-    }
-  }
-
   return { removeToolCallIds: removeSet }
 }
 
@@ -252,7 +241,7 @@ function hasToolCallsField(msg: ChatHistoryItem): msg is ChatHistoryItem & { rol
  *
  * Returns null for non-Nocturne-Memory calls or unparseable args.
  */
-function parseToolCallForContext(tc: ToolCall): { toolCallId: string, toolName: string, uri?: string, query?: string, domain?: string } | null {
+function parseToolCallForContext(tc: ToolCall): { toolCallId: string, toolName: string, uri?: string } | null {
   const func = tc.function
   if (!func || typeof func.name !== 'string' || func.name !== 'builtIn_mcpCallTool')
     return null
@@ -272,9 +261,7 @@ function parseToolCallForContext(tc: ToolCall): { toolCallId: string, toolName: 
     return null
 
   const uri = typeof mcpArgs.uri === 'string' ? mcpArgs.uri : undefined
-  const query = typeof mcpArgs.query === 'string' ? mcpArgs.query : undefined
-  const domain = typeof mcpArgs.domain === 'string' ? mcpArgs.domain : undefined
-  return { toolCallId: tc.id, toolName, uri, query, domain }
+  return { toolCallId: tc.id, toolName, uri }
 }
 
 /**
@@ -284,9 +271,7 @@ function parseToolCallForContext(tc: ToolCall): { toolCallId: string, toolName: 
  * `read_memory(uri)`: keeps only the LAST occurrence per URI across ALL turns.
  * Previous reads and error results are removed.
  *
- * `search_memory`: when a turn has both search and read_memory, all searches
- * in that turn are consumed (navigation step) and removed. Remaining searches:
- * same query+domain → keep only last; globally keep at most 3.
+ * `search_memory`: keeps only the last 3 across all turns.
  *
  * Returns a new filtered array; originals are not mutated.
  */
@@ -350,74 +335,22 @@ export function cleanupNocturneMemoryContext(messages: ChatHistoryItem[]): ChatH
     }
   }
 
-  // --- search_memory ---
-  // Collect searches per assistant message, tagging consumed turns
-  interface SearchEntry { toolCallId: string, queryKey: string }
-  const consumedSearchIds: string[] = []
-  const aliveSearchEntries: SearchEntry[] = []
-
+  // --- search_memory: keep last 6 globally ---
+  const allSearchIds: string[] = []
   for (const msg of messages) {
     if (!hasToolCallsField(msg))
       continue
-    const searches: SearchEntry[] = []
-    let hasRead = false
     for (const tc of msg.tool_calls) {
       const parsed = parseToolCallForContext(tc)
-      if (!parsed)
+      if (!parsed || parsed.toolName !== 'search_memory')
         continue
-      if (parsed.toolName === 'read_memory') {
-        hasRead = true
-      }
-      if (parsed.toolName === 'search_memory') {
-        const query = parsed.query ?? ''
-        const domain = parsed.domain ?? ''
-        searches.push({ toolCallId: parsed.toolCallId, queryKey: `${query}|${domain}` })
-      }
-    }
-    if (searches.length > 0) {
-      if (hasRead) {
-        consumedSearchIds.push(...searches.map(s => s.toolCallId))
-      }
-      else {
-        aliveSearchEntries.push(...searches)
-      }
+      allSearchIds.push(parsed.toolCallId)
     }
   }
-
-  // Remove consumed searches
-  for (const id of consumedSearchIds) {
-    removeCallIds.add(id)
-  }
-
-  // Alive searches: per-query last, then global last N
-  if (aliveSearchEntries.length > 0) {
-    const queryLastId = new Map<string, string>()
-    for (const s of aliveSearchEntries) {
-      queryLastId.set(s.queryKey, s.toolCallId)
-    }
-    const perQueryKept = aliveSearchEntries.filter(s => queryLastId.get(s.queryKey) === s.toolCallId)
-    // Keep only unique IDs in order
-    const uniqueKept = new Map<string, number>() // toolCallId → first index
-    for (const s of perQueryKept) {
-      if (!uniqueKept.has(s.toolCallId)) {
-        uniqueKept.set(s.toolCallId, aliveSearchEntries.findIndex(e => e.toolCallId === s.toolCallId))
-      }
-    }
-    const sorted = [...uniqueKept.entries()].sort((a, b) => a[1] - b[1]).map(e => e[0])
-    const globalKept = sorted.slice(-SEARCH_GLOBAL_LIMIT)
-    const keepIds = new Set(globalKept)
-
-    for (const msg of messages) {
-      if (!hasToolCallsField(msg))
-        continue
-      for (const tc of msg.tool_calls) {
-        const parsed = parseToolCallForContext(tc)
-        if (!parsed || parsed.toolName !== 'search_memory')
-          continue
-        if (!keepIds.has(parsed.toolCallId)) {
-          removeCallIds.add(parsed.toolCallId)
-        }
-      }
+  const keepSearchIds = new Set(allSearchIds.slice(-SEARCH_GLOBAL_LIMIT))
+  for (const id of allSearchIds) {
+    if (!keepSearchIds.has(id)) {
+      removeCallIds.add(id)
     }
   }
 
