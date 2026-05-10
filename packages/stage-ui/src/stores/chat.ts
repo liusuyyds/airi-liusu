@@ -568,13 +568,19 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
         // Guard against empty usage objects ({}) or string-typed fields that some
         // providers return. Coerce strings to numbers so we don't silently fall
         // back to estimation when real usage is available.
-        const rawPrompt = (usage as any)?.prompt_tokens
-        const rawCompletion = (usage as any)?.completion_tokens
-        const promptFromUsage = typeof rawPrompt === 'string' ? Number.parseInt(rawPrompt, 10) : rawPrompt
-        const completionFromUsage = typeof rawCompletion === 'string' ? Number.parseInt(rawCompletion, 10) : rawCompletion
-        const hasValidUsage = usage
-          && typeof promptFromUsage === 'number' && !Number.isNaN(promptFromUsage)
-          && typeof completionFromUsage === 'number' && !Number.isNaN(completionFromUsage)
+        function coerceToNumber(value: unknown): number | undefined {
+          if (typeof value === 'number' && Number.isFinite(value))
+            return value
+          if (typeof value === 'string') {
+            const n = Number.parseInt(value, 10)
+            return Number.isFinite(n) ? n : undefined
+          }
+          return undefined
+        }
+        const promptFromUsage = coerceToNumber(usage?.prompt_tokens)
+        const completionFromUsage = coerceToNumber(usage?.completion_tokens)
+        const hasValidUsage = typeof promptFromUsage === 'number'
+          && typeof completionFromUsage === 'number'
           && promptFromUsage > 0
 
         let promptTokens = hasValidUsage ? promptFromUsage : 0
@@ -586,7 +592,7 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
         if (!hasValidUsage) {
           console.info('[chat] usage unavailable from provider, falling back to estimation')
           try {
-            const estimatedPrompt = await estimateMessagesTokens(newMessages as any, { tools: options.tools })
+            const estimatedPrompt = await estimateMessagesTokens(newMessages, { tools: options.tools })
             // Completion includes both the spoken reply and the reasoning/thinking
             // process that the model generated internally (e.g. GLM's <think> block).
             const speechText = fullText
@@ -601,7 +607,7 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
           }
         }
         else {
-          console.info('[chat] provider usage — prompt:', usage.prompt_tokens, 'completion:', usage.completion_tokens)
+          console.info('[chat] provider usage — prompt:', usage?.prompt_tokens, 'completion:', usage?.completion_tokens)
         }
 
         contextTokenCount.value = promptTokens

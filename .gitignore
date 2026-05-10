@@ -135,4 +135,7 @@ apps/stage-tamagotchi/electron.vite.config.*.mjs
 # Tools - Obsidian
 .obsidian/
 
+# Session context notes (local dev only)
+SESSION-CONTEXT.md
+
 docs/ai/context/verifications/

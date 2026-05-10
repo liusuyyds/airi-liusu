@@ -1,7 +1,8 @@
 import type { ChatProvider } from '@xsai-ext/providers/utils'
 import type { CompletionStep, Message, Tool, Usage } from '@xsai/shared-chat'
+import type { StreamTextEvent } from '@xsai/stream-text'
 
-import type { StreamFromOptions, StreamOptions } from '../types/llm'
+import type { StreamEvent, StreamFromOptions, StreamOptions } from '../types/llm'
 
 import { errorMessageFrom } from '@moeru/std'
 import { stepCountAtLeast } from '@xsai/shared-chat'
@@ -48,13 +49,12 @@ function aggregateStepUsage(steps: CompletionStep[]): Usage | undefined {
   let total = 0
 
   for (const step of steps) {
-    const u = (step as any).usage as Usage | undefined
-    if (!u)
+    if (!step.usage)
       continue
     hasAny = true
-    prompt += coerceTokens(u.prompt_tokens)
-    completion += coerceTokens(u.completion_tokens)
-    total += coerceTokens(u.total_tokens)
+    prompt += coerceTokens(step.usage.prompt_tokens)
+    completion += coerceTokens(step.usage.completion_tokens)
+    total += coerceTokens(step.usage.total_tokens)
   }
 
   if (!hasAny)
@@ -296,18 +296,18 @@ export async function streamFrom({
       reject(error)
     }
 
-    const onEvent = async (event: unknown) => {
+    const onEvent = async (event: StreamTextEvent) => {
       try {
         const streamEvent = resolveCapturedToolErrorEvent(event, capturedToolErrorByCallId)
-        await options?.onStreamEvent?.(streamEvent as any)
-        if (event && (event as any).type === 'finish') {
-          const finishReason = (event as any).finishReason
+        await options?.onStreamEvent?.(streamEvent as StreamEvent)
+        if (event.type === 'finish') {
+          const finishReason = event.finishReason
           const waitingForToolRound = finishReason === 'tool_calls' || finishReason === 'tool-calls'
           if (!waitingForToolRound || !options?.waitForTools)
             resolveOnce()
         }
-        else if (event && (event as any).type === 'error') {
-          rejectOnce((event as any).error ?? new Error('Stream error'))
+        else if (event.type === 'error') {
+          rejectOnce(event.error ?? new Error('Stream error'))
         }
       }
       catch (error) {

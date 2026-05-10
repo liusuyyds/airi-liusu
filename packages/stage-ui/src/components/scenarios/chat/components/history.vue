@@ -72,7 +72,11 @@ const renderMessages = computed<ChatHistoryItem[]>(() => {
   if (!streamTs)
     return visible
 
-  const lastMsg = props.messages.at(-1)
+  // NOTICE: 用 visible（已过滤 tool 消息）取最后一条，而非 props.messages。
+  // appendSessionMessages 追加 [finalAssistant, tool1, ...] 后，
+  // props.messages.at(-1) 是 role: 'tool'，不等于 'assistant'，导致
+  // streaming.value 被错误追加为重复消息，工具调用块短暂渲染两次。
+  const lastMsg = visible.at(-1)
   if (lastMsg?.role === 'assistant' && lastMsg?.createdAt === streamTs)
     return visible
 
