@@ -26,6 +26,7 @@ import { useChatSessionStore } from './chat/session-store'
 import { useChatStreamStore } from './chat/stream-store'
 import { useContextObservabilityStore } from './devtools/context-observability'
 import { useLLM } from './llm'
+import { useLlmToolsetPromptsStore } from './llm-toolset-prompts'
 import { useMcpStore } from './mcp'
 import { useAiriCardStore } from './modules/airi-card'
 import { useAutonomousArtistryStore } from './modules/artistry-autonomous'
@@ -117,10 +118,18 @@ export interface QueuedSendSnapshot {
 
 export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
   const llmStore = useLLM()
+  const llmToolsetPromptsStore = useLlmToolsetPromptsStore()
   const consciousnessStore = useConsciousnessStore()
   const artistryAutonomousStore = useAutonomousArtistryStore()
   const { activeProvider } = storeToRefs(consciousnessStore)
-  const { trackFirstMessage } = useAnalytics()
+  const {
+    trackFirstMessage,
+    trackMessageSendStarted,
+    trackLlmRequestStarted,
+    trackLlmFirstToken,
+    trackAssistantResponseRendered,
+    trackMessageRound,
+  } = useAnalytics()
 
   const chatSession = useChatSessionStore()
   const chatStream = useChatStreamStore()
@@ -233,6 +242,11 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
 
     updateUI()
     trackFirstMessage()
+    trackMessageSendStarted({
+      source: options.input ? 'voice' : 'text',
+      model: options.model,
+    })
+    const roundStartedAt = performance.now()
 
     try {
       await hooks.emitBeforeMessageComposedHooks(sendingMessage, streamingMessageContext)
@@ -426,6 +440,20 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
         return rawMessage
       })
 
+      const activeToolsetPrompt = llmToolsetPromptsStore.activeToolsetPrompt.trim()
+      if (activeToolsetPrompt) {
+        const systemMessage = newMessages.find(message => message.role === 'system')
+        if (systemMessage) {
+          systemMessage.content = `${systemMessage.content}\n\n${activeToolsetPrompt}`
+        }
+        else {
+          newMessages.unshift({
+            role: 'system',
+            content: activeToolsetPrompt,
+          })
+        }
+      }
+
       const contextsSnapshot = chatContext.getContextsSnapshot()
       const contextPromptText = formatContextPromptText(contextsSnapshot)
       if (contextPromptText) {
@@ -499,6 +527,12 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       const llmRequestTs = performance.now()
       let llmFirstTokenEmitted = false
 
+      trackLlmRequestStarted({
+        model: options.model,
+        provider: activeProvider.value || 'unknown',
+        has_voice: !!options.input,
+      })
+
       try {
         const usage = await llmStore.stream(options.model, options.chatProvider, newMessages as Message[], {
           headers,
@@ -536,9 +570,11 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
               case 'text-delta':
                 if (!llmFirstTokenEmitted) {
                   llmFirstTokenEmitted = true
+                  const ttfbMs = performance.now() - llmRequestTs
                   llmSpan.addEvent(IOEvents.LLMFirstToken, {
-                    [IOAttributes.LLM_TTFT]: performance.now() - llmRequestTs,
+                    [IOAttributes.LLM_TTFT]: ttfbMs,
                   })
+                  trackLlmFirstToken({ model: options.model, ttfb_ms: Math.round(ttfbMs) })
                 }
                 fullText += event.text
                 await parser.consume(event.text)
@@ -670,6 +706,11 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
           })
       }
 
+      trackAssistantResponseRendered({
+        model: options.model,
+        latency_ms: Math.round(performance.now() - llmRequestTs),
+      })
+
       if (!isStaleGeneration() && buildingMessage.slices.length > 0) {
         const finalAssistant = toRaw(buildingMessage)
         chatSession.appendSessionMessages(sessionId, [finalAssistant, ...sanitizedToolMessages])
@@ -710,6 +751,12 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
           ? { role: 'assistant', content: '', slices: [], tool_results: [], tool_calls: [] }
           : { role: 'assistant', content: '', slices: [], tool_results: [] }
       }
+
+      trackMessageRound({
+        duration_ms: Math.round(performance.now() - roundStartedAt),
+        has_voice: !!options.input,
+        model: options.model,
+      })
     }
     catch (error) {
       console.error('Error sending message:', error)
