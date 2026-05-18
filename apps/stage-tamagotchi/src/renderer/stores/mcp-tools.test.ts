@@ -1,6 +1,7 @@
 import type { Tool } from '@xsai/shared-chat'
 
 import { useLlmToolsStore } from '@proj-airi/stage-ui/stores/llm-tools'
+import { useMcpStore } from '@proj-airi/stage-ui/stores/mcp'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -37,6 +38,7 @@ describe('useTamagotchiMcpToolsStore', async () => {
 
   beforeEach(() => {
     setActivePinia(createPinia())
+    useMcpStore().sanitizeToolResults = false
     invokeMocks.listMcpTools.mockClear()
     invokeMocks.callMcpTool.mockClear()
   })
@@ -91,5 +93,58 @@ describe('useTamagotchiMcpToolsStore', async () => {
     store.dispose()
 
     expect(llmToolsStore.toolsByProvider.mcp).toBeUndefined()
+  })
+
+  /**
+   * @example
+   * mcpStore.sanitizeToolResults = true
+   * await vi.waitFor(() => expect(llmToolsStore.toolsByProvider.mcp).not.toBe(previousTools))
+   */
+  it('refreshes registered MCP tools when sanitize setting changes', async () => {
+    const llmToolsStore = useLlmToolsStore()
+    const mcpStore = useMcpStore()
+    const store = useTamagotchiMcpToolsStore()
+    const toolOptions = {} as Parameters<Tool['execute']>[1]
+
+    invokeMocks.callMcpTool.mockResolvedValue({
+      content: [{
+        type: 'text',
+        text: [
+          '=====',
+          'GLOSSARY',
+          '- @alpha -> core://topic',
+          'MEMORY: x',
+        ].join('\n'),
+      }],
+      isError: false,
+    })
+
+    await store.refresh()
+
+    const rawCallTool = llmToolsStore.toolsByProvider.mcp?.find(tool => tool.function.name === 'builtIn_mcpCallTool')
+    const rawResult = await rawCallTool?.execute({
+      name: 'filesystem::search',
+      arguments: JSON.stringify({ query: 'hello' }),
+    }, toolOptions) as { content?: Array<{ text?: string }> } | undefined
+
+    expect(rawResult?.content?.[0]?.text).toContain('=====')
+
+    mcpStore.sanitizeToolResults = true
+
+    await vi.waitFor(() => {
+      const refreshedCallTool = llmToolsStore.toolsByProvider.mcp?.find(tool => tool.function.name === 'builtIn_mcpCallTool')
+      expect(refreshedCallTool).not.toBe(rawCallTool)
+    })
+
+    const sanitizedCallTool = llmToolsStore.toolsByProvider.mcp?.find(tool => tool.function.name === 'builtIn_mcpCallTool')
+    const sanitizedResult = await sanitizedCallTool?.execute({
+      name: 'filesystem::search',
+      arguments: JSON.stringify({ query: 'hello' }),
+    }, toolOptions) as { content?: Array<{ text?: string }> } | undefined
+
+    expect(sanitizedResult?.content?.[0]?.text).not.toContain('=====')
+    expect(sanitizedResult?.content?.[0]?.text).toContain('GLOSSARY: alpha->topic')
+
+    store.dispose()
   })
 })

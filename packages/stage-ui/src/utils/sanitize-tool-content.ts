@@ -36,12 +36,12 @@ export function sanitizeToolContent(content: string): string {
         inGlossaryBlock = false
       }
       else if (trimmed.startsWith('- @')) {
-        // "- @关键词 -> URI" → "关键词→URI" (strip core:// to save tokens)
-        const match = trimmed.match(/^- @(.+?)\s*->\s*(.+)$/)
-        if (match) {
-          const keyword = match[1].replace(/,\s*@/g, '/').replace(/@/g, '')
-          const uri = match[2].replace(/^core:\/\//, '')
-          glossaryEntries.push(`${keyword}→${uri}`)
+        // "- @keyword -> URI" -> "keyword->URI" (strip core:// to save tokens)
+        const arrowIndex = trimmed.indexOf('->')
+        if (arrowIndex > 3) {
+          const keyword = trimmed.slice(3, arrowIndex).trim().replace(/,\s*@/g, '/').replace(/@/g, '')
+          const uri = trimmed.slice(arrowIndex + 2).trim().replace(/^core:\/\//, '')
+          glossaryEntries.push(`${keyword}->${uri}`)
         }
         continue
       }

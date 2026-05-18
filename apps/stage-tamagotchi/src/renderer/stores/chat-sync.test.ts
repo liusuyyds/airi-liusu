@@ -95,6 +95,8 @@ vi.mock('@proj-airi/stage-ui/stores/chat/session-store', () => ({
 vi.mock('@proj-airi/stage-ui/stores/chat/stream-store', () => ({
   useChatStreamStore: () => ({
     streamingMessage: ref({ role: 'assistant', content: '', slices: [], tool_results: [] }),
+    contextTokenCount: ref(0),
+    completionTokenCount: ref(0),
   }),
 }))
 

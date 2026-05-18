@@ -246,18 +246,19 @@ export async function streamFrom({
 
   return new Promise<Usage | undefined>((resolve, reject) => {
     let settled = false
-    let usage: Usage | undefined
     let streamResultRef: Awaited<ReturnType<typeof streamText>> | undefined
 
     const resolveOnce = () => {
       if (settled)
         return
+      settled = true
 
       if (!streamResultRef) {
-        settled = true
-        resolve(usage)
+        resolve(undefined)
         return
       }
+
+      const streamResult = streamResultRef
 
       // NOTICE:
       // Aggregate usage across all multi-step tool-call rounds by reading
@@ -276,17 +277,13 @@ export async function streamFrom({
       //
       // Source/context: xsai stream-text dist/index.js:46-52 (pushUsage + totalUsage),
       // llm-service.ts comment block 195-200 (original rationale for not using totalUsage).
-      streamResultRef.steps.then((completedSteps) => {
-        if (settled)
-          return
-        settled = true
+      streamResult.steps.then(async (completedSteps) => {
         const aggregated = aggregateStepUsage(completedSteps)
-        resolve(aggregated ?? usage)
-      }).catch(() => {
-        if (settled)
-          return
-        settled = true
-        resolve(usage)
+        const fallback = aggregated ?? await streamResult.usage.catch(() => undefined)
+        resolve(fallback)
+      }).catch(async () => {
+        const fallback = await streamResult.usage.catch(() => undefined)
+        resolve(fallback)
       })
     }
     const rejectOnce = (error: unknown) => {
@@ -352,6 +349,7 @@ export async function streamFrom({
         console.error('Stream steps error:', error)
       })
       void streamResult.messages.catch(error => console.error('Stream messages error:', error))
+      void streamResult.usage.catch(error => console.error('Stream usage error:', error))
     }
     catch (error) {
       rejectOnce(error)

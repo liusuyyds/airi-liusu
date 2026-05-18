@@ -28,6 +28,10 @@ const parserEndMock = vi.fn()
 
 const activeSessionIdRef = ref('session-1')
 const streamingMessageRef = ref<any>({ role: 'assistant', content: '', slices: [], tool_results: [] })
+const contextTokenCountRef = ref(0)
+const completionTokenCountRef = ref(0)
+const mcpSanitizeToolResultsRef = ref(false)
+const accumulateTokensMock = vi.fn()
 const sessionMessages: Record<string, any[]> = {}
 let currentGeneration = 1
 
@@ -69,6 +73,7 @@ vi.mock('@proj-airi/stream-kit', () => ({
 
         dequeueListeners.push(listener)
       },
+      length: () => 0,
     }
   },
 }))
@@ -130,6 +135,10 @@ vi.mock('./chat/session-store', () => ({
       sessionMessages[sessionId] ??= []
       sessionMessages[sessionId].push(message)
     },
+    appendSessionMessages: (sessionId: string, messages: any[]) => {
+      sessionMessages[sessionId] ??= []
+      sessionMessages[sessionId].push(...messages)
+    },
     getSessionMessages: (sessionId: string) => sessionMessages[sessionId] ?? [],
     persistSessionMessages: persistSessionMessagesMock,
     getSessionGeneration: () => currentGeneration,
@@ -143,6 +152,17 @@ vi.mock('./chat/session-store', () => ({
 vi.mock('./chat/stream-store', () => ({
   useChatStreamStore: () => ({
     streamingMessage: streamingMessageRef,
+    contextTokenCount: contextTokenCountRef,
+    completionTokenCount: completionTokenCountRef,
+    accumulateTokens: accumulateTokensMock,
+  }),
+}))
+
+vi.mock('./mcp', () => ({
+  useMcpStore: () => ({
+    get sanitizeToolResults() {
+      return mcpSanitizeToolResultsRef.value
+    },
   }),
 }))
 
@@ -181,6 +201,7 @@ describe('chat orchestrator contract', () => {
     trackFirstMessageMock.mockReset()
     ingestContextMessageMock.mockReset()
     getContextsSnapshotMock.mockReset()
+    getContextsSnapshotMock.mockReturnValue({})
     createMinecraftContextMock.mockReset()
     createMinecraftContextMock.mockReturnValue(undefined)
     persistSessionMessagesMock.mockReset()
@@ -188,8 +209,12 @@ describe('chat orchestrator contract', () => {
     ensureSessionMock.mockReset()
     parserConsumeMock.mockReset()
     parserEndMock.mockReset()
+    accumulateTokensMock.mockReset()
     activeSessionIdRef.value = 'session-1'
     streamingMessageRef.value = { role: 'assistant', content: '', slices: [], tool_results: [] }
+    contextTokenCountRef.value = 0
+    completionTokenCountRef.value = 0
+    mcpSanitizeToolResultsRef.value = false
     currentGeneration = 1
 
     for (const key of Object.keys(sessionMessages)) {
@@ -338,6 +363,61 @@ describe('chat orchestrator contract', () => {
 
     await expect(pending).rejects.toThrow('Chat session was reset before send could start')
     expect(llmStreamMock).not.toHaveBeenCalled()
+  })
+
+  it('drops persisted tool messages from provider context when MCP result history is disabled', async () => {
+    /**
+     * @example
+     * // A session created while MCP result history was enabled is sent again
+     * // after the user disables the setting. Tool messages must not be sent
+     * // without matching assistant tool_calls.
+     */
+    mcpSanitizeToolResultsRef.value = false
+    sessionMessages['session-1'] = [
+      { role: 'system', content: 'system prompt', createdAt: 1, id: 'system' },
+      {
+        role: 'assistant',
+        content: '',
+        createdAt: 2,
+        id: 'assistant-with-tool',
+        slices: [],
+        tool_results: [],
+        tool_calls: [{
+          id: 'tool-call-1',
+          type: 'function',
+          function: {
+            name: 'builtIn_mcpCallTool',
+            arguments: JSON.stringify({
+              name: 'filesystem::search',
+              arguments: JSON.stringify({ query: 'hello' }),
+            }),
+          },
+        }],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'tool-call-1',
+        content: 'filesystem search result',
+        createdAt: 3,
+        id: 'tool-message-1',
+      },
+    ]
+
+    let composedMessages: Message[] = []
+    llmStreamMock.mockImplementation(async (_model: string, _chatProvider: ChatProvider, messages: Message[], options: any) => {
+      composedMessages = messages
+      await options.onStreamEvent({ type: 'text-delta', text: 'ok' })
+      await options.onStreamEvent({ type: 'finish', finishReason: 'stop' })
+    })
+
+    const store = useChatOrchestratorStore()
+    await store.ingest('next turn', {
+      model: 'gpt-test',
+      chatProvider: provider,
+    })
+
+    expect(composedMessages.some(message => message.role === 'tool')).toBe(false)
+    expect(composedMessages.some(message => Array.isArray((message as { tool_calls?: unknown }).tool_calls))).toBe(false)
   })
 
   it('uses forked session id in ingestOnFork and keeps public store contract keys', async () => {

@@ -27,11 +27,14 @@ const provider = {
   }),
 } as unknown as ChatProvider
 
-function createMockStreamResult(steps: Promise<unknown[]> = Promise.resolve([])) {
+function createMockStreamResult(
+  steps: Promise<unknown[]> = Promise.resolve([]),
+  usage: Promise<unknown> = Promise.resolve(undefined),
+) {
   return {
     steps,
     messages: Promise.resolve([]),
-    usage: Promise.resolve(undefined),
+    usage,
     totalUsage: Promise.resolve(undefined),
   }
 }
@@ -109,6 +112,44 @@ describe('streamFrom tool error capture', () => {
       toolName: 'play_chess',
       result: expect.stringContaining('Focus mode does not accept game-state mutation inputs.'),
     }))
+  })
+})
+
+describe('streamFrom usage reporting', () => {
+  it('falls back to top-level stream usage when completed steps do not carry usage', async () => {
+    /**
+     * @example
+     * const usage = await streamFrom({ model, chatProvider, messages })
+     * expect(usage?.prompt_tokens).toBe(10)
+     */
+    streamTextMock.mockImplementationOnce((options: {
+      onEvent: (event: unknown) => Promise<void>
+    }) => {
+      queueMicrotask(async () => {
+        await options.onEvent({ type: 'finish', finishReason: 'stop' })
+      })
+
+      return createMockStreamResult(
+        Promise.resolve([]),
+        Promise.resolve({
+          prompt_tokens: 10,
+          completion_tokens: 5,
+          total_tokens: 15,
+        }),
+      )
+    })
+
+    const usage = await streamFrom({
+      model: 'model-a',
+      chatProvider: provider,
+      messages: [{ role: 'user', content: 'hello' }] as Message[],
+    })
+
+    expect(usage).toEqual({
+      prompt_tokens: 10,
+      completion_tokens: 5,
+      total_tokens: 15,
+    })
   })
 })
 

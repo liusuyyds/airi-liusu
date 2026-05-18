@@ -44,6 +44,18 @@ function extractToolName(qualifiedName: string): string {
   return idx >= 0 ? qualifiedName.slice(idx + 2) : qualifiedName
 }
 
+function isNocturneMemoryToolName(qualifiedName: string, toolName: string): boolean {
+  if (toolName !== 'read_memory' && toolName !== 'search_memory')
+    return false
+
+  const idx = qualifiedName.lastIndexOf('::')
+  if (idx < 0)
+    return false
+
+  const namespace = qualifiedName.slice(0, idx).toLowerCase().replace(/_/g, '-')
+  return namespace === 'nocturne-memory' || namespace === 'nocturne'
+}
+
 /**
  * Parses the nested arguments JSON for a Nocturne Memory tool call.
  *
@@ -70,8 +82,8 @@ function parseMemoryToolArgs(mcpNameArgs: McpCallToolArgs): Record<string, unkno
  *
  * Skips:
  * - Non-MCP tool calls (toolName !== 'builtIn_mcpCallTool')
- * - Non-Nocturne-Memory MCP tools (name does not end with '::read_memory'
- *   or '::search_memory')
+ * - Non-Nocturne-Memory MCP tools (namespace is not 'nocturne-memory'
+ *   or 'nocturne')
  * - Tool calls whose args cannot be parsed
  */
 function collectNocturneMemoryCalls(slices: ChatSlices[]): NocturneMemoryCall[] {
@@ -91,7 +103,7 @@ function collectNocturneMemoryCalls(slices: ChatSlices[]): NocturneMemoryCall[] 
       continue
 
     const toolName = extractToolName(mcpNameArgs.name)
-    if (toolName !== 'read_memory' && toolName !== 'search_memory')
+    if (!isNocturneMemoryToolName(mcpNameArgs.name, toolName))
       continue
 
     const mcpArgs = parseMemoryToolArgs(mcpNameArgs)
@@ -253,7 +265,7 @@ function parseToolCallForContext(tc: ToolCall): { toolCallId: string, toolName: 
     return null
 
   const toolName = extractToolName(mcpNameArgs.name)
-  if (toolName !== 'read_memory' && toolName !== 'search_memory')
+  if (!isNocturneMemoryToolName(mcpNameArgs.name, toolName))
     return null
 
   const mcpArgs = parseMemoryToolArgs(mcpNameArgs)
@@ -335,7 +347,7 @@ export function cleanupNocturneMemoryContext(messages: ChatHistoryItem[]): ChatH
     }
   }
 
-  // --- search_memory: keep last 6 globally ---
+  // --- search_memory: keep last 3 globally ---
   const allSearchIds: string[] = []
   for (const msg of messages) {
     if (!hasToolCallsField(msg))

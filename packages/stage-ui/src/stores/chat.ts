@@ -396,6 +396,7 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       // Cross-turn dedup for Nocturne Memory: across all turns, keep only
       // the last read_memory per URI, last N search_memory, and remove errors.
       const contextMessages = cleanupNocturneMemoryContext(sessionMessagesForSend)
+        .filter(msg => mcpStore.sanitizeToolResults || msg.role !== 'tool')
 
       const newMessages = contextMessages.map((msg) => {
         const { context: _context, id: _id, createdAt, ...withoutContext } = msg
