@@ -79,4 +79,38 @@ describe('resolveComputerUseConfig', () => {
     expect(config.browserDomBridge.port).toBe(8876)
     expect(config.browserDomBridge.requestTimeoutMs).toBe(4500)
   })
+
+  it('keeps plast-mem bridge disabled by default and parses explicit overrides', () => {
+    let config = resolveComputerUseConfig()
+
+    expect(config.plastMem).toEqual({
+      enabled: false,
+      baseUrl: undefined,
+      conversationId: undefined,
+      workspaceKey: undefined,
+      semanticLimit: 8,
+      requestTimeoutMs: 2000,
+      maxContextCharacters: 6000,
+    })
+
+    process.env.COMPUTER_USE_PLAST_MEM_ENABLED = 'true'
+    process.env.COMPUTER_USE_PLAST_MEM_BASE_URL = 'http://127.0.0.1:3000'
+    process.env.COMPUTER_USE_PLAST_MEM_CONVERSATION_ID = '018f50f2-a6f3-7b88-9f31-0e4b6c28dbd2'
+    process.env.COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY = 'airi-main'
+    process.env.COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT = '5'
+    process.env.COMPUTER_USE_PLAST_MEM_TIMEOUT_MS = '1500'
+    process.env.COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS = '4096'
+
+    config = resolveComputerUseConfig()
+
+    expect(config.plastMem).toEqual({
+      enabled: true,
+      baseUrl: 'http://127.0.0.1:3000',
+      conversationId: '018f50f2-a6f3-7b88-9f31-0e4b6c28dbd2',
+      workspaceKey: 'airi-main',
+      semanticLimit: 5,
+      requestTimeoutMs: 1500,
+      maxContextCharacters: 4096,
+    })
+  })
 })

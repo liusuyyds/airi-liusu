@@ -52,6 +52,7 @@ import { initializeElectronAuthCallbackBridge } from './bridges/electron-auth-ca
 import { initializeStageThreeRuntimeTraceBridge } from './bridges/stage-three-runtime-trace'
 import { useLanguage } from './composables/use-language'
 import { useTamagotchiMcpToolsStore } from './stores/mcp-tools'
+import { usePlastMemChatMemoryStore } from './stores/plast-mem-chat-memory'
 import { useTamagotchiPluginToolsStore } from './stores/plugin-tools'
 import { useServerChannelSettingsStore } from './stores/settings/server-channel'
 import { useStageWindowLifecycleStore } from './stores/stage-window-lifecycle'
@@ -72,6 +73,7 @@ const analyticsStore = useSharedAnalyticsStore()
 const inferencePreload = useInferencePreload()
 const pluginHostInspectorStore = usePluginHostInspectorStore()
 const mcpToolsStore = useTamagotchiMcpToolsStore()
+const plastMemChatMemoryStore = usePlastMemChatMemoryStore()
 const pluginToolsStore = useTamagotchiPluginToolsStore()
 const stageWindowLifecycleStore = useStageWindowLifecycleStore()
 const settingsAudioDeviceStore = useSettingsAudioDevice()
@@ -97,6 +99,7 @@ const setLocale = useElectronEventaInvoke(i18nSetLocale)
 const getGodotStageStatus = useElectronEventaInvoke(electronGodotStageGetStatus)
 const syncArtistryConfig = useElectronEventaInvoke(artistrySyncConfig)
 const isChatWindowRoute = () => route.path === '/chat'
+const isMainStageRoute = () => route.path === '/'
 const isGodotStageRoute = () => route.path === '/' || route.path.startsWith('/settings')
 const isWidgetsWindowRoute = () => route.path === '/widgets'
 
@@ -231,6 +234,9 @@ onMounted(async () => {
     token: serverChannelConfig.authToken || undefined,
     possibleEvents: ['ui:configure'],
   }).catch(err => console.error('Failed to initialize Mods Server Channel in App.vue:', err))
+  if (isMainStageRoute())
+    void plastMemChatMemoryStore.initialize()
+
   if (!isChatWindowRoute()) {
     contextBridgeStore.initialize()
     if (!isWidgetsWindowRoute()) {
@@ -265,6 +271,9 @@ watch(themeColorsHueDynamic, () => {
 }, { immediate: true })
 
 onUnmounted(() => {
+  if (isMainStageRoute())
+    plastMemChatMemoryStore.dispose()
+
   if (!isChatWindowRoute()) {
     contextBridgeStore.dispose()
   }

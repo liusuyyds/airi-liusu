@@ -3,6 +3,7 @@ import type { FileLoggerHandle } from './app/file-logger'
 import process, { env, platform } from 'node:process'
 
 import { dirname } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 
 import messages from '@proj-airi/i18n/locales'
@@ -46,6 +47,20 @@ import { setupNoticeWindowManager } from './windows/notice'
 import { setupOnboardingWindowManager } from './windows/onboarding'
 import { setupSettingsWindowReusableFunc } from './windows/settings'
 import { setupWidgetsWindowManager } from './windows/widgets'
+
+// NOTICE:
+// When the packaged Electron app is launched by double-clicking on Windows,
+// no console is attached and process.stdout / process.stderr are null.
+// Any console.log / console.warn call then throws EPIPE (broken pipe).
+// Redirect them to a no-op stream so logging libraries don't crash.
+if (!process.stdout) {
+  // @ts-expect-error - stdout may be null when running without a console on Windows
+  process.stdout = new PassThrough()
+}
+if (!process.stderr) {
+  // @ts-expect-error - stderr may be null when running without a console on Windows
+  process.stderr = new PassThrough()
+}
 
 // TODO: once we refactored eventa to support window-namespaced contexts,
 // we can remove the setMaxListeners call below since eventa will be able to dispatch and

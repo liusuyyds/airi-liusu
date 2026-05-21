@@ -178,6 +178,22 @@ describe('planning orchestration contract', () => {
     })
   })
 
+  it('keeps plast-mem retrieved context below current-run evidence and gates', () => {
+    const plastMemRule = getPlanningAuthorityRule('plast_mem_retrieved_context')
+
+    expect(plastMemRule).toMatchObject({
+      label: 'Plast-Mem retrieved context',
+      maySatisfyVerificationGate: false,
+      maySatisfyMutationProof: false,
+    })
+    expect(hasHigherPlanningAuthority('verification_gate_decision', 'plast_mem_retrieved_context')).toBe(true)
+    expect(hasHigherPlanningAuthority('trusted_current_run_tool_evidence', 'plast_mem_retrieved_context')).toBe(true)
+    expect(hasHigherPlanningAuthority('current_run_task_memory', 'plast_mem_retrieved_context')).toBe(true)
+    expect(hasHigherPlanningAuthority('current_run_archive_recall', 'plast_mem_retrieved_context')).toBe(true)
+    expect(comparePlanningAuthority('plast_mem_retrieved_context', 'runtime_system_rules')).toBeGreaterThan(0)
+    expect(comparePlanningAuthority('plast_mem_retrieved_context', 'active_user_instruction')).toBeGreaterThan(0)
+  })
+
   it('summarizes completed failed and skipped steps as current-run plan state only', () => {
     expect(summarizePlanStateForProjection({
       currentStepId: 'step-4',

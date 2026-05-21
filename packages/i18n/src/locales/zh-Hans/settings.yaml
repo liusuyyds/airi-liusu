@@ -597,6 +597,85 @@ pages:
               如果您的提供商没有返回 verbose_json 结果。置信度阈值将不会影响转录。
     memory-long-term:
       description: 长期记忆
+      sections:
+        plast-mem-bridge:
+          description: >-
+            本地 Plast Mem 已作为 AIRI 的私有长期记忆 sidecar 接入。
+            正式聊天会在回复前召回记忆，并在回复后捕获新的对话轮次；coding
+            记忆仍可继续走 computer-use-mcp bridge。
+          env:
+            title: 运行时环境变量
+          runtime:
+            checked-at: '检查时间：{time}'
+            configured: 已配置
+            conversation: Conversation UUID
+            conversation-missing: 本地 dev 启动器通常会在 .cache/plast-mem-dev.json 里生成一个。
+            conversation-missing-title: 缺少 Conversation UUID
+            mcp:
+              error: MCP 错误
+              missing: 未启动
+              running: MCP 运行中
+              stopped: MCP 已停止
+            mcp-server: computer_use MCP
+            missing: 缺失
+            refresh: 刷新
+            service-error: Plast Mem 服务
+            service-url: Plast Mem URL
+            status:
+              checking: 检查中
+              disabled: 已禁用
+              offline: 离线
+              online: 在线
+            status-error: 状态不可用
+            title: 本地运行状态
+            workspace: Workspace key
+          chat-diagnostics:
+            never: 从未
+            title: 聊天桥诊断
+            recall:
+              detail:
+                empty: 请求成功，但还没有匹配到 semantic 记忆。
+                error: '{error}'
+                idle: 尚未触发召回。
+                recalled: 已向聊天上下文注入 {characters} 个字符。
+              status:
+                empty: 无匹配
+                error: 错误
+                idle: 等待中
+                recalled: 已召回
+              time: '上次召回：{time}'
+              title: 回复前召回
+            ingest:
+              detail:
+                accepted: 已写入 {count} 条消息到 Plast Mem。
+                error: '{error}'
+                idle: 尚未触发捕获。
+                rejected: Plast Mem 拒绝了写入。
+              status:
+                accepted: 已写入
+                error: 错误
+                idle: 等待中
+                rejected: 已拒绝
+              time: '上次写入：{time}'
+              title: 回复后捕获
+          facts:
+            external:
+              description: >-
+                Plast Mem 作为独立本地 Rust 服务运行，由 AIRI 启动，并通过 Electron IPC 调用。
+              title: 本地 sidecar
+            low-authority:
+              description: >-
+                召回内容会标记为数据而非指令，因此当前用户意图、可见聊天和可信提示词仍保持更高优先级。
+              title: 低权威上下文
+            reviewed:
+              description: 聊天轮次会在回复后写入，Plast Mem worker 会在后台生成 episodic 和 semantic 记忆。
+              title: 聊天捕获
+          scope:
+            description: >-
+              这套本地配置面向私有 Tamagotchi 使用。这里显示运行状态，正式聊天会注入召回记忆，同时不会把
+              Plast Mem 暴露为模型可见工具。
+            title: 正式聊天记忆
+          title: 本地 Plast Mem 记忆
       title: 长期记忆
     memory-short-term:
       description: 短期记忆
@@ -686,7 +765,7 @@ pages:
         empty: 这里什么都还没有哦，在下面添加一个！
       add:
         title: 新建
-        description: "填写新的服务器配置，然后点击「保存并重启」，完成后将会更新至上方的「已配置」"
+        description: '填写新的服务器配置，然后点击「保存并重启」，完成后将会更新至上方的「已配置」'
         pending-badge: 未保存
       status:
         unknown: 未加载

@@ -255,6 +255,106 @@ export const electronMcpReadConfigText = defineInvokeEventa<ElectronMcpStdioConf
 export const electronMcpWriteConfigText = defineInvokeEventa<ElectronMcpStdioConfigText, { text: string }>('eventa:invoke:electron:mcp:write-config-text')
 export const electronMcpTestServer = defineInvokeEventa<ElectronMcpStdioTestResult, ElectronMcpStdioTestPayload>('eventa:invoke:electron:mcp:test-server')
 
+export interface ElectronPlastMemRuntimeStatus {
+  autoStart: boolean
+  baseUrl?: string
+  chatDiagnostics?: ElectronPlastMemChatDiagnostics
+  checkedAt: number
+  conversationIdConfigured: boolean
+  devMode: boolean
+  enabled: boolean
+  error?: string
+  mcpServer?: ElectronMcpStdioServerRuntimeStatus
+  reachable: boolean
+  statusCode?: number
+  workspaceKey?: string
+}
+
+export const electronPlastMemGetRuntimeStatus = defineInvokeEventa<ElectronPlastMemRuntimeStatus>('eventa:invoke:electron:plast-mem:get-runtime-status')
+
+export type ElectronPlastMemContextDetail = 'auto' | 'none' | 'low' | 'high'
+export type ElectronPlastMemRecallStatus = 'idle' | 'recalled' | 'empty' | 'error'
+export type ElectronPlastMemIngestStatus = 'idle' | 'accepted' | 'rejected' | 'error'
+
+export interface ElectronPlastMemRecallDiagnostics {
+  at?: number
+  baseUrl?: string
+  contextCharacters?: number
+  error?: string
+  queryCharacters?: number
+  status: ElectronPlastMemRecallStatus
+  statusCode?: number
+}
+
+export interface ElectronPlastMemIngestDiagnostics {
+  at?: number
+  baseUrl?: string
+  error?: string
+  messageCount?: number
+  status: ElectronPlastMemIngestStatus
+  statusCode?: number
+}
+
+export interface ElectronPlastMemChatDiagnostics {
+  ingest: ElectronPlastMemIngestDiagnostics
+  recall: ElectronPlastMemRecallDiagnostics
+}
+
+export interface ElectronPlastMemChatBridgeTracePayload {
+  detail?: Record<string, unknown>
+  event: string
+}
+
+export interface ElectronPlastMemChatBridgeLeasePayload {
+  ownerId: string
+}
+
+export interface ElectronPlastMemChatBridgeLeaseResult {
+  acquired: boolean
+  activeOwnerId?: string
+}
+
+export interface ElectronPlastMemRetrieveChatContextPayload {
+  ownerId?: string
+  query: string
+  semanticLimit?: number
+  detail?: ElectronPlastMemContextDetail
+  category?: string
+}
+
+export interface ElectronPlastMemRetrieveChatContextResult {
+  baseUrl?: string
+  contextBlock: string
+  enabled: boolean
+  error?: string
+  recalled: boolean
+  statusCode?: number
+}
+
+export interface ElectronPlastMemChatMessage {
+  role: string
+  content: string
+  timestamp?: number | string
+}
+
+export interface ElectronPlastMemIngestChatMessagesPayload {
+  messages: ElectronPlastMemChatMessage[]
+  ownerId?: string
+}
+
+export interface ElectronPlastMemIngestChatMessagesResult {
+  accepted: boolean
+  enabled: boolean
+  error?: string
+  statusCode?: number
+}
+
+export const electronPlastMemRetrieveChatContext = defineInvokeEventa<ElectronPlastMemRetrieveChatContextResult, ElectronPlastMemRetrieveChatContextPayload>('eventa:invoke:electron:plast-mem:retrieve-chat-context')
+export const electronPlastMemIngestChatMessages = defineInvokeEventa<ElectronPlastMemIngestChatMessagesResult, ElectronPlastMemIngestChatMessagesPayload>('eventa:invoke:electron:plast-mem:ingest-chat-messages')
+export const electronPlastMemReportChatBridgeTrace = defineInvokeEventa<void, ElectronPlastMemChatBridgeTracePayload>('eventa:invoke:electron:plast-mem:report-chat-bridge-trace')
+export const electronPlastMemAcquireChatBridge = defineInvokeEventa<ElectronPlastMemChatBridgeLeaseResult, ElectronPlastMemChatBridgeLeasePayload>('eventa:invoke:electron:plast-mem:acquire-chat-bridge')
+export const electronPlastMemReleaseChatBridge = defineInvokeEventa<void, ElectronPlastMemChatBridgeLeasePayload>('eventa:invoke:electron:plast-mem:release-chat-bridge')
+
 export const widgetsOpenWindow = defineInvokeEventa<void, { id?: string }>('eventa:invoke:electron:windows:widgets:open')
 export const widgetsHideWindow = defineInvokeEventa<void, { id?: string }>('eventa:invoke:electron:windows:widgets:hide')
 export const widgetsAdd = defineInvokeEventa<string | undefined, WidgetsAddPayload>('eventa:invoke:electron:windows:widgets:add')

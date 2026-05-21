@@ -13,7 +13,6 @@ import type { ChromeSessionInfo, ComputerUseConfig } from './types'
 
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
-import { join } from 'node:path'
 
 import { runProcess } from './utils/process'
 import { sleep } from './utils/sleep'
@@ -25,6 +24,11 @@ import { sleep } from './utils/sleep'
 const CHROME_APP_NAME = 'Google Chrome'
 const DEFAULT_CDP_PORT = 9222
 const DEFAULT_CDP_PORT_SCAN_ATTEMPTS = 20
+
+function joinPreservingSeparator(basePath: string, childPath: string): string {
+  const separator = basePath.includes('\\') && !basePath.includes('/') ? '\\' : '/'
+  return `${basePath.replace(/[\\/]+$/u, '')}${separator}${childPath.replace(/^[\\/]+/u, '')}`
+}
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -244,7 +248,7 @@ export function createChromeSessionManager(
   async function launchChromeWithCdp(cdpPort: number, profileDir: string, url?: string): Promise<void> {
     // Chrome uses the user-data-dir root "First Run" sentinel to decide
     // whether the branded first-run dialog should appear.
-    await writeFile(join(profileDir, 'First Run'), '').catch(() => {})
+    await writeFile(joinPreservingSeparator(profileDir, 'First Run'), '').catch(() => {})
 
     const args = [
       '-na',
@@ -340,7 +344,7 @@ export function createChromeSessionManager(
       )
       const wasAlreadyRunning = await isChromeRunning()
       await mkdir(config.sessionRoot, { recursive: true })
-      activeProfileDir = await mkdtemp(join(config.sessionRoot, 'chrome-profile-'))
+      activeProfileDir = await mkdtemp(joinPreservingSeparator(config.sessionRoot, 'chrome-profile-'))
 
       try {
         // Always launch a dedicated profile so CDP is stable even when Chrome is already running.

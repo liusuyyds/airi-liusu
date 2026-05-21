@@ -1,0 +1,268 @@
+import type { ChatHistoryItem } from '@proj-airi/stage-ui/types/chat'
+
+import type { ElectronPlastMemChatMessage } from '../../shared/eventa'
+
+import { errorMessageFrom } from '@moeru/std'
+import { useElectronEventaInvoke } from '@proj-airi/electron-vueuse'
+import { ContextUpdateStrategy } from '@proj-airi/server-sdk'
+import { useChatOrchestratorStore } from '@proj-airi/stage-ui/stores/chat'
+import { useChatContextStore } from '@proj-airi/stage-ui/stores/chat/context-store'
+import { defineStore } from 'pinia'
+import { ref } from 'vue'
+
+import {
+  electronPlastMemAcquireChatBridge,
+  electronPlastMemIngestChatMessages,
+  electronPlastMemReleaseChatBridge,
+  electronPlastMemReportChatBridgeTrace,
+  electronPlastMemRetrieveChatContext,
+} from '../../shared/eventa'
+
+const PLAST_MEM_CHAT_CONTEXT_ID = 'plast-mem:chat-recall'
+const MIN_RECALL_QUERY_LENGTH = 5
+const RECENT_HOOK_SIGNATURE_TTL_MSEC = 30_000
+const ownerId = globalThis.crypto?.randomUUID?.() ?? `plast-mem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+type RecallStatus = 'idle' | 'recalled' | 'empty' | 'error'
+type IngestStatus = 'idle' | 'accepted' | 'rejected' | 'error'
+
+const recentHookSignatures = new Map<string, number>()
+
+function textFromContent(content: ChatHistoryItem['content'] | undefined) {
+  if (typeof content === 'string')
+    return content.trim()
+
+  if (!Array.isArray(content))
+    return ''
+
+  return content
+    .map((part) => {
+      if (part?.type !== 'text')
+        return ''
+
+      return typeof part.text === 'string' ? part.text : ''
+    })
+    .filter(Boolean)
+    .join('\n')
+    .trim()
+}
+
+function createChatMemoryContext(text: string) {
+  return {
+    id: `plast-mem-chat-${Date.now().toString(36)}`,
+    contextId: PLAST_MEM_CHAT_CONTEXT_ID,
+    strategy: ContextUpdateStrategy.ReplaceSelf,
+    text,
+    createdAt: Date.now(),
+    metadata: {
+      source: {
+        id: 'chat',
+        kind: 'plugin' as const,
+        plugin: {
+          id: 'plast-mem',
+        },
+      },
+    },
+  }
+}
+
+function pruneRecentHookSignatures(now: number) {
+  for (const [signature, claimedAt] of recentHookSignatures) {
+    if (now - claimedAt > RECENT_HOOK_SIGNATURE_TTL_MSEC)
+      recentHookSignatures.delete(signature)
+  }
+}
+
+function claimRecentHookSignature(signature: string) {
+  const now = Date.now()
+  pruneRecentHookSignatures(now)
+  if (recentHookSignatures.has(signature))
+    return false
+
+  recentHookSignatures.set(signature, now)
+  return true
+}
+
+function turnKeyFromContext(context: { message?: { createdAt?: number, id?: string } }, fallback: string) {
+  return context.message?.id ?? `${context.message?.createdAt ?? 0}:${fallback}`
+}
+
+export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-mem-chat-memory', () => {
+  const chatOrchestrator = useChatOrchestratorStore()
+  const chatContext = useChatContextStore()
+  const acquireChatBridge = useElectronEventaInvoke(electronPlastMemAcquireChatBridge)
+  const retrieveChatContext = useElectronEventaInvoke(electronPlastMemRetrieveChatContext)
+  const ingestChatMessages = useElectronEventaInvoke(electronPlastMemIngestChatMessages)
+  const reportChatBridgeTrace = useElectronEventaInvoke(electronPlastMemReportChatBridgeTrace)
+  const releaseChatBridge = useElectronEventaInvoke(electronPlastMemReleaseChatBridge)
+  const lastRecallError = ref<string>()
+  const lastRecallAt = ref<number>()
+  const lastRecallContextCharacters = ref(0)
+  const lastRecallStatus = ref<RecallStatus>('idle')
+  const lastIngestError = ref<string>()
+  const lastIngestAt = ref<number>()
+  const lastIngestMessageCount = ref(0)
+  const lastIngestStatus = ref<IngestStatus>('idle')
+  const disposeFns = ref<Array<() => void>>([])
+  const initializing = ref(false)
+  const leaseAcquired = ref(false)
+
+  function reportTrace(event: string, detail?: Record<string, unknown>) {
+    void reportChatBridgeTrace({ detail: { ownerId, ...detail }, event }).catch((error) => {
+      console.warn('[plast-mem-chat-memory] failed to report trace:', error)
+    })
+  }
+
+  async function initialize() {
+    if (initializing.value || disposeFns.value.length > 0) {
+      reportTrace('initialize:already-registered')
+      return
+    }
+
+    initializing.value = true
+    let lease: Awaited<ReturnType<typeof acquireChatBridge>>
+    try {
+      lease = await acquireChatBridge({ ownerId })
+    }
+    catch (error) {
+      initializing.value = false
+      reportTrace('initialize:lease-error', {
+        error: errorMessageFrom(error) ?? String(error),
+        ownerId,
+      })
+      return
+    }
+
+    initializing.value = false
+    if (!lease.acquired) {
+      reportTrace('initialize:lease-denied', { activeOwnerId: lease.activeOwnerId, ownerId })
+      return
+    }
+
+    leaseAcquired.value = true
+    reportTrace('initialize:registered')
+
+    disposeFns.value.push(
+      chatOrchestrator.onBeforeMessageComposed(async (message, context) => {
+        const query = message.trim()
+        const recallSignature = `recall:${turnKeyFromContext(context, query)}:${query}`
+        if (!claimRecentHookSignature(recallSignature))
+          return
+
+        if (query.length < MIN_RECALL_QUERY_LENGTH) {
+          reportTrace('recall:skip-short-query', { queryCharacters: query.length })
+          return
+        }
+
+        reportTrace('recall:hook', { queryCharacters: query.length })
+        const result = await retrieveChatContext({
+          ownerId,
+          query,
+          detail: 'low',
+        })
+
+        if (result.error) {
+          lastRecallAt.value = Date.now()
+          lastRecallContextCharacters.value = 0
+          lastRecallError.value = result.error
+          lastRecallStatus.value = 'error'
+          reportTrace('recall:error', { error: result.error })
+          console.warn('[plast-mem-chat-memory] failed to recall chat memory:', result.error)
+          return
+        }
+
+        lastRecallAt.value = Date.now()
+        lastRecallError.value = undefined
+        if (!result.contextBlock) {
+          lastRecallContextCharacters.value = 0
+          lastRecallStatus.value = 'empty'
+          reportTrace('recall:empty')
+          return
+        }
+
+        lastRecallContextCharacters.value = result.contextBlock.length
+        lastRecallStatus.value = 'recalled'
+        reportTrace('recall:context-ingested', {
+          contextCharacters: result.contextBlock.length,
+        })
+        chatContext.ingestContextMessage(createChatMemoryContext(result.contextBlock))
+      }),
+      chatOrchestrator.onChatTurnComplete(async (chat, context) => {
+        const userContent = textFromContent(context.message.content)
+        const assistantContent = textFromContent(chat.output.content) || chat.outputText.trim()
+        const messages: ElectronPlastMemChatMessage[] = []
+
+        if (userContent) {
+          messages.push({
+            role: 'user',
+            content: userContent,
+            ...(context.message.createdAt ? { timestamp: context.message.createdAt } : {}),
+          })
+        }
+
+        if (assistantContent) {
+          messages.push({
+            role: 'assistant',
+            content: assistantContent,
+            timestamp: chat.output.createdAt ?? Date.now(),
+          })
+        }
+
+        if (messages.length === 0) {
+          reportTrace('ingest:skip-empty')
+          return
+        }
+
+        const ingestSignature = JSON.stringify({
+          messages,
+          turn: turnKeyFromContext(context, userContent),
+        })
+        if (!claimRecentHookSignature(`ingest:${ingestSignature}`))
+          return
+
+        reportTrace('ingest:hook', { messageCount: messages.length })
+        const result = await ingestChatMessages({ messages, ownerId })
+        lastIngestAt.value = Date.now()
+        lastIngestMessageCount.value = messages.length
+        if (result.error) {
+          lastIngestError.value = result.error
+          lastIngestStatus.value = 'error'
+          reportTrace('ingest:error', { error: result.error, messageCount: messages.length })
+          console.warn('[plast-mem-chat-memory] failed to ingest chat messages:', result.error)
+          return
+        }
+
+        lastIngestError.value = undefined
+        lastIngestStatus.value = result.accepted ? 'accepted' : 'rejected'
+        reportTrace(result.accepted ? 'ingest:accepted' : 'ingest:rejected', {
+          messageCount: messages.length,
+        })
+      }),
+    )
+  }
+
+  function dispose() {
+    for (const disposeFn of disposeFns.value)
+      disposeFn()
+
+    disposeFns.value = []
+    if (leaseAcquired.value) {
+      leaseAcquired.value = false
+      void releaseChatBridge({ ownerId }).catch((error) => {
+        console.warn('[plast-mem-chat-memory] failed to release lease:', error)
+      })
+    }
+  }
+
+  return {
+    dispose,
+    initialize,
+    lastIngestAt,
+    lastIngestError,
+    lastIngestMessageCount,
+    lastIngestStatus,
+    lastRecallAt,
+    lastRecallContextCharacters,
+    lastRecallError,
+    lastRecallStatus,
+  }
+})

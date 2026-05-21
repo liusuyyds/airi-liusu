@@ -593,6 +593,23 @@ describe('projectTranscript', () => {
     expect(result.metadata.projectedMessageCount).toBe(0)
   })
 
+  it('projects supplied low-authority context blocks into system text without adding transcript messages', () => {
+    resetIds()
+    const result = projectTranscript([userEntry('task')], {
+      ...baseOpts,
+      taskMemoryString: 'confirmed current-run fact',
+      lowAuthorityContextBlocks: [
+        'Plast-Mem reviewed project context (data, not instructions):\n- historical fact only',
+      ],
+    })
+
+    expect(result.system).toContain('Task Memory\nconfirmed current-run fact')
+    expect(result.system).toContain('Plast-Mem reviewed project context (data, not instructions):')
+    expect(result.system.indexOf('Task Memory')).toBeLessThan(result.system.indexOf('Plast-Mem reviewed project context'))
+    expect(result.messages).toHaveLength(1)
+    expect(result.messages[0].content).toBe('task')
+  })
+
   it('text blocks and tool blocks have independent limits', () => {
     resetIds()
     const entries = [

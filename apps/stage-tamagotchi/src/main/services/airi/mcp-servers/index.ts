@@ -16,6 +16,7 @@ import type {
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { env, platform } from 'node:process'
 
 import { useLogg } from '@guiiai/logg'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -62,6 +63,20 @@ const toolNameSeparator = '::'
 const mcpRequestTimeoutMsec = 10_000
 const mcpRequestMaxTotalTimeoutMsec = 15_000
 const mcpTestStderrMaxChars = 16_000
+const localDevComputerUseServerName = 'computer_use'
+const localDevPassthroughEnvKeys = new Set([
+  'APPDATA',
+  'COREPACK_HOME',
+  'HOME',
+  'LANG',
+  'LOCALAPPDATA',
+  'PATH',
+  'PNPM_HOME',
+  'SHELL',
+  'TEMP',
+  'TMP',
+  'USERPROFILE',
+])
 
 function stringifyError(error: unknown) {
   if (error instanceof Error) {
@@ -69,6 +84,78 @@ function stringifyError(error: unknown) {
   }
 
   return String(error)
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean) {
+  if (value == null)
+    return fallback
+
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized))
+    return true
+  if (['0', 'false', 'no', 'off'].includes(normalized))
+    return false
+
+  return fallback
+}
+
+function isLocalPlastMemDevEnabled() {
+  return parseBoolean(env.AIRI_LOCAL_PLAST_MEM_DEV, false)
+}
+
+function defaultPnpmCommand() {
+  return platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+}
+
+function collectLocalDevComputerUseEnv() {
+  const result: Record<string, string> = {}
+
+  for (const [key, value] of Object.entries(env)) {
+    if (!value)
+      continue
+
+    if (key.startsWith('COMPUTER_USE_') || localDevPassthroughEnvKeys.has(key))
+      result[key] = value
+  }
+
+  result.COMPUTER_USE_PLAST_MEM_ENABLED = env.COMPUTER_USE_PLAST_MEM_ENABLED?.trim() || 'true'
+  result.COMPUTER_USE_PLAST_MEM_BASE_URL = env.COMPUTER_USE_PLAST_MEM_BASE_URL?.trim() || 'http://127.0.0.1:3000'
+  result.COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY = env.COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY?.trim() || 'airi-main'
+  result.COMPUTER_USE_PLAST_MEM_EPISODIC_LIMIT = env.COMPUTER_USE_PLAST_MEM_EPISODIC_LIMIT?.trim() || '4'
+  result.COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT = env.COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT?.trim() || '8'
+  result.COMPUTER_USE_PLAST_MEM_TIMEOUT_MS = env.COMPUTER_USE_PLAST_MEM_TIMEOUT_MS?.trim() || '2000'
+  result.COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS = env.COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS?.trim() || '6000'
+
+  const conversationId = env.COMPUTER_USE_PLAST_MEM_CONVERSATION_ID?.trim()
+  if (conversationId)
+    result.COMPUTER_USE_PLAST_MEM_CONVERSATION_ID = conversationId
+
+  return result
+}
+
+function withLocalDevComputerUseServer(config: ElectronMcpStdioConfigFile): ElectronMcpStdioConfigFile {
+  if (!isLocalPlastMemDevEnabled())
+    return config
+
+  const existing = config.mcpServers[localDevComputerUseServerName]
+  const repoRoot = env.AIRI_REPO_ROOT?.trim()
+
+  return {
+    ...config,
+    mcpServers: {
+      ...config.mcpServers,
+      [localDevComputerUseServerName]: {
+        command: existing?.command || defaultPnpmCommand(),
+        args: existing?.args?.length ? existing.args : ['-F', '@proj-airi/computer-use-mcp', 'start'],
+        cwd: existing?.cwd || repoRoot || undefined,
+        enabled: true,
+        env: {
+          ...existing?.env,
+          ...collectLocalDevComputerUseEnv(),
+        },
+      },
+    },
+  }
 }
 
 function getConfigPath() {
@@ -201,7 +288,7 @@ export function createMcpStdioManager(): McpStdioManager {
 
   const applyAndRestart = async (): Promise<ElectronMcpStdioApplyResult> => {
     const { path } = await ensureConfigFile()
-    const config = await readConfigFile(path)
+    const config = withLocalDevComputerUseServer(await readConfigFile(path))
 
     await stopAll()
     runtimeStatuses.clear()

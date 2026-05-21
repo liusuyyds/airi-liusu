@@ -152,6 +152,61 @@ Workflow orchestration:
 - `workflow_resume`
   - resumes a workflow that paused on `approval_required`
 
+## Coding Plast-Mem Bridge
+
+This package can export reviewed coding memory into a Plast Mem compatible
+bridge format without embedding Plast Mem or adding model-visible memory tools.
+The bridge is operator-triggered and disabled by default.
+
+Reviewed-memory export:
+
+```bash
+pnpm -F @proj-airi/computer-use-mcp plast-mem:export-reviewed-memory -- --input services/computer-use-mcp/fixtures/plast-mem/reviewed-memory.sample.json --output bridge.jsonl
+```
+
+Bridge smoke check:
+
+```bash
+pnpm -F @proj-airi/computer-use-mcp plast-mem:smoke-bridge
+```
+
+Optional ingestion into a running Plast Mem server:
+
+```bash
+pnpm -F @proj-airi/computer-use-mcp plast-mem:ingest-bridge-records -- --input bridge.jsonl --base-url http://127.0.0.1:3000 --conversation-id 018f50f2-a6f3-7b88-9f31-0e4b6c28dbd2
+```
+
+Optional semantic-only pre-retrieval for prompt projection:
+
+```bash
+pnpm -F @proj-airi/computer-use-mcp plast-mem:pre-retrieve-context -- --query "computer-use-mcp validation workflow" --base-url http://127.0.0.1:3000 --conversation-id 018f50f2-a6f3-7b88-9f31-0e4b6c28dbd2
+```
+
+For coding tasks, the command can build the retrieval query from task metadata:
+
+```bash
+pnpm -F @proj-airi/computer-use-mcp plast-mem:pre-retrieve-context -- --task "wire Plast Mem retrieval into the coding runner" --workspace-key airi-main --project-path /path/to/airi --file services/computer-use-mcp/src/transcript/projector.ts --command "pnpm -F @proj-airi/computer-use-mcp test" --base-url http://127.0.0.1:3000 --conversation-id 018f50f2-a6f3-7b88-9f31-0e4b6c28dbd2
+```
+
+To make the smoke command call a live Plast Mem server, pass the same server
+settings:
+
+```bash
+pnpm -F @proj-airi/computer-use-mcp plast-mem:smoke-bridge -- --base-url http://127.0.0.1:3000 --conversation-id 018f50f2-a6f3-7b88-9f31-0e4b6c28dbd2 --query "computer-use-mcp validation workflow"
+```
+
+The retrieval output is bounded and labeled as low-authority data. It cannot
+override user instructions, current-run tool evidence, Task Memory, or
+verification gates.
+
+When `COMPUTER_USE_PLAST_MEM_ENABLED=true`, live coding workflow tools such as
+`workflow_open_workspace`, `workflow_validate_workspace`, `workflow_run_tests`,
+and `workflow_inspect_failure` automatically try this pre-retrieval path and
+append any returned context to the workflow result. Failures are non-fatal and
+reported as workflow metadata. Future full coding-runner integrations should use
+the exported `projectTranscriptWithCodingPlastMemContext()` helper instead of
+calling Plast Mem directly from a model-visible tool or browser UI path.
+
 ## Policy Model
 
 The current macOS v1 boundary is intentionally narrow and explicit:
@@ -210,6 +265,23 @@ Autonomous browser agent:
   - optional override for the embedded browser-agent workspace under `src/bin/computer_use`
 - `COMPUTER_USE_PYTHON`
   - optional python executable override for `browser_agent_run`; defaults to the embedded `.venv/bin/python` when present, otherwise `python3`
+
+Plast Mem bridge:
+
+- `COMPUTER_USE_PLAST_MEM_ENABLED`
+  - default `false`
+- `COMPUTER_USE_PLAST_MEM_BASE_URL`
+  - example `http://127.0.0.1:3000`
+- `COMPUTER_USE_PLAST_MEM_CONVERSATION_ID`
+  - Plast Mem conversation UUID used for import and pre-retrieval
+- `COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY`
+  - optional stable workspace key included in coding-task retrieval queries
+- `COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT`
+  - default `8`
+- `COMPUTER_USE_PLAST_MEM_TIMEOUT_MS`
+  - default `2000`
+- `COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS`
+  - default `6000`
 
 Legacy remote runner:
 

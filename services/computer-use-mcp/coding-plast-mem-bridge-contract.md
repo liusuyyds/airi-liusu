@@ -3,8 +3,11 @@
 This document defines the contract boundary between `computer-use-mcp` coding
 memory and `moeru-ai/plast-mem`.
 
-It is a contract, not a runtime integration. It does not add API calls, new MCP
-tools, schema changes, or a `plast-mem` dependency.
+It started as a contract boundary. The current branch also includes
+operator-triggered local export, optional HTTP ingestion, and optional
+pre-retrieval adapters that respect this boundary. It still does not add a
+`plast-mem` dependency or expose model-visible MCP tools for activation,
+export, ingestion, or retrieval.
 
 ## Summary
 
@@ -128,6 +131,85 @@ Notes:
 - The bridge record is intentionally close to a future reviewed coding memory
   entry; it is not a new semantic-memory schema.
 
+## Current Local Export Surface
+
+The current implementation provides an offline operator command only:
+
+```text
+pnpm -F @proj-airi/computer-use-mcp plast-mem:export-reviewed-memory -- --input reviewed-memory.json [--output bridge.jsonl]
+```
+
+The command reads a JSON array, or an object with an `entries` array, of
+reviewed coding memory entries and emits newline-delimited
+`CodingPlastMemBridgeRecordV1` records. It does not call `plast-mem`, register
+MCP tools, or expose a model-loop export path.
+
+The optional ingestion adapter maps already serialized bridge records into
+`plast-mem` `POST /api/v0/import_batch_messages` requests. It is a library
+adapter, not a runtime background bridge; callers must provide the
+`plast-mem` base URL and target conversation ID explicitly.
+
+The local operator ingestion command reads bridge JSONL and performs that
+explicit import:
+
+```text
+pnpm -F @proj-airi/computer-use-mcp plast-mem:ingest-bridge-records -- --input bridge.jsonl --base-url http://127.0.0.1:3000 --conversation-id UUID
+```
+
+The optional retrieval adapter maps an explicit coding task query into
+`plast-mem` `POST /api/v0/context_pre_retrieve` and wraps returned markdown in
+the required low-authority context label before prompt projection. Empty
+results are not injected.
+
+The coding-task helper builds that query from task goal, workspace key, project
+path, related files, and validation/workflow commands. This keeps future
+runtime call sites from knowing the Plast Mem request shape directly.
+
+The transcript projection wrapper composes the coding-task helper with
+`projectTranscript()` and appends the returned block through
+`lowAuthorityContextBlocks`. This is the intended Node-side call surface for a
+future full coding runner.
+
+The current live MCP workflow surface also uses the same retrieval helper for
+coding workflow tools (`workflow_open_workspace`, `workflow_validate_workspace`,
+`workflow_run_tests`, and `workflow_inspect_failure`). Those tools append any
+returned block as low-authority workflow result content and expose only metadata
+in structured content. They do not expose a standalone memory retrieval tool.
+
+The local operator retrieval command exercises that path:
+
+```text
+pnpm -F @proj-airi/computer-use-mcp plast-mem:pre-retrieve-context -- --query "task goal" --base-url http://127.0.0.1:3000 --conversation-id UUID
+```
+
+It also supports coding-task metadata:
+
+```text
+pnpm -F @proj-airi/computer-use-mcp plast-mem:pre-retrieve-context -- --task "task goal" --workspace-key airi-main --file services/computer-use-mcp/src/config.ts --base-url http://127.0.0.1:3000 --conversation-id UUID
+```
+
+The bridge smoke command dry-runs the packaged reviewed-memory fixture by
+default and can optionally call both Plast Mem endpoints when explicit server
+settings are supplied:
+
+```text
+pnpm -F @proj-airi/computer-use-mcp plast-mem:smoke-bridge -- --base-url http://127.0.0.1:3000 --conversation-id UUID --query "task goal"
+```
+
+If the smoke command imports records and immediately retrieves no semantic
+context, that is not necessarily a bridge failure: Plast Mem semantic facts are
+created by background segmentation/consolidation.
+
+Runtime configuration is present but disabled by default:
+
+- `COMPUTER_USE_PLAST_MEM_ENABLED`
+- `COMPUTER_USE_PLAST_MEM_BASE_URL`
+- `COMPUTER_USE_PLAST_MEM_CONVERSATION_ID`
+- `COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY`
+- `COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT`
+- `COMPUTER_USE_PLAST_MEM_TIMEOUT_MS`
+- `COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS`
+
 ## Future Write Path
 
 Preferred V1 direction:
@@ -201,9 +283,7 @@ The only safe prompt role is reviewed contextual evidence.
 
 ## Non-Goals
 
-- No runtime bridge implementation in this slice.
 - No `plast-mem` dependency in `computer-use-mcp`.
-- No HTTP/API call implementation.
 - No direct writes to `plast-mem` `semantic_memory`.
 - No BM25, vector, hybrid, or RRF retrieval in `computer-use-mcp`.
 - No Task Memory export.
@@ -214,28 +294,35 @@ The only safe prompt role is reviewed contextual evidence.
 - No coding-runner self-promotion into long-term memory.
 - No MCP public schema change.
 - No prompt authority elevation from `plast-mem` retrieval.
+- No automatic Stage UI/global chat injection in this slice.
+- No browser-side direct Plast Mem fetch path.
 
-## Future Implementation Slices
+## Implementation Slices
 
-1. `test(computer-use-mcp): serialize plast-mem bridge records`
+1. `test(computer-use-mcp): serialize plast-mem bridge records` - implemented
    - Map active human-verified reviewed coding memory records into
      `CodingPlastMemBridgeRecordV1`.
    - Do not call `plast-mem`.
 
-2. `feat(computer-use-mcp): export reviewed coding memory records`
+2. `feat(computer-use-mcp): export reviewed coding memory records` - implemented
    - Add a local operator export surface, such as file/stdout.
    - Keep coding-runner model loop unable to export.
 
-3. `feat(computer-use-mcp): add optional plast-mem ingestion adapter`
+3. `feat(computer-use-mcp): add optional plast-mem ingestion adapter` - implemented
    - Call a configured `plast-mem` ingestion endpoint.
    - Keep failures non-fatal to coding runner execution.
 
-4. `feat(computer-use-mcp): inject bounded plast-mem pre-retrieve context`
+4. `feat(computer-use-mcp): inject bounded plast-mem pre-retrieve context` - implemented for live coding workflows; full coding-runner prompt wiring remains future work
    - Use `context_pre_retrieve` or successor API.
    - Label returned context as data, not instructions.
    - Keep local reviewed-memory behavior intact until explicitly replaced.
+   - Current branch provides the adapter, coding-task query helper, prompt
+     block, transcript projection hook, projection wrapper, and live coding
+     workflow call-site injection.
+   - AIRI global chat memory and a full agentic coding-runner loop remain
+     explicit future wiring.
 
-5. `test(computer-use-mcp): cover plast-mem conflict precedence`
+5. `test(computer-use-mcp): cover plast-mem conflict precedence` - implemented
    - Current-run tool evidence and verification gates win over retrieved
      long-term context.
 

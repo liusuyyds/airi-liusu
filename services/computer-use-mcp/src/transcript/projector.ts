@@ -26,6 +26,8 @@ export interface TranscriptProjectionOptions {
   systemPromptBase?: string
   /** Optional current-task memory/context text to pin in the system prompt. */
   taskMemoryString?: string
+  /** Optional low-authority context blocks appended after current task memory. */
+  lowAuthorityContextBlocks?: readonly string[]
   /** Maximum number of recent tool-interaction blocks to keep in full. */
   maxFullToolBlocks?: number
   /** Maximum number of recent text-like blocks to keep in full. */
@@ -62,6 +64,14 @@ export function projectTranscript(
   let system = opts.systemPromptBase ?? ''
   if (opts.taskMemoryString?.trim()) {
     system += `${system ? '\n\n' : ''}Task Memory\n${opts.taskMemoryString}`
+  }
+  if (opts.lowAuthorityContextBlocks?.length) {
+    for (const block of opts.lowAuthorityContextBlocks) {
+      const trimmed = block.trim()
+      if (!trimmed)
+        continue
+      system += `${system ? '\n\n' : ''}${trimmed}`
+    }
   }
 
   const allBlocks = parseTranscriptBlocks(transcriptEntries)

@@ -55,6 +55,20 @@ function summarizeCommand(command: string) {
   return compact.length > 160 ? `${compact.slice(0, 157)}...` : compact
 }
 
+function resolveShellArgs(shell: string, command: string): string[] {
+  const shellName = shell.split(/[\\/]/u).at(-1)?.toLowerCase() ?? ''
+
+  if (shellName === 'powershell.exe' || shellName === 'powershell' || shellName === 'pwsh.exe' || shellName === 'pwsh') {
+    return ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command]
+  }
+
+  if (shellName === 'cmd.exe' || shellName === 'cmd') {
+    return ['/d', '/s', '/c', command]
+  }
+
+  return ['-lc', command]
+}
+
 export function createLocalShellRunner(config: ComputerUseConfig): TerminalRunner {
   const state: TerminalState = {
     effectiveCwd: processCwd(),
@@ -84,7 +98,7 @@ export function createLocalShellRunner(config: ComputerUseConfig): TerminalRunne
 
       const startedAt = Date.now()
       const result = await new Promise<TerminalCommandResult>((resolve, reject) => {
-        const child = spawn(config.terminalShell, ['-lc', input.command], {
+        const child = spawn(config.terminalShell, resolveShellArgs(config.terminalShell, input.command), {
           cwd: effectiveCwd,
           env,
           stdio: ['ignore', 'pipe', 'pipe'],

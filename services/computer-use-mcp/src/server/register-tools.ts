@@ -12,7 +12,9 @@ import type {
 import type { WorkflowSuspension } from '../workflows'
 import type { ExecuteAction } from './action-executor'
 import type { ComputerUseServerRuntime } from './runtime'
+import type { WorkflowPlastMemContext } from './workflow-plast-mem-context'
 
+import { errorMessageFrom } from '@moeru/std'
 import { z } from 'zod'
 
 import { getUnsupportedBrowserDomActions, isBrowserDomActionSupported } from '../browser-dom/capabilities'
@@ -38,6 +40,7 @@ import { refreshRuntimeRunState } from './refresh-run-state'
 import { executeChromeEnsure } from './register-chrome-session'
 import { createAcquirePtyCallback, executeApprovedPtyCreate } from './register-pty'
 import { formatWorkflowStructuredContent } from './workflow-formatter'
+import { retrieveWorkflowPlastMemContext } from './workflow-plast-mem-context'
 import { createWorkflowPrepToolExecutor } from './workflow-prep-tools'
 
 export interface RegisterComputerUseToolsOptions {
@@ -109,6 +112,20 @@ export function registerComputerUseTools(params: RegisterComputerUseToolsOptions
 
   async function refreshWorkflowRunState() {
     await refreshRuntimeRunState(runtime)
+  }
+
+  async function retrieveCodingWorkflowContext(params: {
+    taskGoal: string
+    projectPath?: string
+    relatedFiles?: readonly string[]
+    commands?: readonly string[]
+  }): Promise<WorkflowPlastMemContext> {
+    return await retrieveWorkflowPlastMemContext(runtime.config, {
+      taskGoal: params.taskGoal,
+      projectPath: params.projectPath,
+      relatedFiles: params.relatedFiles,
+      commands: params.commands,
+    })
   }
 
   // Workflow suspension state — stored in this closure so that
@@ -445,15 +462,16 @@ export function registerComputerUseTools(params: RegisterComputerUseToolsOptions
         }
       }
       catch (error) {
+        const message = errorMessageFrom(error) ?? String(error)
         return {
           isError: true,
           content: [
-            textContent(`Browser agent failed: ${error instanceof Error ? error.message : String(error)}`),
+            textContent(`Browser agent failed: ${message}`),
           ],
           structuredContent: {
             status: 'error',
             browserAgent: launchContext,
-            error: error instanceof Error ? error.message : String(error),
+            error: message,
           },
         }
       }
@@ -877,10 +895,11 @@ export function registerComputerUseTools(params: RegisterComputerUseToolsOptions
           parsed = JSON.parse(optsJson) as unknown
         }
         catch (error) {
+          const message = errorMessageFrom(error) ?? String(error)
           return {
             isError: true,
             content: [
-              textContent(`browser_dom_trigger_event expected optsJson to be valid JSON: ${error instanceof Error ? error.message : String(error)}`),
+              textContent(`browser_dom_trigger_event expected optsJson to be valid JSON: ${message}`),
             ],
             structuredContent: {
               status: 'invalid_params',
@@ -1117,13 +1136,19 @@ export function registerComputerUseTools(params: RegisterComputerUseToolsOptions
   function formatWorkflowResult(
     workflowId: string,
     result: import('../workflows').WorkflowExecutionResult,
+    plastMemContext?: WorkflowPlastMemContext,
   ) {
+    const content = [textContent(result.summary)]
+    if (plastMemContext?.contextBlock.trim())
+      content.push(textContent(plastMemContext.contextBlock))
+
     return {
-      content: [textContent(result.summary)],
+      content,
       structuredContent: formatWorkflowStructuredContent({
         workflowId,
         result,
         runState: runtime.stateManager.getState(),
+        plastMemContext,
       }),
     }
   }
@@ -1138,6 +1163,10 @@ export function registerComputerUseTools(params: RegisterComputerUseToolsOptions
     },
     async ({ projectPath, ideApp, fileManagerApp, autoApprove }) => {
       const workflow = createDevOpenWorkspaceWorkflow({ projectPath, ideApp, fileManagerApp })
+      const plastMemContext = await retrieveCodingWorkflowContext({
+        taskGoal: workflow.description,
+        projectPath,
+      })
       const result = await executeWorkflow({
         workflow,
         executeAction,
@@ -1151,7 +1180,7 @@ export function registerComputerUseTools(params: RegisterComputerUseToolsOptions
 
       suspendedWorkflow = result.suspension
 
-      return formatWorkflowResult(workflow.id, result)
+      return formatWorkflowResult(workflow.id, result, plastMemContext)
     },
   )
 
@@ -1173,6 +1202,14 @@ export function registerComputerUseTools(params: RegisterComputerUseToolsOptions
         changesCommand,
         checkCommand,
       })
+      const plastMemContext = await retrieveCodingWorkflowContext({
+        taskGoal: workflow.description,
+        projectPath,
+        commands: [
+          changesCommand ?? 'git diff --stat',
+          checkCommand ?? 'pnpm typecheck',
+        ],
+      })
       const result = await executeWorkflow({
         workflow,
         executeAction,
@@ -1186,7 +1223,7 @@ export function registerComputerUseTools(params: RegisterComputerUseToolsOptions
 
       suspendedWorkflow = result.suspension
 
-      return formatWorkflowResult(workflow.id, result)
+      return formatWorkflowResult(workflow.id, result, plastMemContext)
     },
   )
 
@@ -1199,6 +1236,11 @@ export function registerComputerUseTools(params: RegisterComputerUseToolsOptions
     },
     async ({ projectPath, testCommand, autoApprove }) => {
       const workflow = createDevRunTestsWorkflow({ projectPath, testCommand })
+      const plastMemContext = await retrieveCodingWorkflowContext({
+        taskGoal: workflow.description,
+        projectPath,
+        commands: [testCommand ?? 'pnpm test:run'],
+      })
       const result = await executeWorkflow({
         workflow,
         executeAction,
@@ -1213,7 +1255,7 @@ export function registerComputerUseTools(params: RegisterComputerUseToolsOptions
       // Store suspension for resume capability.
       suspendedWorkflow = result.suspension
 
-      return formatWorkflowResult(workflow.id, result)
+      return formatWorkflowResult(workflow.id, result, plastMemContext)
     },
   )
 
@@ -1226,6 +1268,10 @@ export function registerComputerUseTools(params: RegisterComputerUseToolsOptions
     },
     async ({ ideApp, diagnosticCommand, autoApprove }) => {
       const workflow = createDevInspectFailureWorkflow({ ideApp, diagnosticCommand })
+      const plastMemContext = await retrieveCodingWorkflowContext({
+        taskGoal: workflow.description,
+        commands: diagnosticCommand ? [diagnosticCommand] : [],
+      })
       const result = await executeWorkflow({
         workflow,
         executeAction,
@@ -1238,7 +1284,7 @@ export function registerComputerUseTools(params: RegisterComputerUseToolsOptions
 
       suspendedWorkflow = result.suspension
 
-      return formatWorkflowResult(workflow.id, result)
+      return formatWorkflowResult(workflow.id, result, plastMemContext)
     },
   )
 

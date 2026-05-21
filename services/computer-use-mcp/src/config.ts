@@ -173,6 +173,9 @@ export function resolveComputerUseConfig(): ComputerUseConfig {
     : remoteObservationBaseUrl
       ? inferredObservationPort || 8765
       : undefined
+  const plastMemBaseUrl = env.COMPUTER_USE_PLAST_MEM_BASE_URL?.trim() || undefined
+  const plastMemConversationId = env.COMPUTER_USE_PLAST_MEM_CONVERSATION_ID?.trim() || undefined
+  const plastMemWorkspaceKey = env.COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY?.trim() || undefined
 
   const requireSessionTagForMutatingActions = parseBoolean(
     env.COMPUTER_USE_REQUIRE_SESSION_TAG_FOR_MUTATIONS,
@@ -228,6 +231,15 @@ export function resolveComputerUseConfig(): ComputerUseConfig {
       host: env.COMPUTER_USE_BROWSER_DOM_BRIDGE_HOST?.trim() || '127.0.0.1',
       port: parseInteger(env.COMPUTER_USE_BROWSER_DOM_BRIDGE_PORT, 8765),
       requestTimeoutMs: parseInteger(env.COMPUTER_USE_BROWSER_DOM_BRIDGE_TIMEOUT_MS, 10_000),
+    },
+    plastMem: {
+      enabled: parseBoolean(env.COMPUTER_USE_PLAST_MEM_ENABLED, false),
+      baseUrl: plastMemBaseUrl,
+      conversationId: plastMemConversationId,
+      workspaceKey: plastMemWorkspaceKey,
+      semanticLimit: parseInteger(env.COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT, 8),
+      requestTimeoutMs: parseInteger(env.COMPUTER_USE_PLAST_MEM_TIMEOUT_MS, 2_000),
+      maxContextCharacters: parseInteger(env.COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS, 6_000),
     },
     binaries: {
       swift: env.COMPUTER_USE_SWIFT_BINARY?.trim() || 'swift',

@@ -219,6 +219,7 @@ export default defineConfig({
               '**/settings/models/index.vue',
               '**/settings/system/general.vue',
               '**/settings/modules/mcp.vue',
+              '**/settings/modules/memory-long-term.vue',
               '**/devtools/index.vue',
               '**/settings/index.vue',
             ],

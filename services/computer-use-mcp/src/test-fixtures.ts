@@ -48,6 +48,15 @@ export function createTestConfig(overrides: Partial<ComputerUseConfig> = {}): Co
       port: 8765,
       requestTimeoutMs: 10_000,
     },
+    plastMem: {
+      enabled: false,
+      baseUrl: undefined,
+      conversationId: undefined,
+      workspaceKey: undefined,
+      semanticLimit: 8,
+      requestTimeoutMs: 2_000,
+      maxContextCharacters: 6_000,
+    },
     binaries: {
       swift: 'swift',
       osascript: 'osascript',

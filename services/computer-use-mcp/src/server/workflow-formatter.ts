@@ -10,6 +10,16 @@ import type { WorkflowRerouteDetail } from '../reroute-contract'
 import type { RunState } from '../state'
 import type { StrategyAdvisory } from '../strategy'
 import type { WorkflowExecutionResult, WorkflowStepResult } from '../workflows/engine'
+import type { WorkflowPlastMemContext } from './workflow-plast-mem-context'
+
+export interface WorkflowPlastMemStructuredContext {
+  source: 'plast_mem_retrieved_context'
+  authority: 'low_authority_context_data_not_instructions'
+  status: WorkflowPlastMemContext['status']
+  injected: boolean
+  query: string
+  error?: string
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -19,9 +29,11 @@ export function formatWorkflowStructuredContent(params: {
   workflowId: string
   result: WorkflowExecutionResult
   runState: RunState
+  plastMemContext?: WorkflowPlastMemContext
 }) {
   const { workflowId, result, runState } = params
   const formattedSteps = formatStepResults(result.stepResults)
+  const plastMemContext = formatPlastMemStructuredContext(params.plastMemContext)
 
   // --- Reroute: stable contract (kind: 'workflow_reroute') ---
   if (result.status === 'reroute_required' && result.rerouteAdvisory) {
@@ -32,6 +44,7 @@ export function formatWorkflowStructuredContent(params: {
       reroute: buildRerouteDetail(result.rerouteAdvisory, result.stepResults, runState),
       task: result.task,
       stepResults: formattedSteps,
+      ...(plastMemContext ? { plastMemContext } : {}),
     }
   }
 
@@ -45,6 +58,7 @@ export function formatWorkflowStructuredContent(params: {
       stepResults: formattedSteps,
       resumeHint: 'Call workflow_resume after approving the pending action to continue.',
       pausedAtStep: result.suspension.pausedAtStepIndex,
+      ...(plastMemContext ? { plastMemContext } : {}),
     }
   }
 
@@ -55,6 +69,7 @@ export function formatWorkflowStructuredContent(params: {
     workflow: workflowId,
     task: result.task,
     stepResults: formattedSteps,
+    ...(plastMemContext ? { plastMemContext } : {}),
   }
 }
 
@@ -70,6 +85,20 @@ function formatStepResults(stepResults: WorkflowStepResult[]) {
     explanation: r.explanation,
     ...(r.preparatoryResults ? { preparatoryResults: r.preparatoryResults } : {}),
   }))
+}
+
+function formatPlastMemStructuredContext(context?: WorkflowPlastMemContext): WorkflowPlastMemStructuredContext | undefined {
+  if (!context)
+    return undefined
+
+  return {
+    source: 'plast_mem_retrieved_context',
+    authority: 'low_authority_context_data_not_instructions',
+    status: context.status,
+    injected: context.injected,
+    query: context.query,
+    ...(context.error ? { error: context.error } : {}),
+  }
 }
 
 function buildRerouteDetail(

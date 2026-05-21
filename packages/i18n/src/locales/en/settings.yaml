@@ -625,6 +625,92 @@ pages:
               filtering had no effect on the last transcription.
     memory-long-term:
       description: Long-term memory specific settings and management
+      sections:
+        plast-mem-bridge:
+          description: >-
+            Local Plast Mem is connected as AIRI's private long-term memory
+            sidecar. Formal chat recalls memory before a reply and captures new
+            conversation turns after the reply, while coding memory can still
+            use the computer-use-mcp bridge.
+          env:
+            title: Runtime environment keys
+          runtime:
+            checked-at: 'Checked: {time}'
+            configured: Configured
+            conversation: Conversation UUID
+            conversation-missing: The local dev launcher normally creates one under .cache/plast-mem-dev.json.
+            conversation-missing-title: Conversation UUID missing
+            mcp:
+              error: MCP error
+              missing: Not started
+              running: MCP running
+              stopped: MCP stopped
+            mcp-server: computer_use MCP
+            missing: Missing
+            refresh: Refresh
+            service-error: Plast Mem service
+            service-url: Plast Mem URL
+            status:
+              checking: Checking
+              disabled: Disabled
+              offline: Offline
+              online: Online
+            status-error: Status unavailable
+            title: Local runtime status
+            workspace: Workspace key
+          chat-diagnostics:
+            never: Never
+            title: Chat bridge diagnostics
+            recall:
+              detail:
+                empty: Request succeeded, but no semantic memory matched yet.
+                error: '{error}'
+                idle: Recall has not run yet.
+                recalled: Recalled {characters} characters into chat context.
+              status:
+                empty: No match
+                error: Error
+                idle: Waiting
+                recalled: Recalled
+              time: 'Last recall: {time}'
+              title: Pre-reply recall
+            ingest:
+              detail:
+                accepted: Wrote {count} message(s) to Plast Mem.
+                error: '{error}'
+                idle: Capture has not run yet.
+                rejected: Plast Mem rejected the write.
+              status:
+                accepted: Written
+                error: Error
+                idle: Waiting
+                rejected: Rejected
+              time: 'Last write: {time}'
+              title: Post-reply capture
+          facts:
+            external:
+              description: >-
+                Plast Mem runs as a separate local Rust service that AIRI
+                starts and calls through Electron IPC.
+              title: Local sidecar
+            low-authority:
+              description: >-
+                Retrieved context is labeled as data, not instructions, so
+                current user intent, visible chat, and trusted prompts stay
+                higher priority.
+              title: Low-authority context
+            reviewed:
+              description: >-
+                Chat turns are captured after responses and Plast Mem's worker
+                turns them into episodic and semantic memory in the background.
+              title: Chat capture
+          scope:
+            description: >-
+              This local setup is intended for private Tamagotchi use. It
+              surfaces runtime status here, injects recalled memory into formal
+              chat, and keeps Plast Mem hidden from model-visible tool lists.
+            title: Formal chat memory
+          title: Local Plast Mem Memory
       title: Long-Term Memory
     memory-short-term:
       description: Short-term memory specific settings and management
