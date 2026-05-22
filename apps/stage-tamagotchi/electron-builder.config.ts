@@ -2,9 +2,19 @@
 
 import type { Configuration } from 'electron-builder'
 
-import { execSync } from 'node:child_process'
+import process from 'node:process'
+
+import { execFileSync, execSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { isMacOS } from 'std-env'
+
+const stageTamagotchiDir = dirname(fileURLToPath(import.meta.url))
+const repoRoot = resolve(stageTamagotchiDir, '../..')
+const plastMemDir = resolve(repoRoot, 'services', 'plast-mem')
+const plastMemReleaseDir = resolve(plastMemDir, 'target', 'release')
 
 function hasXcode26OrAbove() {
   if (!isMacOS)
@@ -38,6 +48,41 @@ else {
   // command substitution for `GITHUB_ENV`; writing this log to stdout would break
   // machine-readable output such as `BUNDLE_NAME=$(...)`.
   console.warn('[electron-builder/config] Xcode version is 26 or above. Using .icon format for macOS app icon.')
+}
+
+function cargoCommand() {
+  return process.platform === 'win32' ? 'cargo.exe' : 'cargo'
+}
+
+function plastMemBinaryName(electronPlatformName: string) {
+  return electronPlatformName === 'win32' ? 'plastmem.exe' : 'plastmem'
+}
+
+function buildPlastMemSidecarBinary(electronPlatformName: string) {
+  if ((process.env.AIRI_SKIP_PLAST_MEM_SIDECAR_BUILD ?? '').trim() === '1') {
+    console.warn('[electron-builder/config] Skipping Plast Mem sidecar build because AIRI_SKIP_PLAST_MEM_SIDECAR_BUILD=1.')
+    return
+  }
+
+  const manifestPath = resolve(plastMemDir, 'Cargo.toml')
+  if (!existsSync(manifestPath)) {
+    throw new Error(`Plast Mem Cargo.toml not found at ${manifestPath}.`)
+  }
+
+  console.warn('[electron-builder/config] Building Plast Mem sidecar release binary.')
+  execFileSync(cargoCommand(), ['build', '--release', '--package', 'plastmem'], {
+    cwd: plastMemDir,
+    env: {
+      ...process.env,
+      SQLX_OFFLINE: process.env.SQLX_OFFLINE?.trim() || 'true',
+    },
+    stdio: 'inherit',
+  })
+
+  const binaryPath = resolve(plastMemReleaseDir, plastMemBinaryName(electronPlatformName))
+  if (!existsSync(binaryPath)) {
+    throw new Error(`Plast Mem release binary was not produced at ${binaryPath}.`)
+  }
 }
 
 export default {
@@ -104,11 +149,14 @@ export default {
       filter: ['**/*'],
     },
     {
-      from: '../../services/plast-mem',
-      to: 'plast-mem',
-      filter: ['**/*', '!target/**', '!node_modules/**', '!.env'],
+      from: plastMemReleaseDir,
+      to: 'plast-mem/bin',
+      filter: ['plastmem.exe', 'plastmem', '*.dll'],
     },
   ],
+  beforePack: async (context) => {
+    buildPlastMemSidecarBinary(context.electronPlatformName)
+  },
   extraMetadata: {
     name: 'ai.moeru.airi',
     main: 'out/main/index.js',

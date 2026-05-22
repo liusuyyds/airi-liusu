@@ -40,8 +40,8 @@ interface PlastMemSidecarLaunchPlan {
  * - Database and OpenAI-compatible provider settings need to be injected into a fresh sidecar process
  *
  * Expects:
- * - `services/plast-mem/Cargo.toml` exists in the dev repo or packaged resources
- * - Rust/Cargo is available on PATH for source-based local runs
+ * - Packaged app: `resources/plast-mem/bin/plastmem(.exe)` exists
+ * - Dev app: `services/plast-mem/Cargo.toml` exists and Rust/Cargo is available on PATH
  *
  * Returns:
  * - Sidecar lifecycle actions and status snapshots
@@ -185,6 +185,10 @@ function resolveCargoCommand() {
   return process.platform === 'win32' ? 'cargo.exe' : 'cargo'
 }
 
+function resolvePlastMemBinaryName() {
+  return process.platform === 'win32' ? 'plastmem.exe' : 'plastmem'
+}
+
 function setEnvValue(target: NodeJS.ProcessEnv, key: string, value: string | number | undefined) {
   const normalized = String(value ?? '').trim()
   if (!normalized)
@@ -216,7 +220,34 @@ function createSidecarEnv(config: ElectronPlastMemConfig | undefined): NodeJS.Pr
   return childEnv
 }
 
+async function resolvePackagedPlastMemExecutable() {
+  const configured = trimOptional(process.env.AIRI_PLAST_MEM_BIN)
+  const binaryName = resolvePlastMemBinaryName()
+  const candidates = [
+    configured,
+    process.resourcesPath ? join(process.resourcesPath, 'plast-mem', 'bin', binaryName) : undefined,
+    process.resourcesPath ? join(process.resourcesPath, 'plast-mem', binaryName) : undefined,
+  ]
+
+  for (const candidate of candidates) {
+    if (candidate && await pathExists(candidate))
+      return candidate
+  }
+
+  return undefined
+}
+
 async function createLaunchPlan(config: ElectronPlastMemConfig, configuredByUser: boolean): Promise<PlastMemSidecarLaunchPlan> {
+  const packagedExecutable = await resolvePackagedPlastMemExecutable()
+  if (packagedExecutable) {
+    return {
+      args: [],
+      command: packagedExecutable,
+      cwd: dirname(packagedExecutable),
+      env: createSidecarEnv(configuredByUser ? config : undefined),
+    }
+  }
+
   const cwd = await resolvePlastMemDirectory()
   const command = resolveCargoCommand()
 
@@ -468,7 +499,7 @@ export function createPlastMemSidecarManager(): PlastMemSidecarManager {
           throw new Error('Plast Mem base URL is not configured.')
 
         const launchPlan = await createLaunchPlan(config, configuredByUser)
-        const commandText = `${launchPlan.command} ${launchPlan.args.join(' ')}`
+        const commandText = [launchPlan.command, ...launchPlan.args].join(' ')
 
         expectedProcessExit = false
         setStatus({
