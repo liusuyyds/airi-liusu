@@ -240,6 +240,8 @@ fn build_json_object_fallback_messages(
     "Return only one JSON object. Do not include markdown, prose, or code fences.\nSchema name: {schema_name}{description}\nJSON schema:\n{schema_text}"
   );
 
+  messages.retain(|m| !matches!(m, ChatCompletionRequestMessage::System(_)));
+
   messages.insert(
     0,
     ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage::from(instruction)),

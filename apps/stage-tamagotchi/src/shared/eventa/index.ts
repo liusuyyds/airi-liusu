@@ -258,6 +258,7 @@ export const electronMcpTestServer = defineInvokeEventa<ElectronMcpStdioTestResu
 export interface ElectronPlastMemConfig {
   autoStart: boolean
   baseUrl: string
+  category: string
   conversationId: string
   databaseUrl: string
   enabled: boolean
@@ -279,6 +280,7 @@ export type ElectronPlastMemApplyConfigPayload = Partial<ElectronPlastMemConfig>
 export const defaultElectronPlastMemConfig: ElectronPlastMemConfig = {
   autoStart: false,
   baseUrl: 'http://127.0.0.1:3000',
+  category: '',
   conversationId: '',
   databaseUrl: 'postgres://plastmem:plastmem@localhost:5433/plastmem',
   enabled: false,
@@ -415,7 +417,72 @@ export interface ElectronPlastMemIngestChatMessagesResult {
   statusCode?: number
 }
 
+export interface ElectronPlastMemContextPreRetrievePayload {
+  ownerId?: string
+  query: string
+  semanticLimit?: number
+  detail?: ElectronPlastMemContextDetail
+  category?: string
+}
+
+export interface ElectronPlastMemContextPreRetrieveResult {
+  baseUrl?: string
+  contextBlock: string
+  enabled: boolean
+  error?: string
+  recalled: boolean
+  statusCode?: number
+}
+
+export interface ElectronPlastMemRecentMemoryPayload {
+  ownerId?: string
+  daysLimit?: number
+  limit?: number
+}
+
+export interface ElectronPlastMemRecentMemoryResult {
+  baseUrl?: string
+  contextBlock: string
+  enabled: boolean
+  error?: string
+  recalled: boolean
+  statusCode?: number
+}
+
+export interface ElectronPlastMemEpisodicMemory {
+  id: string
+  conversation_id: string
+  title: string
+  content: string
+  start_at?: string
+  end_at?: string
+  created_at: string
+  last_reviewed_at?: string
+  consolidated_at?: string | null
+  stability?: number
+  difficulty?: number
+  surprise?: number
+  classification?: string | null
+}
+
+export interface ElectronPlastMemRecentMemoryRawPayload {
+  ownerId?: string
+  daysLimit?: number
+  limit?: number
+}
+
+export interface ElectronPlastMemRecentMemoryRawResult {
+  baseUrl?: string
+  memories: ElectronPlastMemEpisodicMemory[]
+  enabled: boolean
+  error?: string
+  statusCode?: number
+}
+
 export const electronPlastMemRetrieveChatContext = defineInvokeEventa<ElectronPlastMemRetrieveChatContextResult, ElectronPlastMemRetrieveChatContextPayload>('eventa:invoke:electron:plast-mem:retrieve-chat-context')
+export const electronPlastMemContextPreRetrieve = defineInvokeEventa<ElectronPlastMemContextPreRetrieveResult, ElectronPlastMemContextPreRetrievePayload>('eventa:invoke:electron:plast-mem:context-pre-retrieve')
+export const electronPlastMemRecentMemory = defineInvokeEventa<ElectronPlastMemRecentMemoryResult, ElectronPlastMemRecentMemoryPayload>('eventa:invoke:electron:plast-mem:recent-memory')
+export const electronPlastMemRecentMemoryRaw = defineInvokeEventa<ElectronPlastMemRecentMemoryRawResult, ElectronPlastMemRecentMemoryRawPayload>('eventa:invoke:electron:plast-mem:recent-memory-raw')
 export const electronPlastMemIngestChatMessages = defineInvokeEventa<ElectronPlastMemIngestChatMessagesResult, ElectronPlastMemIngestChatMessagesPayload>('eventa:invoke:electron:plast-mem:ingest-chat-messages')
 export const electronPlastMemReportChatBridgeTrace = defineInvokeEventa<void, ElectronPlastMemChatBridgeTracePayload>('eventa:invoke:electron:plast-mem:report-chat-bridge-trace')
 export const electronPlastMemAcquireChatBridge = defineInvokeEventa<ElectronPlastMemChatBridgeLeaseResult, ElectronPlastMemChatBridgeLeasePayload>('eventa:invoke:electron:plast-mem:acquire-chat-bridge')

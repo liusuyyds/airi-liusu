@@ -12,14 +12,17 @@ import { ref } from 'vue'
 
 import {
   electronPlastMemAcquireChatBridge,
+  electronPlastMemContextPreRetrieve,
   electronPlastMemIngestChatMessages,
+  electronPlastMemRecentMemory,
   electronPlastMemReleaseChatBridge,
   electronPlastMemReportChatBridgeTrace,
   electronPlastMemRetrieveChatContext,
 } from '../../shared/eventa'
 
 const PLAST_MEM_CHAT_CONTEXT_ID = 'plast-mem:chat-recall'
-const MIN_RECALL_QUERY_LENGTH = 5
+const PLAST_MEM_PRE_RETRIEVE_CONTEXT_ID = 'plast-mem:pre-retrieve'
+const PLAST_MEM_RECENT_MEMORY_CONTEXT_ID = 'plast-mem:recent-memory'
 const RECENT_HOOK_SIGNATURE_TTL_MSEC = 30_000
 const ownerId = globalThis.crypto?.randomUUID?.() ?? `plast-mem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 type RecallStatus = 'idle' | 'recalled' | 'empty' | 'error'
@@ -46,10 +49,10 @@ function textFromContent(content: ChatHistoryItem['content'] | undefined) {
     .trim()
 }
 
-function createChatMemoryContext(text: string) {
+function createChatMemoryContext(contextId: string, text: string) {
   return {
     id: `plast-mem-chat-${Date.now().toString(36)}`,
-    contextId: PLAST_MEM_CHAT_CONTEXT_ID,
+    contextId,
     strategy: ContextUpdateStrategy.ReplaceSelf,
     text,
     createdAt: Date.now(),
@@ -91,6 +94,8 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
   const chatContext = useChatContextStore()
   const acquireChatBridge = useElectronEventaInvoke(electronPlastMemAcquireChatBridge)
   const retrieveChatContext = useElectronEventaInvoke(electronPlastMemRetrieveChatContext)
+  const contextPreRetrieve = useElectronEventaInvoke(electronPlastMemContextPreRetrieve)
+  const recentMemory = useElectronEventaInvoke(electronPlastMemRecentMemory)
   const ingestChatMessages = useElectronEventaInvoke(electronPlastMemIngestChatMessages)
   const reportChatBridgeTrace = useElectronEventaInvoke(electronPlastMemReportChatBridgeTrace)
   const releaseChatBridge = useElectronEventaInvoke(electronPlastMemReleaseChatBridge)
@@ -105,6 +110,7 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
   const disposeFns = ref<Array<() => void>>([])
   const initializing = ref(false)
   const leaseAcquired = ref(false)
+  const recentMemoryRecalled = ref(false)
 
   function reportTrace(event: string, detail?: Record<string, unknown>) {
     void reportChatBridgeTrace({ detail: { ownerId, ...detail }, event }).catch((error) => {
@@ -148,43 +154,85 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
         if (!claimRecentHookSignature(recallSignature))
           return
 
-        if (query.length < MIN_RECALL_QUERY_LENGTH) {
-          reportTrace('recall:skip-short-query', { queryCharacters: query.length })
-          return
-        }
-
         reportTrace('recall:hook', { queryCharacters: query.length })
-        const result = await retrieveChatContext({
+
+        const preRetrieveSignature = `pre-retrieve:${turnKeyFromContext(context, query)}:${query}`
+        const shouldPreRetrieve = claimRecentHookSignature(preRetrieveSignature)
+
+        const recallPromise = retrieveChatContext({
           ownerId,
           query,
           detail: 'low',
         })
+        const preRetrievePromise = shouldPreRetrieve
+          ? contextPreRetrieve({
+              ownerId,
+              query,
+              detail: 'low',
+            })
+          : Promise.resolve(undefined)
 
-        if (result.error) {
+        const [recallResult, preRetrieveResult] = await Promise.all([recallPromise, preRetrievePromise])
+
+        if (recallResult.error) {
           lastRecallAt.value = Date.now()
           lastRecallContextCharacters.value = 0
-          lastRecallError.value = result.error
+          lastRecallError.value = recallResult.error
           lastRecallStatus.value = 'error'
-          reportTrace('recall:error', { error: result.error })
-          console.warn('[plast-mem-chat-memory] failed to recall chat memory:', result.error)
-          return
+          reportTrace('recall:error', { error: recallResult.error })
+          console.warn('[plast-mem-chat-memory] failed to recall chat memory:', recallResult.error)
+        }
+        else {
+          lastRecallAt.value = Date.now()
+          lastRecallError.value = undefined
+          if (!recallResult.contextBlock) {
+            lastRecallContextCharacters.value = 0
+            lastRecallStatus.value = 'empty'
+            reportTrace('recall:empty')
+          }
+          else {
+            lastRecallContextCharacters.value = recallResult.contextBlock.length
+            lastRecallStatus.value = 'recalled'
+            reportTrace('recall:context-ingested', {
+              contextCharacters: recallResult.contextBlock.length,
+            })
+            chatContext.ingestContextMessage(createChatMemoryContext(
+              PLAST_MEM_CHAT_CONTEXT_ID,
+              recallResult.contextBlock,
+            ))
+          }
         }
 
-        lastRecallAt.value = Date.now()
-        lastRecallError.value = undefined
-        if (!result.contextBlock) {
-          lastRecallContextCharacters.value = 0
-          lastRecallStatus.value = 'empty'
-          reportTrace('recall:empty')
-          return
+        if (preRetrieveResult?.contextBlock) {
+          reportTrace('pre-retrieve:context-ingested', {
+            contextCharacters: preRetrieveResult.contextBlock.length,
+          })
+          chatContext.ingestContextMessage(createChatMemoryContext(
+            PLAST_MEM_PRE_RETRIEVE_CONTEXT_ID,
+            preRetrieveResult.contextBlock,
+          ))
         }
 
-        lastRecallContextCharacters.value = result.contextBlock.length
-        lastRecallStatus.value = 'recalled'
-        reportTrace('recall:context-ingested', {
-          contextCharacters: result.contextBlock.length,
-        })
-        chatContext.ingestContextMessage(createChatMemoryContext(result.contextBlock))
+        if (!recentMemoryRecalled.value) {
+          recentMemoryRecalled.value = true
+          reportTrace('recent:hook')
+          void recentMemory({ ownerId, limit: 10 }).then((recentResult) => {
+            if (recentResult.contextBlock) {
+              reportTrace('recent:context-ingested', {
+                contextCharacters: recentResult.contextBlock.length,
+              })
+              chatContext.ingestContextMessage(createChatMemoryContext(
+                PLAST_MEM_RECENT_MEMORY_CONTEXT_ID,
+                recentResult.contextBlock,
+              ))
+            }
+            else if (recentResult.error) {
+              reportTrace('recent:error', { error: recentResult.error })
+            }
+          }).catch((error) => {
+            reportTrace('recent:error', { error: errorMessageFrom(error) ?? String(error) })
+          })
+        }
       }),
       chatOrchestrator.onChatTurnComplete(async (chat, context) => {
         const userContent = textFromContent(context.message.content)

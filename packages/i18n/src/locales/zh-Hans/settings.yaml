@@ -670,6 +670,9 @@ pages:
               workspace-key:
                 description: 当前 AIRI 工作区的本地标识。
                 label: Workspace key
+              category:
+                description: 按类别过滤语义记忆召回（如 guideline、preference、identity）。留空则返回所有类别。
+                label: 语义类别过滤
           runtime:
             checked-at: '检查时间：{time}'
             configured: 已配置
@@ -743,6 +746,18 @@ pages:
                 rejected: 已拒绝
               time: '上次写入：{time}'
               title: 回复后捕获
+          recent-memories:
+            title: 最近记忆
+            refresh: 刷新
+            error: 加载记忆失败
+            empty: 暂无记忆。发送一些消息并等待处理完成。
+            untitled: 无标题
+            created: '创建时间：{time}'
+            surprise: '惊讶度：{value}'
+            consolidated: 已巩固
+            classification:
+              informative: 有信息量
+              low-info: 低信息量
           facts:
             external:
               description: >-

@@ -17,6 +17,7 @@ import { createConfig } from '../../../libs/electron/persistence'
 const plastMemConfigSchema = object({
   autoStart: boolean(),
   baseUrl: string(),
+  category: string(),
   conversationId: string(),
   databaseUrl: string(),
   enabled: boolean(),
@@ -67,6 +68,7 @@ function normalizeConfig(
   return {
     autoStart: asBoolean(payload.autoStart, fallback.autoStart),
     baseUrl: asString(payload.baseUrl, fallback.baseUrl),
+    category: asString(payload.category, fallback.category),
     conversationId: asString(payload.conversationId, fallback.conversationId),
     databaseUrl: asString(payload.databaseUrl, fallback.databaseUrl),
     enabled: asBoolean(payload.enabled, fallback.enabled),

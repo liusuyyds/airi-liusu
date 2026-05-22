@@ -699,6 +699,9 @@ pages:
               workspace-key:
                 description: Local label for this AIRI workspace.
                 label: Workspace key
+              category:
+                description: Filter semantic memory retrieval by category (e.g. guideline, preference, identity). Leave empty for all categories.
+                label: Semantic category filter
           runtime:
             checked-at: 'Checked: {time}'
             configured: Configured
@@ -772,6 +775,18 @@ pages:
                 rejected: Rejected
               time: 'Last write: {time}'
               title: Post-reply capture
+          recent-memories:
+            title: Recent memories
+            refresh: Refresh
+            error: Error loading memories
+            empty: No memories found yet. Send some messages and wait for processing.
+            untitled: Untitled
+            created: 'Created: {time}'
+            surprise: 'Surprise: {value}'
+            consolidated: Consolidated
+            classification:
+              informative: Informative
+              low-info: Low info
           facts:
             external:
               description: >-
