@@ -1,0 +1,88 @@
+use sea_orm_migration::{
+  prelude::*,
+  schema::{custom, text, timestamp_with_time_zone, uuid},
+  sea_orm::Statement,
+};
+
+#[derive(DeriveMigrationName)]
+pub struct Migration;
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+  async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+    manager
+      .create_table(
+        Table::create()
+          .table(SemanticMemory::Table)
+          .if_not_exists()
+          .col(uuid(SemanticMemory::Id).primary_key())
+          .col(uuid(SemanticMemory::ConversationId).not_null())
+          .col(text(SemanticMemory::Category).not_null())
+          .col(text(SemanticMemory::Fact).not_null())
+          .col(custom(
+            SemanticMemory::SourceEpisodicIds,
+            "UUID[] NOT NULL DEFAULT '{}'",
+          ))
+          .col(
+            timestamp_with_time_zone(SemanticMemory::ValidAt)
+              .not_null()
+              .default(Expr::current_timestamp()),
+          )
+          .col(timestamp_with_time_zone(SemanticMemory::InvalidAt).null())
+          .col(custom(SemanticMemory::Embedding, "vector(1024)").not_null())
+          .col(
+            timestamp_with_time_zone(SemanticMemory::CreatedAt)
+              .not_null()
+              .default(Expr::current_timestamp()),
+          )
+          .to_owned(),
+      )
+      .await?;
+
+    manager
+      .get_connection()
+      .execute_raw(Statement::from_string(
+        manager.get_database_backend(),
+        "CREATE INDEX IF NOT EXISTS idx_semantic_memory_embedding ON semantic_memory USING hnsw (embedding vector_ip_ops);",
+      ))
+      .await?;
+
+    manager
+      .get_connection()
+      .execute_raw(Statement::from_string(
+        manager.get_database_backend(),
+        "CREATE INDEX IF NOT EXISTS idx_semantic_memory_active_category ON semantic_memory (category) WHERE invalid_at IS NULL;",
+      ))
+      .await?;
+
+    manager
+      .get_connection()
+      .execute_raw(Statement::from_string(
+        manager.get_database_backend(),
+        "CREATE INDEX IF NOT EXISTS idx_semantic_memory_fact_bm25 ON semantic_memory USING bm25 (id, (fact::pdb.icu), created_at) WITH (key_field='id');",
+      ))
+      .await?;
+
+    Ok(())
+  }
+
+  async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+    manager
+      .drop_table(Table::drop().table(SemanticMemory::Table).to_owned())
+      .await
+  }
+}
+
+#[derive(Iden)]
+enum SemanticMemory {
+  Table,
+  Id,
+  ConversationId,
+  Category,
+  Fact,
+  SourceEpisodicIds,
+  ValidAt,
+  InvalidAt,
+  Embedding,
+  CreatedAt,
+}

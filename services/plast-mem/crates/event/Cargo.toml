@@ -1,0 +1,23 @@
+[package]
+name = "plastmem_event"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lib]
+name = "plastmem_event"
+path = "src/lib.rs"
+
+[dependencies]
+chrono.workspace = true
+enum_dispatch.workspace = true
+serde.workspace = true
+strum.workspace = true
+uuid.workspace = true

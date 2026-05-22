@@ -634,12 +634,78 @@ pages:
             use the computer-use-mcp bridge.
           env:
             title: Runtime environment keys
+          config:
+            error: Configuration unavailable
+            hide-api-key: Hide API key
+            notice:
+              description: Bridge URL, conversation UUID, and recall limits apply immediately after saving. Database and model settings are used the next time the local Plast Mem sidecar starts.
+              title: Local sidecar settings
+            reload: Reload
+            save: Save
+            save-and-check: Save and check
+            saved: Saved
+            saved-description: AIRI will use this configuration for formal chat memory. Restart the Plast Mem sidecar after changing database or model settings.
+            show-api-key: Show API key
+            source:
+              env: Environment fallback
+              ui: UI configuration
+            title: Manual connection
+            fields:
+              auto-start:
+                description: Allows the local dev launcher to start Plast Mem together with Tamagotchi.
+                label: Auto-start sidecar
+              base-url:
+                description: HTTP endpoint used by AIRI when recalling and writing memory.
+                label: Service URL
+              conversation-id:
+                description: UUID that groups formal chat messages and memories.
+                label: Conversation UUID
+              database-url:
+                description: PostgreSQL connection string used by the Plast Mem sidecar.
+                label: Database URL
+              enabled:
+                description: Enables formal chat recall before replies and capture after replies.
+                label: Enable Plast Mem bridge
+              episodic-limit:
+                description: Number of episodic memories requested during recall.
+                label: Episodic recall limit
+              max-context-characters:
+                description: Maximum characters injected into chat context.
+                label: Max context characters
+              openai-api-key:
+                description: API key for the OpenAI-compatible provider used by Plast Mem.
+                label: API key
+              openai-base-url:
+                description: OpenAI-compatible API base URL used by Plast Mem.
+                label: API base URL
+              openai-chat-max-tokens:
+                description: Maximum output tokens for Plast Mem background chat calls.
+                label: Chat max tokens
+              openai-chat-model:
+                description: Chat model used by Plast Mem for segmentation and consolidation.
+                label: Chat model
+              openai-embedding-model:
+                description: Embedding model used by Plast Mem for memory vectors.
+                label: Embedding model
+              openai-request-timeout:
+                description: Timeout in seconds for Plast Mem model provider calls.
+                label: Provider timeout
+              request-timeout-msec:
+                description: Timeout in milliseconds for AIRI to call the Plast Mem HTTP API.
+                label: Bridge request timeout
+              semantic-limit:
+                description: Number of semantic memories requested during recall.
+                label: Semantic recall limit
+              workspace-key:
+                description: Local label for this AIRI workspace.
+                label: Workspace key
           runtime:
             checked-at: 'Checked: {time}'
             configured: Configured
             conversation: Conversation UUID
             conversation-missing: The local dev launcher normally creates one under .cache/plast-mem-dev.json.
             conversation-missing-title: Conversation UUID missing
+            database: Database
             mcp:
               error: MCP error
               missing: Not started
@@ -647,6 +713,7 @@ pages:
               stopped: MCP stopped
             mcp-server: computer_use MCP
             missing: Missing
+            model: Model
             refresh: Refresh
             service-error: Plast Mem service
             service-url: Plast Mem URL

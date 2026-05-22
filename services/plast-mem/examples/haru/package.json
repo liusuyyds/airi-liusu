@@ -1,0 +1,32 @@
+{
+  "name": "@plastmem/haru",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "tsx src/index.tsx",
+    "dev:hmr": "vite-node -w src/index.tsx",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@insel-null/uuid": "catalog:",
+    "@pnpm/find-workspace-dir": "catalog:",
+    "@xsai/generate-text": "catalog:",
+    "@xsai/shared-chat": "catalog:",
+    "@xsai/tool": "catalog:",
+    "figlet": "catalog:",
+    "ink": "catalog:",
+    "ink-ascii": "catalog:",
+    "ink-spinner": "catalog:",
+    "ink-text-input": "catalog:",
+    "plastmem": "workspace:*",
+    "react": "catalog:",
+    "swr": "catalog:",
+    "temporal-polyfill": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,317 @@
+use anyhow::anyhow;
+use async_openai::{
+  Client,
+  config::OpenAIConfig,
+  types::chat::{
+    ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage, CreateChatCompletionRequest,
+    CreateChatCompletionRequestArgs, ReasoningEffort, ResponseFormat, ResponseFormatJsonSchema,
+  },
+};
+use plastmem_shared::{APP_ENV, AppError};
+use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
+use tracing::warn;
+
+use crate::embed_shared::request_chat_completion_with_retry;
+
+/// Generates a structured object
+///
+/// # Type Parameters
+///
+/// * `T` - The output type that implements `DeserializeOwned` and `JsonSchema`
+///
+/// # Arguments
+///
+/// * `messages` - The chat completion messages
+/// * `schema_name` - A name for the schema
+/// * `schema_description` - A description for the schema
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use plastmem_ai::{
+///   ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage, generate_object,
+/// };
+/// use schemars::JsonSchema;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize, JsonSchema)]
+/// struct SurpriseScore {
+///     score: f32,
+///     reason: String,
+/// }
+///
+/// # async fn example() -> Result<(), plastmem_shared::AppError> {
+/// let messages = vec![ChatCompletionRequestMessage::System(
+///     ChatCompletionRequestSystemMessage::from("Score how surprising this event is."),
+/// )];
+///
+/// let result = generate_object::<SurpriseScore>(
+///     messages,
+///     "surprise_score".to_owned(),
+///     None,
+/// ).await?;
+/// # let _ = result;
+/// # Ok(())
+/// # }
+/// ```
+/// Recursively fix a JSON schema for `OpenAI` strict mode:
+/// - additionalProperties: false on all objects
+/// - required must include all property keys
+fn fix_schema_for_strict(schema: &mut serde_json::Value) {
+  let Some(obj) = schema.as_object_mut() else {
+    return;
+  };
+
+  // OpenAI strict mode (draft 7): $ref must be the only key, so strip siblings.
+  if obj.contains_key("$ref") {
+    obj.retain(|k, _| k == "$ref");
+    return;
+  }
+
+  // Convert oneOf of const strings to enum; OpenAI strict mode forbids oneOf.
+  if let Some(one_of) = obj.get("oneOf").and_then(|v| v.as_array()).cloned() {
+    let consts: Option<Vec<serde_json::Value>> =
+      one_of.iter().map(|v| v.get("const").cloned()).collect();
+    if let Some(values) = consts {
+      obj.clear();
+      obj.insert(
+        "type".to_owned(),
+        serde_json::Value::String("string".to_owned()),
+      );
+      obj.insert("enum".to_owned(), serde_json::Value::Array(values));
+      return;
+    }
+  }
+
+  // Unwrap anyOf [T, null] to T; OpenAI strict mode forbids anyOf.
+  if let Some(any_of) = obj.get("anyOf").and_then(|v| v.as_array()).cloned() {
+    let non_null: Vec<&serde_json::Value> = any_of
+      .iter()
+      .filter(|v| v.get("type").and_then(|t| t.as_str()) != Some("null"))
+      .collect();
+    if non_null.len() == 1
+      && let Some(inner_map) = non_null[0].as_object().cloned()
+    {
+      obj.clear();
+      obj.extend(inner_map);
+      fix_schema_for_strict(schema);
+      return;
+    }
+  }
+
+  if obj.contains_key("properties") {
+    let keys: Vec<serde_json::Value> = obj["properties"]
+      .as_object()
+      .map(|p| {
+        p.keys()
+          .map(|k| serde_json::Value::String(k.clone()))
+          .collect()
+      })
+      .unwrap_or_default();
+    obj.insert("required".to_owned(), serde_json::Value::Array(keys));
+    obj.insert(
+      "additionalProperties".to_owned(),
+      serde_json::Value::Bool(false),
+    );
+
+    // Recurse into property schemas
+    if let Some(props) = obj.get_mut("properties").and_then(|p| p.as_object_mut()) {
+      for v in props.values_mut() {
+        fix_schema_for_strict(v);
+      }
+    }
+  }
+
+  // Recurse into array items
+  if let Some(items) = obj.get_mut("items") {
+    fix_schema_for_strict(items);
+  }
+
+  // Recurse into definitions (schemars 0.x uses "definitions")
+  if let Some(defs) = obj.get_mut("definitions").and_then(|d| d.as_object_mut()) {
+    for v in defs.values_mut() {
+      fix_schema_for_strict(v);
+    }
+  }
+
+  // Recurse into $defs (schemars 1.x uses "$defs")
+  if let Some(defs) = obj.get_mut("$defs").and_then(|d| d.as_object_mut()) {
+    for v in defs.values_mut() {
+      fix_schema_for_strict(v);
+    }
+  }
+}
+
+fn build_request(
+  messages: Vec<ChatCompletionRequestMessage>,
+  response_format: ResponseFormat,
+) -> Result<CreateChatCompletionRequest, AppError> {
+  #[allow(deprecated)]
+  let mut request_builder = CreateChatCompletionRequestArgs::default();
+  request_builder
+    .model(&APP_ENV.openai_chat_model)
+    .messages(messages)
+    .max_tokens(APP_ENV.openai_chat_max_tokens)
+    .reasoning_effort(ReasoningEffort::None)
+    .response_format(response_format);
+
+  if let Some(seed) = APP_ENV.openai_chat_seed {
+    request_builder.seed(seed);
+  }
+
+  Ok(request_builder.build()?)
+}
+
+async fn request_chat_completion_text(
+  client: &Client<OpenAIConfig>,
+  request: CreateChatCompletionRequest,
+) -> Result<String, AppError> {
+  let chat = client.chat();
+
+  request_chat_completion_with_retry(|| chat.create(request.clone()))
+    .await
+    .map(|r| r.choices.into_iter())?
+    .find_map(|c| c.message.content)
+    .ok_or_else(|| anyhow!("empty message content").into())
+}
+
+fn extract_json_object(response: &str) -> Option<&str> {
+  let start = response.find('{')?;
+  let end = response.rfind('}')?;
+
+  (start <= end).then_some(&response[start..=end])
+}
+
+fn strip_json_fence(response: &str) -> &str {
+  let trimmed = response.trim();
+  let Some(after_opening_fence) = trimmed
+    .strip_prefix("```json")
+    .or_else(|| trimmed.strip_prefix("```JSON"))
+    .or_else(|| trimmed.strip_prefix("```"))
+  else {
+    return trimmed;
+  };
+
+  after_opening_fence
+    .strip_suffix("```")
+    .unwrap_or(after_opening_fence)
+    .trim()
+}
+
+fn deserialize_structured_response<T>(response: &str) -> Result<T, AppError>
+where
+  T: DeserializeOwned,
+{
+  let trimmed = response.trim();
+  match serde_json::from_str(trimmed) {
+    Ok(result) => Ok(result),
+    Err(first_error) => {
+      let unfenced = strip_json_fence(trimmed);
+      if unfenced != trimmed
+        && let Ok(result) = serde_json::from_str(unfenced)
+      {
+        return Ok(result);
+      }
+
+      if let Some(json_object) = extract_json_object(unfenced) {
+        return Ok(serde_json::from_str(json_object)?);
+      }
+
+      Err(AppError::new(anyhow!(
+        "failed to deserialize structured model response as JSON: {first_error}"
+      )))
+    }
+  }
+}
+
+fn build_json_object_fallback_messages(
+  mut messages: Vec<ChatCompletionRequestMessage>,
+  schema_name: &str,
+  schema_description: Option<&str>,
+  schema: &serde_json::Value,
+) -> Result<Vec<ChatCompletionRequestMessage>, AppError> {
+  let schema_text = serde_json::to_string_pretty(schema)?;
+  let description = schema_description
+    .filter(|value| !value.trim().is_empty())
+    .map(|value| format!("\nPurpose: {value}"))
+    .unwrap_or_default();
+  let instruction = format!(
+    "Return only one JSON object. Do not include markdown, prose, or code fences.\nSchema name: {schema_name}{description}\nJSON schema:\n{schema_text}"
+  );
+
+  messages.insert(
+    0,
+    ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage::from(instruction)),
+  );
+
+  Ok(messages)
+}
+
+pub async fn generate_object<T>(
+  messages: Vec<ChatCompletionRequestMessage>,
+  schema_name: String,
+  schema_description: Option<String>,
+) -> Result<T, AppError>
+where
+  T: DeserializeOwned + JsonSchema,
+{
+  let config = OpenAIConfig::new()
+    .with_api_key(&APP_ENV.openai_api_key)
+    .with_api_base(&APP_ENV.openai_base_url);
+
+  let client = Client::with_config(config);
+
+  // Generate JSON schema from type
+  let schema = schemars::schema_for!(T);
+  let mut schema = serde_json::to_value(&schema)?;
+  // OpenAI strict mode requires additionalProperties: false and all properties in required
+  fix_schema_for_strict(&mut schema);
+
+  let strict_request = build_request(
+    messages.clone(),
+    ResponseFormat::JsonSchema {
+      json_schema: ResponseFormatJsonSchema {
+        description: schema_description.clone(),
+        name: schema_name.clone(),
+        schema: Some(schema.clone()),
+        strict: Some(true),
+      },
+    },
+  )?;
+
+  let strict_result = request_chat_completion_text(&client, strict_request)
+    .await
+    .and_then(|response| deserialize_structured_response::<T>(&response));
+
+  match strict_result {
+    Ok(result) => Ok(result),
+    Err(strict_error) => {
+      warn!(
+        error = %strict_error,
+        schema = %schema_name,
+        "Strict JSON schema completion failed; retrying with JSON object mode"
+      );
+
+      let fallback_result = async {
+        let fallback_messages = build_json_object_fallback_messages(
+          messages,
+          &schema_name,
+          schema_description.as_deref(),
+          &schema,
+        )?;
+        let fallback_request = build_request(fallback_messages, ResponseFormat::JsonObject)?;
+        let fallback_response = request_chat_completion_text(&client, fallback_request).await?;
+
+        deserialize_structured_response::<T>(&fallback_response)
+      }
+      .await;
+
+      fallback_result.map_err(|fallback_error| {
+        AppError::new(anyhow!(
+          "strict JSON schema request failed: {strict_error}; JSON object fallback failed: {fallback_error}"
+        ))
+      })
+    }
+  }
+}

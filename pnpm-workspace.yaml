@@ -5,6 +5,7 @@ packages:
   - plugins/**
   - integrations/**
   - services/**
+  - '!services/plast-mem/**'
   - examples/**
   - docs/**
   - engines/**

@@ -4,7 +4,7 @@ import process, { argv, env, exit, platform, stderr, stdout } from 'node:process
 
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { constants } from 'node:fs'
+import { constants, existsSync } from 'node:fs'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,14 +13,34 @@ interface PlastMemDevCache {
   conversationId?: string
 }
 
+interface PlastMemUiConfig {
+  autoStart?: boolean
+  baseUrl?: string
+  conversationId?: string
+  databaseUrl?: string
+  enabled?: boolean
+  episodicLimit?: number
+  maxContextCharacters?: number
+  openaiApiKey?: string
+  openaiBaseUrl?: string
+  openaiChatMaxTokens?: number
+  openaiChatModel?: string
+  openaiEmbeddingModel?: string
+  openaiRequestTimeoutSeconds?: number
+  requestTimeoutMsec?: number
+  semanticLimit?: number
+  workspaceKey?: string
+}
+
+interface PlastMemUiConfigSnapshot {
+  config?: PlastMemUiConfig
+}
+
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const cachePath = resolve(repoRoot, '.cache', 'plast-mem-dev.json')
-const plastMemBaseUrl = env.COMPUTER_USE_PLAST_MEM_BASE_URL?.trim() || 'http://127.0.0.1:3000'
-const plastMemWorkspaceKey = env.COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY?.trim() || 'airi-main'
-const plastMemEnabled = env.COMPUTER_USE_PLAST_MEM_ENABLED?.trim() || 'true'
-const plastMemDir = resolvePathFromEnv(env.AIRI_PLAST_MEM_DIR) ?? resolve(repoRoot, '..', 'plast-mem')
-const autoStartPlastMem = parseBoolean(env.AIRI_PLAST_MEM_AUTO_START, true)
+const plastMemUiConfigPath = resolve(repoRoot, '.cache', 'plast-mem-ui-config.json')
+const plastMemDir = resolvePlastMemDir()
 const useXwayland = argv.includes('--xwayland')
 const showHelp = argv.includes('--help') || argv.includes('-h')
 const children = new Set<ChildProcessWithoutNullStreams>()
@@ -58,6 +78,18 @@ function resolvePathFromEnv(value: string | undefined) {
     return undefined
 
   return resolve(repoRoot, trimmed)
+}
+
+function resolvePlastMemDir() {
+  const configured = resolvePathFromEnv(env.AIRI_PLAST_MEM_DIR)
+  if (configured)
+    return configured
+
+  const embedded = resolve(repoRoot, 'services', 'plast-mem')
+  if (existsSync(resolve(embedded, 'Cargo.toml')))
+    return embedded
+
+  return resolve(repoRoot, '..', 'plast-mem')
 }
 
 function commandName(name: string) {
@@ -117,13 +149,56 @@ async function loadEnvFile(path: string) {
   return values
 }
 
-async function resolveConversationId() {
+async function loadUiConfigSnapshot() {
+  if (!(await exists(plastMemUiConfigPath)))
+    return undefined
+
+  try {
+    const raw = await readFile(plastMemUiConfigPath, 'utf-8')
+    const parsed = JSON.parse(raw) as PlastMemUiConfigSnapshot
+    return parsed.config
+  }
+  catch (error) {
+    console.warn(`[dev] Ignoring invalid Plast Mem UI config snapshot: ${stringifyError(error)}`)
+    return undefined
+  }
+}
+
+function stringFromUi(value: string | undefined) {
+  const trimmed = value?.trim()
+  return trimmed || undefined
+}
+
+function numberFromUi(value: number | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value))
+    return undefined
+
+  const integer = Math.trunc(value)
+  return integer > 0 ? String(integer) : undefined
+}
+
+function booleanFromUi(value: boolean | undefined) {
+  if (typeof value !== 'boolean')
+    return undefined
+
+  return value ? 'true' : 'false'
+}
+
+async function resolveConversationId(uiConfig: PlastMemUiConfig | undefined) {
   const configured = env.COMPUTER_USE_PLAST_MEM_CONVERSATION_ID?.trim()
   if (configured && uuidPattern.test(configured))
     return configured
 
   if (configured) {
     console.warn(`[dev] Ignoring invalid COMPUTER_USE_PLAST_MEM_CONVERSATION_ID: ${configured}`)
+  }
+
+  const configuredFromUi = stringFromUi(uiConfig?.conversationId)
+  if (configuredFromUi && uuidPattern.test(configuredFromUi))
+    return configuredFromUi
+
+  if (configuredFromUi) {
+    console.warn(`[dev] Ignoring invalid UI Plast Mem conversation ID: ${configuredFromUi}`)
   }
 
   try {
@@ -158,33 +233,36 @@ function sanitizeEnv(source: NodeJS.ProcessEnv): Record<string, string> {
   return sanitized
 }
 
-function childEnv(conversationId: string, plastMemEnv: Record<string, string>): Record<string, string> {
-  const getEnv = (key: keyof typeof plastMemServerDefaults) =>
-    env[key]?.trim() || plastMemEnv[key]?.trim() || plastMemServerDefaults[key]
+function childEnv(conversationId: string, plastMemEnv: Record<string, string>, uiConfig: PlastMemUiConfig | undefined): Record<string, string> {
+  const getServerEnv = (key: keyof typeof plastMemServerDefaults, uiValue?: string) =>
+    env[key]?.trim() || uiValue || plastMemEnv[key]?.trim() || plastMemServerDefaults[key]
+  const getBridgeEnv = (key: string, uiValue: string | undefined, fallback: string) =>
+    env[key]?.trim() || uiValue || fallback
 
   return sanitizeEnv({
     ...env,
-    DATABASE_URL: getEnv('DATABASE_URL'),
-    ENABLE_FSRS_REVIEW: getEnv('ENABLE_FSRS_REVIEW'),
-    OPENAI_API_KEY: getEnv('OPENAI_API_KEY'),
-    OPENAI_BASE_URL: getEnv('OPENAI_BASE_URL'),
-    OPENAI_CHAT_MAX_TOKENS: getEnv('OPENAI_CHAT_MAX_TOKENS'),
-    OPENAI_CHAT_MODEL: getEnv('OPENAI_CHAT_MODEL'),
-    OPENAI_CHAT_SEED: getEnv('OPENAI_CHAT_SEED'),
-    OPENAI_EMBEDDING_MODEL: getEnv('OPENAI_EMBEDDING_MODEL'),
-    OPENAI_REQUEST_TIMEOUT_SECONDS: getEnv('OPENAI_REQUEST_TIMEOUT_SECONDS'),
+    DATABASE_URL: getServerEnv('DATABASE_URL', stringFromUi(uiConfig?.databaseUrl)),
+    ENABLE_FSRS_REVIEW: getServerEnv('ENABLE_FSRS_REVIEW'),
+    OPENAI_API_KEY: getServerEnv('OPENAI_API_KEY', stringFromUi(uiConfig?.openaiApiKey)),
+    OPENAI_BASE_URL: getServerEnv('OPENAI_BASE_URL', stringFromUi(uiConfig?.openaiBaseUrl)),
+    OPENAI_CHAT_MAX_TOKENS: getServerEnv('OPENAI_CHAT_MAX_TOKENS', numberFromUi(uiConfig?.openaiChatMaxTokens)),
+    OPENAI_CHAT_MODEL: getServerEnv('OPENAI_CHAT_MODEL', stringFromUi(uiConfig?.openaiChatModel)),
+    OPENAI_CHAT_SEED: getServerEnv('OPENAI_CHAT_SEED'),
+    OPENAI_EMBEDDING_MODEL: getServerEnv('OPENAI_EMBEDDING_MODEL', stringFromUi(uiConfig?.openaiEmbeddingModel)),
+    OPENAI_REQUEST_TIMEOUT_SECONDS: getServerEnv('OPENAI_REQUEST_TIMEOUT_SECONDS', numberFromUi(uiConfig?.openaiRequestTimeoutSeconds)),
+    SQLX_OFFLINE: env.SQLX_OFFLINE?.trim() || 'true',
     AIRI_LOCAL_PLAST_MEM_DEV: '1',
-    AIRI_PLAST_MEM_AUTO_START: autoStartPlastMem ? '1' : '0',
+    AIRI_PLAST_MEM_AUTO_START: getBridgeEnv('AIRI_PLAST_MEM_AUTO_START', booleanFromUi(uiConfig?.autoStart), 'true'),
     AIRI_PLAST_MEM_DIR: plastMemDir,
     AIRI_REPO_ROOT: repoRoot,
-    COMPUTER_USE_PLAST_MEM_BASE_URL: plastMemBaseUrl,
+    COMPUTER_USE_PLAST_MEM_BASE_URL: getBridgeEnv('COMPUTER_USE_PLAST_MEM_BASE_URL', stringFromUi(uiConfig?.baseUrl), 'http://127.0.0.1:3000'),
     COMPUTER_USE_PLAST_MEM_CONVERSATION_ID: conversationId,
-    COMPUTER_USE_PLAST_MEM_ENABLED: plastMemEnabled,
-    COMPUTER_USE_PLAST_MEM_EPISODIC_LIMIT: env.COMPUTER_USE_PLAST_MEM_EPISODIC_LIMIT?.trim() || '4',
-    COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS: env.COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS?.trim() || '6000',
-    COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT: env.COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT?.trim() || '8',
-    COMPUTER_USE_PLAST_MEM_TIMEOUT_MS: env.COMPUTER_USE_PLAST_MEM_TIMEOUT_MS?.trim() || '10000',
-    COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY: plastMemWorkspaceKey,
+    COMPUTER_USE_PLAST_MEM_ENABLED: getBridgeEnv('COMPUTER_USE_PLAST_MEM_ENABLED', booleanFromUi(uiConfig?.enabled), 'true'),
+    COMPUTER_USE_PLAST_MEM_EPISODIC_LIMIT: getBridgeEnv('COMPUTER_USE_PLAST_MEM_EPISODIC_LIMIT', numberFromUi(uiConfig?.episodicLimit), '4'),
+    COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS: getBridgeEnv('COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS', numberFromUi(uiConfig?.maxContextCharacters), '6000'),
+    COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT: getBridgeEnv('COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT', numberFromUi(uiConfig?.semanticLimit), '8'),
+    COMPUTER_USE_PLAST_MEM_TIMEOUT_MS: getBridgeEnv('COMPUTER_USE_PLAST_MEM_TIMEOUT_MS', numberFromUi(uiConfig?.requestTimeoutMsec), '10000'),
+    COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY: getBridgeEnv('COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY', stringFromUi(uiConfig?.workspaceKey), 'airi-main'),
   })
 }
 
@@ -192,12 +270,12 @@ function makeUrl(baseUrl: string, path: string) {
   return new URL(path, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString()
 }
 
-async function probePlastMem() {
+async function probePlastMem(baseUrl: string) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 1000)
 
   try {
-    await fetch(makeUrl(plastMemBaseUrl, 'openapi.json'), {
+    await fetch(makeUrl(baseUrl, 'openapi.json'), {
       signal: controller.signal,
     })
     return true
@@ -309,13 +387,13 @@ function shutdown(code = 0) {
 }
 
 async function startPlastMemIfNeeded(processEnv: Record<string, string>) {
-  if (!autoStartPlastMem) {
+  if (!parseBoolean(processEnv.AIRI_PLAST_MEM_AUTO_START, true)) {
     console.info('[dev] Skipping Plast Mem auto-start because AIRI_PLAST_MEM_AUTO_START=0')
     return
   }
 
-  if (await probePlastMem()) {
-    console.info(`[dev] Plast Mem already responds at ${plastMemBaseUrl}; reusing it`)
+  if (await probePlastMem(processEnv.COMPUTER_USE_PLAST_MEM_BASE_URL)) {
+    console.info(`[dev] Plast Mem already responds at ${processEnv.COMPUTER_USE_PLAST_MEM_BASE_URL}; reusing it`)
     return
   }
 
@@ -338,13 +416,15 @@ async function main() {
     return
   }
 
-  const conversationId = await resolveConversationId()
+  const uiConfig = await loadUiConfigSnapshot()
+  const conversationId = await resolveConversationId(uiConfig)
   const plastMemEnv = await loadEnvFile(plastMemEnvPath)
-  const processEnv = childEnv(conversationId, plastMemEnv)
+  const processEnv = childEnv(conversationId, plastMemEnv, uiConfig)
 
   console.info(`[dev] AIRI repo: ${repoRoot}`)
   console.info(`[dev] Plast Mem repo: ${plastMemDir}`)
-  console.info(`[dev] Plast Mem URL: ${plastMemBaseUrl}`)
+  console.info(`[dev] Plast Mem UI config: ${uiConfig ? plastMemUiConfigPath : 'not found; using env/.env/defaults'}`)
+  console.info(`[dev] Plast Mem URL: ${processEnv.COMPUTER_USE_PLAST_MEM_BASE_URL}`)
   console.info(`[dev] Plast Mem env: ${await exists(plastMemEnvPath) ? plastMemEnvPath : 'not found; using defaults'}`)
   console.info(`[dev] Plast Mem DB: ${processEnv.DATABASE_URL}`)
   console.info(`[dev] Plast Mem OpenAI base: ${processEnv.OPENAI_BASE_URL}`)
@@ -352,6 +432,7 @@ async function main() {
   console.info(`[dev] Plast Mem chat max tokens: ${processEnv.OPENAI_CHAT_MAX_TOKENS}`)
   console.info(`[dev] Plast Mem embedding model: ${processEnv.OPENAI_EMBEDDING_MODEL}`)
   console.info(`[dev] Plast Mem request timeout: ${processEnv.OPENAI_REQUEST_TIMEOUT_SECONDS}s`)
+  console.info(`[dev] Plast Mem SQLx offline compile: ${processEnv.SQLX_OFFLINE}`)
   console.info(`[dev] Plast Mem episodic recall limit: ${processEnv.COMPUTER_USE_PLAST_MEM_EPISODIC_LIMIT}`)
   console.info(`[dev] Plast Mem semantic recall limit: ${processEnv.COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT}`)
   console.info(`[dev] Plast Mem conversation: ${conversationId}`)

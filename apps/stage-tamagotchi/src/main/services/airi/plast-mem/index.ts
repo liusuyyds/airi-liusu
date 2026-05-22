@@ -18,12 +18,20 @@ import { errorMessageFrom } from '@moeru/std'
 
 import {
   electronPlastMemAcquireChatBridge,
+  electronPlastMemApplyConfig,
+  electronPlastMemGetConfig,
   electronPlastMemGetRuntimeStatus,
   electronPlastMemIngestChatMessages,
   electronPlastMemReleaseChatBridge,
   electronPlastMemReportChatBridgeTrace,
   electronPlastMemRetrieveChatContext,
 } from '../../../../shared/eventa'
+import {
+  applyPlastMemConfig,
+  getPlastMemConfig,
+  hasUserPlastMemConfig,
+  setupPlastMemConfig,
+} from './config'
 
 const reachabilityTimeoutMsec = 1500
 const chatRetrieveTimeoutMsec = 2500
@@ -62,10 +70,16 @@ interface PlastMemRuntimeConfig {
   autoStart: boolean
   baseUrl?: string
   conversationId?: string
+  configuredByUser: boolean
+  databaseUrl?: string
   devMode: boolean
   enabled: boolean
   episodicLimit: number
   maxContextCharacters: number
+  openaiApiKey?: string
+  openaiBaseUrl?: string
+  openaiChatModel?: string
+  openaiEmbeddingModel?: string
   requestTimeoutMsec: number
   semanticLimit: number
   workspaceKey?: string
@@ -211,21 +225,54 @@ function normalizeTimestamp(timestamp: number | string | undefined) {
   return Math.trunc(parsed)
 }
 
-function resolvePlastMemRuntimeConfig(): PlastMemRuntimeConfig {
+function resolveEnvPlastMemRuntimeConfig(): PlastMemRuntimeConfig {
   const devMode = parseBoolean(env.AIRI_LOCAL_PLAST_MEM_DEV, false)
   const enabled = parseBoolean(env.COMPUTER_USE_PLAST_MEM_ENABLED, devMode)
 
   return {
     autoStart: parseBoolean(env.AIRI_PLAST_MEM_AUTO_START, devMode),
     baseUrl: trimOptional(env.COMPUTER_USE_PLAST_MEM_BASE_URL) ?? (devMode ? 'http://127.0.0.1:3000' : undefined),
+    configuredByUser: false,
     conversationId: trimOptional(env.COMPUTER_USE_PLAST_MEM_CONVERSATION_ID),
+    databaseUrl: trimOptional(env.DATABASE_URL),
     devMode,
     enabled,
     episodicLimit: parsePositiveInteger(env.COMPUTER_USE_PLAST_MEM_EPISODIC_LIMIT, defaultEpisodicLimit),
     maxContextCharacters: parsePositiveInteger(env.COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS, defaultMaxContextCharacters),
+    openaiApiKey: trimOptional(env.OPENAI_API_KEY),
+    openaiBaseUrl: trimOptional(env.OPENAI_BASE_URL),
+    openaiChatModel: trimOptional(env.OPENAI_CHAT_MODEL),
+    openaiEmbeddingModel: trimOptional(env.OPENAI_EMBEDDING_MODEL),
     requestTimeoutMsec: parsePositiveInteger(env.COMPUTER_USE_PLAST_MEM_TIMEOUT_MS, chatRetrieveTimeoutMsec),
     semanticLimit: parsePositiveInteger(env.COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT, defaultSemanticLimit),
     workspaceKey: trimOptional(env.COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY) ?? (devMode ? 'airi-main' : undefined),
+  }
+}
+
+function resolvePlastMemRuntimeConfig(): PlastMemRuntimeConfig {
+  const envConfig = resolveEnvPlastMemRuntimeConfig()
+  if (!hasUserPlastMemConfig())
+    return envConfig
+
+  const config = getPlastMemConfig()
+
+  return {
+    autoStart: config.autoStart,
+    baseUrl: trimOptional(config.baseUrl) ?? envConfig.baseUrl,
+    configuredByUser: true,
+    conversationId: trimOptional(config.conversationId) ?? envConfig.conversationId,
+    databaseUrl: trimOptional(config.databaseUrl) ?? envConfig.databaseUrl,
+    devMode: envConfig.devMode,
+    enabled: config.enabled,
+    episodicLimit: config.episodicLimit,
+    maxContextCharacters: config.maxContextCharacters,
+    openaiApiKey: trimOptional(config.openaiApiKey) ?? envConfig.openaiApiKey,
+    openaiBaseUrl: trimOptional(config.openaiBaseUrl) ?? envConfig.openaiBaseUrl,
+    openaiChatModel: trimOptional(config.openaiChatModel) ?? envConfig.openaiChatModel,
+    openaiEmbeddingModel: trimOptional(config.openaiEmbeddingModel) ?? envConfig.openaiEmbeddingModel,
+    requestTimeoutMsec: config.requestTimeoutMsec,
+    semanticLimit: config.semanticLimit,
+    workspaceKey: trimOptional(config.workspaceKey) ?? envConfig.workspaceKey,
   }
 }
 
@@ -351,10 +398,16 @@ export async function getPlastMemRuntimeStatus(manager: McpStdioManager): Promis
       baseUrl: config.baseUrl,
       chatDiagnostics: snapshotChatDiagnostics(),
       checkedAt,
+      configuredByUser: config.configuredByUser,
       conversationIdConfigured: Boolean(config.conversationId),
+      databaseUrlConfigured: Boolean(config.databaseUrl),
       devMode: config.devMode,
       enabled: config.enabled,
       mcpServer,
+      openaiApiKeyConfigured: Boolean(config.openaiApiKey),
+      openaiBaseUrlConfigured: Boolean(config.openaiBaseUrl),
+      openaiChatModel: config.openaiChatModel,
+      openaiEmbeddingModel: config.openaiEmbeddingModel,
       reachable: false,
       workspaceKey: config.workspaceKey,
     }
@@ -365,11 +418,17 @@ export async function getPlastMemRuntimeStatus(manager: McpStdioManager): Promis
       autoStart: config.autoStart,
       chatDiagnostics: snapshotChatDiagnostics(),
       checkedAt,
+      configuredByUser: config.configuredByUser,
       conversationIdConfigured: Boolean(config.conversationId),
+      databaseUrlConfigured: Boolean(config.databaseUrl),
       devMode: config.devMode,
       enabled: config.enabled,
       error: 'COMPUTER_USE_PLAST_MEM_BASE_URL is not configured',
       mcpServer,
+      openaiApiKeyConfigured: Boolean(config.openaiApiKey),
+      openaiBaseUrlConfigured: Boolean(config.openaiBaseUrl),
+      openaiChatModel: config.openaiChatModel,
+      openaiEmbeddingModel: config.openaiEmbeddingModel,
       reachable: false,
       workspaceKey: config.workspaceKey,
     }
@@ -382,11 +441,17 @@ export async function getPlastMemRuntimeStatus(manager: McpStdioManager): Promis
     baseUrl: config.baseUrl,
     chatDiagnostics: snapshotChatDiagnostics(),
     checkedAt,
+    configuredByUser: config.configuredByUser,
     conversationIdConfigured: Boolean(config.conversationId),
+    databaseUrlConfigured: Boolean(config.databaseUrl),
     devMode: config.devMode,
     enabled: config.enabled,
     error: probe.error,
     mcpServer,
+    openaiApiKeyConfigured: Boolean(config.openaiApiKey),
+    openaiBaseUrlConfigured: Boolean(config.openaiBaseUrl),
+    openaiChatModel: config.openaiChatModel,
+    openaiEmbeddingModel: config.openaiEmbeddingModel,
     reachable: probe.reachable,
     statusCode: probe.statusCode,
     workspaceKey: config.workspaceKey,
@@ -632,8 +697,13 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
 }
 
 export function createPlastMemService(params: { context: ReturnType<typeof createContext>['context'], manager: McpStdioManager }) {
+  setupPlastMemConfig()
   logPlastMemInfo('bridge:ready', { version: plastMemBridgeVersion })
 
+  defineInvokeHandler(params.context, electronPlastMemGetConfig, () => {
+    return getPlastMemConfig()
+  })
+  defineInvokeHandler(params.context, electronPlastMemApplyConfig, payload => applyPlastMemConfig(payload))
   defineInvokeHandler(params.context, electronPlastMemGetRuntimeStatus, async () => {
     return getPlastMemRuntimeStatus(params.manager)
   })

@@ -103,6 +103,11 @@ export default {
       to: 'godot-stage',
       filter: ['**/*'],
     },
+    {
+      from: '../../services/plast-mem',
+      to: 'plast-mem',
+      filter: ['**/*', '!target/**', '!node_modules/**', '!.env'],
+    },
   ],
   extraMetadata: {
     name: 'ai.moeru.airi',

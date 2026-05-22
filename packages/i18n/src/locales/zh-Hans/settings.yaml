@@ -605,12 +605,78 @@ pages:
             记忆仍可继续走 computer-use-mcp bridge。
           env:
             title: 运行时环境变量
+          config:
+            error: 配置不可用
+            hide-api-key: 隐藏 API key
+            notice:
+              description: 桥接 URL、Conversation UUID 和召回参数保存后会立即生效。数据库和模型设置会在下一次启动本地 Plast Mem sidecar 时使用。
+              title: 本地 sidecar 设置
+            reload: 重新载入
+            save: 保存
+            save-and-check: 保存并检查连接
+            saved: 已保存
+            saved-description: AIRI 会用这份配置进行正式聊天记忆。修改数据库或模型后需要重启 Plast Mem sidecar。
+            show-api-key: 显示 API key
+            source:
+              env: 环境变量兜底
+              ui: UI 配置
+            title: 手动连接
+            fields:
+              auto-start:
+                description: 允许本地 dev 启动器和 Tamagotchi 一起启动 Plast Mem。
+                label: 自动启动 sidecar
+              base-url:
+                description: AIRI 召回和写入记忆时访问的 HTTP 地址。
+                label: 服务 URL
+              conversation-id:
+                description: 用来归档正式聊天消息和记忆的 UUID。
+                label: Conversation UUID
+              database-url:
+                description: Plast Mem sidecar 使用的 PostgreSQL 连接串。
+                label: 数据库 URL
+              enabled:
+                description: 开启正式聊天的回复前召回和回复后捕获。
+                label: 启用 Plast Mem 桥
+              episodic-limit:
+                description: 召回时请求的 episodic 记忆数量。
+                label: Episodic 召回数量
+              max-context-characters:
+                description: 注入聊天上下文的最大字符数。
+                label: 最大上下文字符数
+              openai-api-key:
+                description: Plast Mem 调用 OpenAI 兼容服务时使用的 API key。
+                label: API key
+              openai-base-url:
+                description: Plast Mem 使用的 OpenAI 兼容 API 地址。
+                label: API base URL
+              openai-chat-max-tokens:
+                description: Plast Mem 后台聊天调用的最大输出 token。
+                label: 聊天最大 token
+              openai-chat-model:
+                description: Plast Mem 做切分和整理时使用的聊天模型。
+                label: 聊天模型
+              openai-embedding-model:
+                description: Plast Mem 写入和检索记忆向量时使用的 embedding 模型。
+                label: Embedding 模型
+              openai-request-timeout:
+                description: Plast Mem 调用模型服务的超时时间，单位秒。
+                label: 模型请求超时
+              request-timeout-msec:
+                description: AIRI 调用 Plast Mem HTTP API 的超时时间，单位毫秒。
+                label: 桥接请求超时
+              semantic-limit:
+                description: 召回时请求的 semantic 记忆数量。
+                label: Semantic 召回数量
+              workspace-key:
+                description: 当前 AIRI 工作区的本地标识。
+                label: Workspace key
           runtime:
             checked-at: '检查时间：{time}'
             configured: 已配置
             conversation: Conversation UUID
             conversation-missing: 本地 dev 启动器通常会在 .cache/plast-mem-dev.json 里生成一个。
             conversation-missing-title: 缺少 Conversation UUID
+            database: 数据库
             mcp:
               error: MCP 错误
               missing: 未启动
@@ -618,6 +684,7 @@ pages:
               stopped: MCP 已停止
             mcp-server: computer_use MCP
             missing: 缺失
+            model: 模型
             refresh: 刷新
             service-error: Plast Mem 服务
             service-url: Plast Mem URL

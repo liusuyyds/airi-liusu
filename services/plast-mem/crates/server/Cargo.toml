@@ -1,0 +1,38 @@
+[package]
+name = "plastmem_server"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lib]
+name = "plastmem_server"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+apalis.workspace = true
+apalis-board-api.workspace = true
+apalis-postgres.workspace = true
+axum.workspace = true
+chrono.workspace = true
+chrono-humanize.workspace = true
+plastmem_ai.workspace = true
+plastmem_core.workspace = true
+plastmem_entities.workspace = true
+plastmem_shared.workspace = true
+plastmem_worker.workspace = true
+sea-orm.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing = "0.1"
+uuid.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
+utoipa-scalar.workspace = true

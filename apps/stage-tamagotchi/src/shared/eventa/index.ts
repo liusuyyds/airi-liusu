@@ -255,21 +255,69 @@ export const electronMcpReadConfigText = defineInvokeEventa<ElectronMcpStdioConf
 export const electronMcpWriteConfigText = defineInvokeEventa<ElectronMcpStdioConfigText, { text: string }>('eventa:invoke:electron:mcp:write-config-text')
 export const electronMcpTestServer = defineInvokeEventa<ElectronMcpStdioTestResult, ElectronMcpStdioTestPayload>('eventa:invoke:electron:mcp:test-server')
 
+export interface ElectronPlastMemConfig {
+  autoStart: boolean
+  baseUrl: string
+  conversationId: string
+  databaseUrl: string
+  enabled: boolean
+  episodicLimit: number
+  maxContextCharacters: number
+  openaiApiKey: string
+  openaiBaseUrl: string
+  openaiChatMaxTokens: number
+  openaiChatModel: string
+  openaiEmbeddingModel: string
+  openaiRequestTimeoutSeconds: number
+  requestTimeoutMsec: number
+  semanticLimit: number
+  workspaceKey: string
+}
+
+export type ElectronPlastMemApplyConfigPayload = Partial<ElectronPlastMemConfig>
+
+export const defaultElectronPlastMemConfig: ElectronPlastMemConfig = {
+  autoStart: false,
+  baseUrl: 'http://127.0.0.1:3000',
+  conversationId: '',
+  databaseUrl: 'postgres://plastmem:plastmem@localhost:5433/plastmem',
+  enabled: false,
+  episodicLimit: 4,
+  maxContextCharacters: 6000,
+  openaiApiKey: '',
+  openaiBaseUrl: 'https://api.siliconflow.cn/v1/',
+  openaiChatMaxTokens: 2048,
+  openaiChatModel: 'Qwen/Qwen3.5-9B',
+  openaiEmbeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
+  openaiRequestTimeoutSeconds: 120,
+  requestTimeoutMsec: 10000,
+  semanticLimit: 8,
+  workspaceKey: 'airi-main',
+}
+
 export interface ElectronPlastMemRuntimeStatus {
   autoStart: boolean
   baseUrl?: string
   chatDiagnostics?: ElectronPlastMemChatDiagnostics
   checkedAt: number
+  configuredByUser: boolean
   conversationIdConfigured: boolean
+  databaseUrlConfigured: boolean
   devMode: boolean
   enabled: boolean
   error?: string
   mcpServer?: ElectronMcpStdioServerRuntimeStatus
+  openaiApiKeyConfigured: boolean
+  openaiBaseUrlConfigured: boolean
+  openaiChatModel?: string
+  openaiEmbeddingModel?: string
   reachable: boolean
   statusCode?: number
   workspaceKey?: string
 }
 
+export const electronPlastMemGetConfig = defineInvokeEventa<ElectronPlastMemConfig>('eventa:invoke:electron:plast-mem:get-config')
+export const electronPlastMemApplyConfig = defineInvokeEventa<ElectronPlastMemConfig, ElectronPlastMemApplyConfigPayload>('eventa:invoke:electron:plast-mem:apply-config')
 export const electronPlastMemGetRuntimeStatus = defineInvokeEventa<ElectronPlastMemRuntimeStatus>('eventa:invoke:electron:plast-mem:get-runtime-status')
 
 export type ElectronPlastMemContextDetail = 'auto' | 'none' | 'low' | 'high'

@@ -1,0 +1,16 @@
+services:
+  plast-mem-db:
+    image: paradedb/paradedb:latest
+    container_name: plast-mem-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=plastmem # TODO: from env
+      - POSTGRES_PASSWORD=plastmem # TODO: from env
+      - POSTGRES_DB=plastmem # TODO: form env
+    ports:
+      - '5432:5432'
+    volumes:
+      - plast-mem-db-data:/var/lib/postgresql/data
+
+volumes:
+  plast-mem-db-data:

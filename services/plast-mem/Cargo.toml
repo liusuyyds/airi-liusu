@@ -1,0 +1,116 @@
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[workspace]
+members = [
+  "./crates/ai",
+  "./crates/core",
+  "./crates/migration",
+  "./crates/entities",
+  "./crates/event",
+  "./crates/event_segmentation",
+  "./crates/shared",
+  "./crates/worker",
+  "./crates/server",
+  ".",
+]
+
+[workspace.package]
+version = "0.0.1"
+authors = [ "Moeru AI" ]
+edition = "2024"
+rust-version = "1.91"
+description = ""
+documentation = "https://github.com/moeru-ai/plast-mem"
+readme = "README.md"
+homepage = "https://github.com/moeru-ai/plast-mem"
+repository = "https://github.com/moeru-ai/plast-mem"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+plastmem_ai.path = "./crates/ai"
+plastmem_core.path = "./crates/core"
+plastmem_migration.path = "./crates/migration"
+plastmem_entities.path = "./crates/entities"
+plastmem_event.path = "./crates/event"
+plastmem_event_segmentation.path = "./crates/event_segmentation"
+plastmem_shared.path = "./crates/shared"
+plastmem_worker.path = "./crates/worker"
+plastmem_server.path = "./crates/server"
+anyhow = "1.0.100"
+futures = "0.3"
+apalis = "1.0.0-rc.6"
+apalis-board-api = { version = "1.0.0-rc.6", features = [ "axum" ] }
+apalis-postgres = { version = "1.0.0-rc.6", features = [ "time" ] }
+axum = { version = "0.8.8", features = [ "macros" ] }
+async-openai = { version = "0.32.4", features = [
+  "chat-completion",
+  "embedding",
+] }
+chrono = { version = "0.4.43", features = [ "serde" ] }
+chrono-humanize = "0.2"
+dotenvy = "0.15.7"
+enum_dispatch = "0.3"
+fsrs = "5.2.0"
+sea-orm-migration = { version = "2.0.0-rc.30", features = [
+  "runtime-tokio-rustls",
+  "sqlx-postgres",
+] }
+sea-orm = { version = "2.0.0-rc.30", features = [
+  # https://www.sea-ql.org/SeaORM/docs/install-and-config/database-and-async-runtime/#database_driver
+  "sqlx-postgres",
+  # https://www.sea-ql.org/SeaORM/docs/install-and-config/database-and-async-runtime/#async_runtime
+  "runtime-tokio-rustls",
+  # https://www.sea-ql.org/SeaORM/docs/install-and-config/database-and-async-runtime/#extra-features
+  "macros",
+  "with-chrono",
+  "with-json",
+  "with-uuid",
+  "postgres-vector",
+] }
+serde = { version = "1.0.228", features = ["derive"] }
+schemars = "1.2.1"
+serde_json = "1.0.149"
+strum = { version = "0.28", features = ["derive"] }
+tokio = { version = "1.49.0", features = [ "full" ] }
+tracing = "0.1"
+tracing-error = "0.2"
+tracing-subscriber = "0.3.22"
+uuid = { version = "1.20.0", features = [
+  "serde",
+  "v4",
+  "v5",
+  "v7"
+] }
+utoipa = { version = "5.4.0", features = [
+  "axum_extras",
+  "chrono",
+  "uuid"
+] }
+utoipa-axum = { version = "0.2.0" }
+utoipa-scalar = { version = "0.3.0", features = [ "axum" ] }
+
+[package]
+name = "plastmem"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+plastmem_migration.workspace = true
+plastmem_shared.workspace = true
+plastmem_worker.workspace = true
+plastmem_server.workspace = true
+apalis-board-api.workspace = true
+apalis-postgres.workspace = true
+sea-orm.workspace = true
+tokio.workspace = true
+tracing-error.workspace = true
+tracing-subscriber.workspace = true
