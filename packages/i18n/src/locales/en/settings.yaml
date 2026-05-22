@@ -652,7 +652,7 @@ pages:
             title: Manual connection
             fields:
               auto-start:
-                description: Allows the local dev launcher to start Plast Mem together with Tamagotchi.
+                description: Allows AIRI to start the local Plast Mem sidecar when the app starts.
                 label: Auto-start sidecar
               base-url:
                 description: HTTP endpoint used by AIRI when recalling and writing memory.
@@ -717,6 +717,24 @@ pages:
             refresh: Refresh
             service-error: Plast Mem service
             service-url: Plast Mem URL
+            sidecar:
+              command: Command
+              cwd: Working directory
+              description: After changing database or model settings, restart this sidecar to apply them. AIRI does not need a restart.
+              error: Sidecar error
+              pid: PID
+              refresh: Refresh sidecar
+              restart: Restart
+              start: Start
+              status:
+                error: Error
+                external: External service online
+                running: Running
+                starting: Starting
+                stopped: Stopped
+                stopping: Stopping
+              stop: Stop
+              title: Local sidecar
             status:
               checking: Checking
               disabled: Disabled

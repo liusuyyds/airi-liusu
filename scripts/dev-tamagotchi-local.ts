@@ -266,28 +266,6 @@ function childEnv(conversationId: string, plastMemEnv: Record<string, string>, u
   })
 }
 
-function makeUrl(baseUrl: string, path: string) {
-  return new URL(path, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString()
-}
-
-async function probePlastMem(baseUrl: string) {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 1000)
-
-  try {
-    await fetch(makeUrl(baseUrl, 'openapi.json'), {
-      signal: controller.signal,
-    })
-    return true
-  }
-  catch {
-    return false
-  }
-  finally {
-    clearTimeout(timeout)
-  }
-}
-
 function pipeOutput(child: ChildProcessWithoutNullStreams, label: string) {
   pipeStream(child.stdout, label, stdout)
   pipeStream(child.stderr, label, stderr)
@@ -386,33 +364,10 @@ function shutdown(code = 0) {
   setTimeout(exit, 500, code).unref()
 }
 
-async function startPlastMemIfNeeded(processEnv: Record<string, string>) {
-  if (!parseBoolean(processEnv.AIRI_PLAST_MEM_AUTO_START, true)) {
-    console.info('[dev] Skipping Plast Mem auto-start because AIRI_PLAST_MEM_AUTO_START=0')
-    return
-  }
-
-  if (await probePlastMem(processEnv.COMPUTER_USE_PLAST_MEM_BASE_URL)) {
-    console.info(`[dev] Plast Mem already responds at ${processEnv.COMPUTER_USE_PLAST_MEM_BASE_URL}; reusing it`)
-    return
-  }
-
-  const manifestPath = resolve(plastMemDir, 'Cargo.toml')
-  if (!(await exists(manifestPath))) {
-    console.warn(`[dev] Plast Mem repo not found at ${plastMemDir}; AIRI will still start`)
-    return
-  }
-
-  spawnChild('plast-mem', commandName('cargo'), ['run'], {
-    cwd: plastMemDir,
-    env: processEnv,
-  })
-}
-
 async function main() {
   if (showHelp) {
     console.info('Usage: pnpm dev:tamagotchi [--xwayland]')
-    console.info('Starts AIRI Tamagotchi and a local Plast Mem sidecar when needed.')
+    console.info('Starts AIRI Tamagotchi. The local Plast Mem sidecar is managed from AIRI settings.')
     return
   }
 
@@ -433,6 +388,7 @@ async function main() {
   console.info(`[dev] Plast Mem embedding model: ${processEnv.OPENAI_EMBEDDING_MODEL}`)
   console.info(`[dev] Plast Mem request timeout: ${processEnv.OPENAI_REQUEST_TIMEOUT_SECONDS}s`)
   console.info(`[dev] Plast Mem SQLx offline compile: ${processEnv.SQLX_OFFLINE}`)
+  console.info(`[dev] Plast Mem sidecar: managed by AIRI settings (auto-start=${parseBoolean(processEnv.AIRI_PLAST_MEM_AUTO_START, true)})`)
   console.info(`[dev] Plast Mem episodic recall limit: ${processEnv.COMPUTER_USE_PLAST_MEM_EPISODIC_LIMIT}`)
   console.info(`[dev] Plast Mem semantic recall limit: ${processEnv.COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT}`)
   console.info(`[dev] Plast Mem conversation: ${conversationId}`)
@@ -443,8 +399,6 @@ async function main() {
   ) {
     console.warn('[dev] Plast Mem is configured for SiliconFlow, but OPENAI_API_KEY still looks like a placeholder. Update plast-mem/.env before testing memory creation.')
   }
-
-  await startPlastMemIfNeeded(processEnv)
 
   spawnChild(
     'airi',

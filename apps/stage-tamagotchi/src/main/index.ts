@@ -31,6 +31,7 @@ import { setupServerChannel } from './services/airi/channel-server'
 import { setupGodotStageManager } from './services/airi/godot-stage'
 import { setupBuiltInServer } from './services/airi/http-server'
 import { setupMcpStdioManager } from './services/airi/mcp-servers'
+import { setupPlastMemSidecarManager } from './services/airi/plast-mem/sidecar'
 import { setupPluginHost } from './services/airi/plugins'
 import { setupArtistryBridge } from './services/airi/widgets/artistry-bridge'
 import { setupAutoUpdater } from './services/electron/auto-updater'
@@ -165,6 +166,10 @@ app.whenReady().then(async () => {
     build: async () => setupMcpStdioManager(),
   })
 
+  const plastMemSidecarManager = injeca.provide('modules:plast-mem-sidecar-manager', {
+    build: async () => setupPlastMemSidecarManager(),
+  })
+
   const widgetsManager = injeca.provide('windows:widgets', {
     dependsOn: { serverChannel, i18n },
     build: ({ dependsOn }) => setupWidgetsWindowManager(dependsOn),
@@ -200,17 +205,17 @@ app.whenReady().then(async () => {
   })
 
   const chatWindow = injeca.provide('windows:chat', {
-    dependsOn: { widgetsManager, serverChannel, mcpStdioManager, i18n },
+    dependsOn: { widgetsManager, serverChannel, mcpStdioManager, plastMemSidecarManager, i18n },
     build: ({ dependsOn }) => setupChatWindowReusableFunc(dependsOn),
   })
 
   const settingsWindow = injeca.provide('windows:settings', {
-    dependsOn: { widgetsManager, beatSync, autoUpdater, devtoolsWindow: devtoolsMarkdownStressWindow, serverChannel, godotStageManager, mcpStdioManager, i18n, windowAuthManager, globalShortcut },
+    dependsOn: { widgetsManager, beatSync, autoUpdater, devtoolsWindow: devtoolsMarkdownStressWindow, serverChannel, godotStageManager, mcpStdioManager, plastMemSidecarManager, i18n, windowAuthManager, globalShortcut },
     build: async ({ dependsOn }) => setupSettingsWindowReusableFunc(dependsOn),
   })
 
   const mainWindow = injeca.provide('windows:main', {
-    dependsOn: { settingsWindow, chatWindow, widgetsManager, noticeWindow, beatSync, autoUpdater, serverChannel, godotStageManager, mcpStdioManager, i18n, onboardingWindowManager, windowAuthManager },
+    dependsOn: { settingsWindow, chatWindow, widgetsManager, noticeWindow, beatSync, autoUpdater, serverChannel, godotStageManager, mcpStdioManager, plastMemSidecarManager, i18n, onboardingWindowManager, windowAuthManager },
     build: async ({ dependsOn }) => setupMainWindow(dependsOn),
   })
 

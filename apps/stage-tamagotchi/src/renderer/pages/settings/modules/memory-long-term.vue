@@ -2,6 +2,7 @@
 import type {
   ElectronPlastMemConfig,
   ElectronPlastMemRuntimeStatus,
+  ElectronPlastMemSidecarStatus,
 } from '../../../../shared/eventa'
 
 import { errorMessageFrom } from '@moeru/std'
@@ -15,6 +16,10 @@ import {
   electronPlastMemApplyConfig,
   electronPlastMemGetConfig,
   electronPlastMemGetRuntimeStatus,
+  electronPlastMemGetSidecarStatus,
+  electronPlastMemRestartSidecar,
+  electronPlastMemStartSidecar,
+  electronPlastMemStopSidecar,
 } from '../../../../shared/eventa'
 
 type BridgeStatusKind = 'checking' | 'disabled' | 'offline' | 'online'
@@ -25,6 +30,10 @@ const tn = (key: string, params?: Record<string, unknown>) => t(`settings.pages.
 const invokeGetPlastMemConfig = useElectronEventaInvoke(electronPlastMemGetConfig)
 const invokeApplyPlastMemConfig = useElectronEventaInvoke(electronPlastMemApplyConfig)
 const invokeGetPlastMemRuntimeStatus = useElectronEventaInvoke(electronPlastMemGetRuntimeStatus)
+const invokeGetPlastMemSidecarStatus = useElectronEventaInvoke(electronPlastMemGetSidecarStatus)
+const invokeStartPlastMemSidecar = useElectronEventaInvoke(electronPlastMemStartSidecar)
+const invokeStopPlastMemSidecar = useElectronEventaInvoke(electronPlastMemStopSidecar)
+const invokeRestartPlastMemSidecar = useElectronEventaInvoke(electronPlastMemRestartSidecar)
 
 const bridgeFacts = [
   {
@@ -70,6 +79,12 @@ const apiKeyVisible = ref(false)
 const status = ref<ElectronPlastMemRuntimeStatus>()
 const statusError = ref('')
 const isRefreshing = ref(false)
+const sidecarStatus = ref<ElectronPlastMemSidecarStatus>()
+const sidecarError = ref('')
+const isRefreshingSidecar = ref(false)
+const isStartingSidecar = ref(false)
+const isStoppingSidecar = ref(false)
+const isRestartingSidecar = ref(false)
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 
 const statusKind = computed<BridgeStatusKind>(() => {
@@ -123,6 +138,28 @@ const recallStatusBadgeClass = computed(() => chatAttemptBadgeClass(recallDiagno
 const ingestStatusBadgeClass = computed(() => chatAttemptBadgeClass(ingestDiagnostics.value.status))
 const recallStatusLabel = computed(() => tn(`chat-diagnostics.recall.status.${recallDiagnostics.value.status}`))
 const ingestStatusLabel = computed(() => tn(`chat-diagnostics.ingest.status.${ingestDiagnostics.value.status}`))
+const sidecarState = computed(() => sidecarStatus.value?.state ?? 'stopped')
+const sidecarStatusLabel = computed(() => {
+  if (sidecarStatus.value?.external)
+    return tn('runtime.sidecar.status.external')
+
+  return tn(`runtime.sidecar.status.${sidecarState.value}`)
+})
+const sidecarStatusBadgeClass = computed(() => {
+  if (sidecarStatus.value?.external)
+    return 'bg-sky-500/15 text-sky-700 dark:text-sky-300'
+  if (sidecarState.value === 'running')
+    return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+  if (sidecarState.value === 'starting' || sidecarState.value === 'stopping')
+    return 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+  if (sidecarState.value === 'error')
+    return 'bg-red-500/15 text-red-700 dark:text-red-300'
+
+  return 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300'
+})
+const sidecarCanStart = computed(() => !['starting', 'running', 'stopping'].includes(sidecarState.value))
+const sidecarCanStop = computed(() => Boolean(sidecarStatus.value?.pid) && ['starting', 'running'].includes(sidecarState.value))
+const sidecarCanRestart = computed(() => !sidecarStatus.value?.external && sidecarState.value !== 'stopping')
 const recallDetail = computed(() => {
   if (recallDiagnostics.value.status === 'recalled') {
     return tn('chat-diagnostics.recall.detail.recalled', {
@@ -189,7 +226,7 @@ async function refreshConfig() {
 
 async function saveConfig(refreshAfterSave: boolean) {
   if (isSavingConfig.value)
-    return
+    return false
 
   isSavingConfig.value = true
   configError.value = ''
@@ -197,11 +234,15 @@ async function saveConfig(refreshAfterSave: boolean) {
   try {
     configDraft.value = await invokeApplyPlastMemConfig({ ...configDraft.value })
     configSavedMessage.value = tn('config.saved')
-    if (refreshAfterSave)
+    if (refreshAfterSave) {
       await refreshStatus()
+      await refreshSidecarStatus()
+    }
+    return true
   }
   catch (error) {
     configError.value = errorMessageFrom(error) ?? 'Unknown error'
+    return false
   }
   finally {
     isSavingConfig.value = false
@@ -225,11 +266,95 @@ async function refreshStatus() {
   }
 }
 
+async function refreshSidecarStatus() {
+  if (isRefreshingSidecar.value)
+    return
+
+  isRefreshingSidecar.value = true
+  sidecarError.value = ''
+  try {
+    sidecarStatus.value = await invokeGetPlastMemSidecarStatus()
+  }
+  catch (error) {
+    sidecarError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    isRefreshingSidecar.value = false
+  }
+}
+
+async function startSidecar() {
+  if (isStartingSidecar.value)
+    return
+
+  isStartingSidecar.value = true
+  sidecarError.value = ''
+  try {
+    const saved = await saveConfig(false)
+    if (!saved)
+      return
+
+    sidecarStatus.value = await invokeStartPlastMemSidecar()
+    await refreshStatus()
+  }
+  catch (error) {
+    sidecarError.value = errorMessageFrom(error) ?? 'Unknown error'
+    await refreshSidecarStatus()
+  }
+  finally {
+    isStartingSidecar.value = false
+  }
+}
+
+async function stopSidecar() {
+  if (isStoppingSidecar.value)
+    return
+
+  isStoppingSidecar.value = true
+  sidecarError.value = ''
+  try {
+    sidecarStatus.value = await invokeStopPlastMemSidecar()
+    await refreshStatus()
+  }
+  catch (error) {
+    sidecarError.value = errorMessageFrom(error) ?? 'Unknown error'
+    await refreshSidecarStatus()
+  }
+  finally {
+    isStoppingSidecar.value = false
+  }
+}
+
+async function restartSidecar() {
+  if (isRestartingSidecar.value)
+    return
+
+  isRestartingSidecar.value = true
+  sidecarError.value = ''
+  try {
+    const saved = await saveConfig(false)
+    if (!saved)
+      return
+
+    sidecarStatus.value = await invokeRestartPlastMemSidecar()
+    await refreshStatus()
+  }
+  catch (error) {
+    sidecarError.value = errorMessageFrom(error) ?? 'Unknown error'
+    await refreshSidecarStatus()
+  }
+  finally {
+    isRestartingSidecar.value = false
+  }
+}
+
 onMounted(() => {
   void refreshConfig()
   void refreshStatus()
+  void refreshSidecarStatus()
   refreshTimer = setInterval(() => {
     void refreshStatus()
+    void refreshSidecarStatus()
   }, 5000)
 })
 
@@ -500,6 +625,68 @@ onBeforeUnmount(() => {
             <span :class="['size-1.5', 'rounded-full', 'bg-current']" />
             {{ tn(`runtime.status.${statusKind}`) }}
           </span>
+        </div>
+
+        <div :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
+          <div :class="['flex', 'flex-wrap', 'items-start', 'justify-between', 'gap-3']">
+            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+              <div :class="['flex', 'items-center', 'gap-2']">
+                <div :class="['i-solar:server-square-bold-duotone', 'text-lg', 'text-neutral-500']" />
+                <span :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ tn('runtime.sidecar.title') }}</span>
+              </div>
+              <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
+                {{ tn('runtime.sidecar.description') }}
+              </p>
+            </div>
+            <span :class="['rounded-full', 'px-2', 'py-0.5', 'text-xs', 'font-medium', sidecarStatusBadgeClass]">
+              {{ sidecarStatusLabel }}
+            </span>
+          </div>
+
+          <div :class="['grid', 'grid-cols-1', 'gap-2', 'md:grid-cols-3']">
+            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
+              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.sidecar.pid') }}</span>
+              <span :class="['font-mono', 'text-xs', 'text-neutral-700', 'dark:text-neutral-200']">{{ sidecarStatus?.pid ?? '-' }}</span>
+            </div>
+            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
+              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.sidecar.command') }}</span>
+              <span :class="['truncate', 'font-mono', 'text-xs', 'text-neutral-700', 'dark:text-neutral-200']">{{ sidecarStatus?.command ?? '-' }}</span>
+            </div>
+            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
+              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.sidecar.cwd') }}</span>
+              <span :class="['truncate', 'font-mono', 'text-xs', 'text-neutral-700', 'dark:text-neutral-200']">{{ sidecarStatus?.cwd ?? '-' }}</span>
+            </div>
+          </div>
+
+          <Callout v-if="sidecarError || sidecarStatus?.lastError" theme="orange" :label="tn('runtime.sidecar.error')">
+            {{ sidecarError || sidecarStatus?.lastError }}
+          </Callout>
+
+          <div :class="['flex', 'flex-wrap', 'items-center', 'justify-end', 'gap-2']">
+            <Button
+              variant="secondary" size="sm" :loading="isRefreshingSidecar"
+              icon="i-solar:refresh-bold-duotone" :label="tn('runtime.sidecar.refresh')"
+              @click="refreshSidecarStatus"
+            />
+            <Button
+              variant="secondary" size="sm" :loading="isStartingSidecar || isSavingConfig"
+              :disabled="!sidecarCanStart"
+              icon="i-solar:play-circle-bold-duotone" :label="tn('runtime.sidecar.start')"
+              @click="startSidecar"
+            />
+            <Button
+              variant="secondary" size="sm" :loading="isStoppingSidecar"
+              :disabled="!sidecarCanStop"
+              icon="i-solar:stop-circle-bold-duotone" :label="tn('runtime.sidecar.stop')"
+              @click="stopSidecar"
+            />
+            <Button
+              size="sm" :loading="isRestartingSidecar || isSavingConfig"
+              :disabled="!sidecarCanRestart"
+              icon="i-solar:restart-circle-bold-duotone" :label="tn('runtime.sidecar.restart')"
+              @click="restartSidecar"
+            />
+          </div>
         </div>
 
         <div :class="['grid', 'grid-cols-1', 'gap-2', 'md:grid-cols-2']">

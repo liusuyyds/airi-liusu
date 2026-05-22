@@ -3,6 +3,7 @@ import type { WindowAuthManager } from '../../services/airi/auth'
 import type { ServerChannel } from '../../services/airi/channel-server'
 import type { GodotStageManager } from '../../services/airi/godot-stage'
 import type { McpStdioManager } from '../../services/airi/mcp-servers'
+import type { PlastMemSidecarManager } from '../../services/airi/plast-mem/sidecar'
 import type { AutoUpdater } from '../../services/electron/auto-updater'
 import type { GlobalShortcutService } from '../../services/electron/global-shortcut'
 import type { DevtoolsWindowManager } from '../devtools'
@@ -34,6 +35,7 @@ export function setupSettingsWindowReusableFunc(params: {
   serverChannel: ServerChannel
   godotStageManager: GodotStageManager
   mcpStdioManager: McpStdioManager
+  plastMemSidecarManager: PlastMemSidecarManager
   i18n: I18n
   windowAuthManager: WindowAuthManager
   globalShortcut: GlobalShortcutService
@@ -74,6 +76,7 @@ export function setupSettingsWindowReusableFunc(params: {
       serverChannel: params.serverChannel,
       godotStageManager: params.godotStageManager,
       mcpStdioManager: params.mcpStdioManager,
+      plastMemSidecarManager: params.plastMemSidecarManager,
       i18n: params.i18n,
       windowAuthManager: params.windowAuthManager,
       globalShortcut: params.globalShortcut,

@@ -5,6 +5,7 @@ import type { WindowAuthManager } from '../../../services/airi/auth'
 import type { ServerChannel } from '../../../services/airi/channel-server'
 import type { GodotStageManager } from '../../../services/airi/godot-stage'
 import type { McpStdioManager } from '../../../services/airi/mcp-servers'
+import type { PlastMemSidecarManager } from '../../../services/airi/plast-mem/sidecar'
 import type { AutoUpdater } from '../../../services/electron/auto-updater'
 import type { GlobalShortcutService } from '../../../services/electron/global-shortcut'
 import type { DevtoolsWindowManager } from '../../devtools'
@@ -31,6 +32,7 @@ export async function setupSettingsWindowInvokes(params: {
   serverChannel: ServerChannel
   godotStageManager: GodotStageManager
   mcpStdioManager: McpStdioManager
+  plastMemSidecarManager: PlastMemSidecarManager
   i18n: I18n
   windowAuthManager: WindowAuthManager
   globalShortcut: GlobalShortcutService
@@ -47,7 +49,7 @@ export async function setupSettingsWindowInvokes(params: {
   createWidgetsService({ context, widgetsManager: params.widgetsManager, window: params.settingsWindow })
   createAutoUpdaterService({ context, window: params.settingsWindow, service: params.autoUpdater })
   createMcpServersService({ context, manager: params.mcpStdioManager })
-  createPlastMemService({ context, manager: params.mcpStdioManager })
+  createPlastMemService({ context, manager: params.mcpStdioManager, sidecarManager: params.plastMemSidecarManager })
   createGodotStageService({ context, manager: params.godotStageManager, window: params.settingsWindow })
   createAuthService({ context, window: params.settingsWindow, windowAuthManager: params.windowAuthManager })
 

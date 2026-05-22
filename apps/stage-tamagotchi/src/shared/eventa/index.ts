@@ -316,9 +316,27 @@ export interface ElectronPlastMemRuntimeStatus {
   workspaceKey?: string
 }
 
+export type ElectronPlastMemSidecarState = 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
+
+export interface ElectronPlastMemSidecarStatus {
+  baseUrl?: string
+  command?: string
+  cwd?: string
+  databaseUrlConfigured: boolean
+  external: boolean
+  lastError?: string
+  pid: number | null
+  state: ElectronPlastMemSidecarState
+  updatedAt: number
+}
+
 export const electronPlastMemGetConfig = defineInvokeEventa<ElectronPlastMemConfig>('eventa:invoke:electron:plast-mem:get-config')
 export const electronPlastMemApplyConfig = defineInvokeEventa<ElectronPlastMemConfig, ElectronPlastMemApplyConfigPayload>('eventa:invoke:electron:plast-mem:apply-config')
 export const electronPlastMemGetRuntimeStatus = defineInvokeEventa<ElectronPlastMemRuntimeStatus>('eventa:invoke:electron:plast-mem:get-runtime-status')
+export const electronPlastMemGetSidecarStatus = defineInvokeEventa<ElectronPlastMemSidecarStatus>('eventa:invoke:electron:plast-mem:sidecar:get-status')
+export const electronPlastMemStartSidecar = defineInvokeEventa<ElectronPlastMemSidecarStatus>('eventa:invoke:electron:plast-mem:sidecar:start')
+export const electronPlastMemStopSidecar = defineInvokeEventa<ElectronPlastMemSidecarStatus>('eventa:invoke:electron:plast-mem:sidecar:stop')
+export const electronPlastMemRestartSidecar = defineInvokeEventa<ElectronPlastMemSidecarStatus>('eventa:invoke:electron:plast-mem:sidecar:restart')
 
 export type ElectronPlastMemContextDetail = 'auto' | 'none' | 'low' | 'high'
 export type ElectronPlastMemRecallStatus = 'idle' | 'recalled' | 'empty' | 'error'

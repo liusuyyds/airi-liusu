@@ -10,6 +10,7 @@ import type {
   ElectronPlastMemRuntimeStatus,
 } from '../../../../shared/eventa'
 import type { McpStdioManager } from '../mcp-servers'
+import type { PlastMemSidecarManager } from './sidecar'
 
 import { env } from 'node:process'
 
@@ -21,10 +22,14 @@ import {
   electronPlastMemApplyConfig,
   electronPlastMemGetConfig,
   electronPlastMemGetRuntimeStatus,
+  electronPlastMemGetSidecarStatus,
   electronPlastMemIngestChatMessages,
   electronPlastMemReleaseChatBridge,
   electronPlastMemReportChatBridgeTrace,
+  electronPlastMemRestartSidecar,
   electronPlastMemRetrieveChatContext,
+  electronPlastMemStartSidecar,
+  electronPlastMemStopSidecar,
 } from '../../../../shared/eventa'
 import {
   applyPlastMemConfig,
@@ -696,7 +701,11 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
   }
 }
 
-export function createPlastMemService(params: { context: ReturnType<typeof createContext>['context'], manager: McpStdioManager }) {
+export function createPlastMemService(params: {
+  context: ReturnType<typeof createContext>['context']
+  manager: McpStdioManager
+  sidecarManager: PlastMemSidecarManager
+}) {
   setupPlastMemConfig()
   logPlastMemInfo('bridge:ready', { version: plastMemBridgeVersion })
 
@@ -706,6 +715,18 @@ export function createPlastMemService(params: { context: ReturnType<typeof creat
   defineInvokeHandler(params.context, electronPlastMemApplyConfig, payload => applyPlastMemConfig(payload))
   defineInvokeHandler(params.context, electronPlastMemGetRuntimeStatus, async () => {
     return getPlastMemRuntimeStatus(params.manager)
+  })
+  defineInvokeHandler(params.context, electronPlastMemGetSidecarStatus, async () => {
+    return await params.sidecarManager.getStatus()
+  })
+  defineInvokeHandler(params.context, electronPlastMemStartSidecar, async () => {
+    return await params.sidecarManager.start()
+  })
+  defineInvokeHandler(params.context, electronPlastMemStopSidecar, async () => {
+    return await params.sidecarManager.stop()
+  })
+  defineInvokeHandler(params.context, electronPlastMemRestartSidecar, async () => {
+    return await params.sidecarManager.restart()
   })
   defineInvokeHandler(params.context, electronPlastMemRetrieveChatContext, payload => retrievePlastMemChatContext(payload))
   defineInvokeHandler(params.context, electronPlastMemIngestChatMessages, payload => ingestPlastMemChatMessages(payload))

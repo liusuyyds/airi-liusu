@@ -5,6 +5,7 @@ import type { WindowAuthManager } from '../../../services/airi/auth'
 import type { ServerChannel } from '../../../services/airi/channel-server'
 import type { GodotStageManager } from '../../../services/airi/godot-stage'
 import type { McpStdioManager } from '../../../services/airi/mcp-servers'
+import type { PlastMemSidecarManager } from '../../../services/airi/plast-mem/sidecar'
 import type { AutoUpdater } from '../../../services/electron/auto-updater'
 import type { NoticeWindowManager } from '../../notice'
 import type { OnboardingWindowManager } from '../../onboarding'
@@ -36,6 +37,7 @@ export async function setupMainWindowElectronInvokes(params: {
   serverChannel: ServerChannel
   godotStageManager: GodotStageManager
   mcpStdioManager: McpStdioManager
+  plastMemSidecarManager: PlastMemSidecarManager
   i18n: I18n
   onboardingWindowManager: OnboardingWindowManager
   windowAuthManager: WindowAuthManager
@@ -54,7 +56,7 @@ export async function setupMainWindowElectronInvokes(params: {
   createGodotStageService({ context, manager: params.godotStageManager, window: params.window })
   createOnboardingService({ context, onboardingWindowManager: params.onboardingWindowManager, mainWindow: params.window })
   createAuthService({ context, window: params.window, windowAuthManager: params.windowAuthManager })
-  createPlastMemService({ context, manager: params.mcpStdioManager })
+  createPlastMemService({ context, manager: params.mcpStdioManager, sidecarManager: params.plastMemSidecarManager })
 
   defineInvokeHandler(context, electronOpenMainDevtools, () => params.window.webContents.openDevTools({ mode: 'detach' }))
   defineInvokeHandler(context, electronOpenSettings, payload => params.settingsWindow.openWindow(payload?.route))

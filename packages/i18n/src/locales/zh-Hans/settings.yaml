@@ -623,7 +623,7 @@ pages:
             title: 手动连接
             fields:
               auto-start:
-                description: 允许本地 dev 启动器和 Tamagotchi 一起启动 Plast Mem。
+                description: 允许 AIRI 启动时自动启动本地 Plast Mem sidecar。
                 label: 自动启动 sidecar
               base-url:
                 description: AIRI 召回和写入记忆时访问的 HTTP 地址。
@@ -688,6 +688,24 @@ pages:
             refresh: 刷新
             service-error: Plast Mem 服务
             service-url: Plast Mem URL
+            sidecar:
+              command: 命令
+              cwd: 工作目录
+              description: 修改数据库或模型设置后，重启这里的 sidecar 即可生效；不需要重启 AIRI。
+              error: Sidecar 错误
+              pid: PID
+              refresh: 刷新 sidecar
+              restart: 重启
+              start: 启动
+              status:
+                error: 错误
+                external: 外部服务在线
+                running: 运行中
+                starting: 启动中
+                stopped: 已停止
+                stopping: 停止中
+              stop: 停止
+              title: 本地 sidecar
             status:
               checking: 检查中
               disabled: 已禁用
