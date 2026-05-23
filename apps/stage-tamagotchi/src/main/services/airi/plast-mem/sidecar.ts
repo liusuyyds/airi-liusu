@@ -16,6 +16,7 @@ import { Mutex } from 'async-mutex'
 
 import { onAppBeforeQuit } from '../../../libs/bootkit/lifecycle'
 import { getElectronMainDirname } from '../../../libs/electron/location'
+import { parseBoolean, trimOptional } from '../runtime-config'
 import { getPlastMemConfig, hasUserPlastMemConfig, setupPlastMemConfig } from './config'
 
 type PlastMemSidecarProcess = ChildProcessByStdio<null, Readable, Readable>
@@ -55,8 +56,12 @@ export interface PlastMemSidecarManager {
 }
 
 function createDeferred<T>(): Deferred<T> {
-  let resolve!: Deferred<T>['resolve']
-  let reject!: Deferred<T>['reject']
+  let resolve: Deferred<T>['resolve'] = () => {
+    throw new Error('Deferred resolve called before initialization.')
+  }
+  let reject: Deferred<T>['reject'] = () => {
+    throw new Error('Deferred reject called before initialization.')
+  }
 
   const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise
@@ -68,24 +73,6 @@ function createDeferred<T>(): Deferred<T> {
     reject,
     resolve,
   }
-}
-
-function trimOptional(value: string | undefined) {
-  const trimmed = value?.trim()
-  return trimmed || undefined
-}
-
-function parseBoolean(value: string | undefined, fallback: boolean) {
-  if (value == null)
-    return fallback
-
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 'yes', 'on'].includes(normalized))
-    return true
-  if (['0', 'false', 'no', 'off'].includes(normalized))
-    return false
-
-  return fallback
 }
 
 function createInitialStatus(): ElectronPlastMemSidecarStatus {
@@ -285,7 +272,14 @@ function sleep(msec: number) {
 
 async function killProcessTree(pid: number) {
   if (process.platform !== 'win32') {
-    return
+    try {
+      process.kill(-pid, 'SIGTERM')
+      return
+    }
+    catch {
+      process.kill(pid, 'SIGTERM')
+      return
+    }
   }
 
   await new Promise<void>((resolvePromise) => {
@@ -402,7 +396,7 @@ export function createPlastMemSidecarManager(): PlastMemSidecarManager {
 
   async function stopActiveProcess(processHandle: PlastMemSidecarProcess) {
     const pid = processHandle.pid
-    if (pid && process.platform === 'win32') {
+    if (pid) {
       await killProcessTree(pid)
       return
     }
@@ -527,6 +521,7 @@ export function createPlastMemSidecarManager(): PlastMemSidecarManager {
 
         const processHandle = spawn(launchPlan.command, launchPlan.args, {
           cwd: launchPlan.cwd,
+          detached: process.platform !== 'win32',
           env: launchPlan.env,
           stdio: ['ignore', 'pipe', 'pipe'],
           windowsHide: true,

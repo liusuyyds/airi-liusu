@@ -17,7 +17,7 @@ import { BasicTextarea } from '@proj-airi/ui'
 import { useDebounceFn, useLocalStorage } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from 'reka-ui'
-import { computed, nextTick, onMounted, ref, toRaw, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
@@ -29,6 +29,8 @@ const router = useRouter()
 const messageInput = ref('')
 const lastEnterTime = ref(0)
 const attachments = ref<{ type: 'image', data: string, mimeType: string, url: string }[]>([])
+const attachmentReaders = new Set<FileReader>()
+let isUnmounted = false
 
 const chatOrchestrator = useChatOrchestratorStore()
 const chatSession = useChatSessionStore()
@@ -256,7 +258,12 @@ async function handleFilePaste(files: File[]) {
   for (const file of files) {
     if (file.type.startsWith('image/')) {
       const reader = new FileReader()
+      attachmentReaders.add(reader)
       reader.onload = (e) => {
+        attachmentReaders.delete(reader)
+        if (isUnmounted)
+          return
+
         const base64Data = (e.target?.result as string)?.split(',')[1]
         if (base64Data) {
           attachments.value.push({
@@ -266,6 +273,12 @@ async function handleFilePaste(files: File[]) {
             url: URL.createObjectURL(file),
           })
         }
+      }
+      reader.onerror = () => {
+        attachmentReaders.delete(reader)
+      }
+      reader.onabort = () => {
+        attachmentReaders.delete(reader)
       }
       reader.readAsDataURL(file)
     }
@@ -292,6 +305,17 @@ async function handleDeleteMessage(index: number) {
 
 onMounted(() => {
   backgroundStore.initializeStore()
+})
+
+onBeforeUnmount(() => {
+  isUnmounted = true
+
+  for (const reader of attachmentReaders)
+    reader.abort()
+  attachmentReaders.clear()
+
+  for (const attachment of attachments.value)
+    URL.revokeObjectURL(attachment.url)
 })
 
 async function handleRetryMessage(index: number) {

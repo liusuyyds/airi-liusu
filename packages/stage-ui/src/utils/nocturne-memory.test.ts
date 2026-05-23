@@ -86,4 +86,36 @@ describe('cleanupNocturneMemoryContext', () => {
     expect(cleaned.some(message => message.role === 'tool' && (message as { tool_call_id?: string }).tool_call_id === 'nm-3')).toBe(true)
     expect(cleaned.some(message => message.role === 'tool' && (message as { tool_call_id?: string }).tool_call_id === 'nm-4')).toBe(true)
   })
+
+  it('keeps read_memory results whose content merely discusses the Error concept', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: '',
+        id: 'assistant-read-1',
+        tool_calls: [{
+          id: 'read-1',
+          type: 'function',
+          function: {
+            name: 'builtIn_mcpCallTool',
+            arguments: JSON.stringify({
+              name: 'nocturne-memory::read_memory',
+              arguments: JSON.stringify({ uri: 'core://agent/error-notes' }),
+            }),
+          },
+        }],
+      } as ChatHistoryItem,
+      {
+        role: 'tool',
+        tool_call_id: 'read-1',
+        content: 'Error: is the literal term the user asked AIRI to remember.',
+        id: 'tool-read-1',
+      } as ChatHistoryItem,
+    ]
+
+    const cleaned = cleanupNocturneMemoryContext(messages)
+
+    expect(cleaned).toHaveLength(2)
+    expect(cleaned.some(message => message.role === 'tool' && (message as { tool_call_id?: string }).tool_call_id === 'read-1')).toBe(true)
+  })
 })

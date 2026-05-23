@@ -38,6 +38,7 @@ import {
 } from '../../../../shared/eventa'
 import { parseElectronMcpConfigText } from '../../../../shared/mcp-config'
 import { onAppBeforeQuit } from '../../../libs/bootkit/lifecycle'
+import { parseBoolean } from '../runtime-config'
 
 interface McpServerSession {
   client: Client
@@ -79,23 +80,6 @@ const localDevPassthroughEnvKeys = new Set([
   'TMP',
   'USERPROFILE',
 ])
-
-function stringifyError(error: unknown) {
-  return errorMessageFrom(error) ?? String(error)
-}
-
-function parseBoolean(value: string | undefined, fallback: boolean) {
-  if (value == null)
-    return fallback
-
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 'yes', 'on'].includes(normalized))
-    return true
-  if (['0', 'false', 'no', 'off'].includes(normalized))
-    return false
-
-  return fallback
-}
 
 function isLocalPlastMemDevEnabled() {
   return parseBoolean(env.AIRI_LOCAL_PLAST_MEM_DEV, false)
@@ -384,7 +368,7 @@ export function createMcpStdioManager(): McpStdioManager {
         result.started.push({ name })
       }
       catch (error) {
-        const message = stringifyError(error)
+        const message = errorMessageFrom(error) ?? String(error)
         result.failed.push({ name, error: message })
         setRuntimeStatus({
           name,
@@ -558,7 +542,7 @@ export function createMcpStdioManager(): McpStdioManager {
       }
     }
     catch (error) {
-      const message = stringifyError(error)
+      const message = errorMessageFrom(error) ?? String(error)
       // Keep only the tail so a noisy failed server cannot flood the settings UI.
       const stderr = stderrChunks.join('').trim().slice(-mcpTestStderrMaxChars)
       return {

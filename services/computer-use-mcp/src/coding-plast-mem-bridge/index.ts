@@ -1,11 +1,14 @@
 export {
   assertReviewedCodingMemoryExportable,
+  CODING_PLAST_MEM_BRIDGE_CONFIDENCE_VALUES,
+  CODING_PLAST_MEM_BRIDGE_RECORD_KINDS,
   CODING_PLAST_MEM_BRIDGE_SCHEMA,
   CODING_PLAST_MEM_BRIDGE_SOURCE,
   CODING_PLAST_MEM_BRIDGE_TRUST,
   collectReviewedCodingMemoryExportIssues,
   isReviewedCodingMemoryExportable,
   PLAST_MEM_REVIEWED_CONTEXT_LABEL,
+  REVIEWED_CODING_MEMORY_STATUSES,
   serializeCodingPlastMemBridgeRecord,
 } from './bridge-record'
 export type {
@@ -46,7 +49,6 @@ export {
   PLAST_MEM_IMPORT_BATCH_MESSAGES_PATH,
   renderCodingPlastMemBridgeRecordForIngestion,
 } from './plast-mem-ingestion'
-
 export type {
   BuildPlastMemImportBatchRequestOptions,
   IngestCodingPlastMemBridgeRecordsOptions,
@@ -57,6 +59,7 @@ export type {
   PlastMemImportBatchMessagesRequest,
   PlastMemImportMessage,
 } from './plast-mem-ingestion'
+
 export {
   buildPlastMemContextPreRetrieveRequest,
   buildPlastMemReviewedContextBlock,
@@ -77,6 +80,9 @@ export type {
   RetrievePlastMemContextOptions,
   TryRetrievePlastMemReviewedContextBlockOptions,
 } from './plast-mem-retrieval'
+export {
+  normalizePlastMemBaseUrl,
+} from './plast-mem-url'
 export {
   runCodingPlastMemBridgeSmoke,
 } from './smoke'

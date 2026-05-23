@@ -172,6 +172,16 @@ function extractTextFromJsonResult(raw: string): string | undefined {
   }
 }
 
+function extractErrorFlagFromJsonResult(raw: string): boolean | undefined {
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>
+    return typeof obj.isError === 'boolean' ? obj.isError : undefined
+  }
+  catch {
+    return undefined
+  }
+}
+
 /**
  * Detects whether a `read_memory` result represents an error.
  *
@@ -188,8 +198,13 @@ function isErrorResult(
     return false
   if (tr.isError)
     return true
+  if (typeof tr.result === 'string') {
+    const jsonErrorFlag = extractErrorFlagFromJsonResult(tr.result)
+    if (jsonErrorFlag !== undefined)
+      return jsonErrorFlag
+  }
   const content = getToolResultContent(toolResults, toolCallId)
-  if (content && content.trimStart().startsWith('Error:'))
+  if (content && /^Error:\s+\S+/u.test(content.trimStart()))
     return true
   return false
 }
@@ -324,12 +339,7 @@ export function cleanupNocturneMemoryContext(messages: ChatHistoryItem[]): ChatH
     const tm = msg as { tool_call_id?: string, content?: string }
     if (!tm.tool_call_id || !tm.content)
       continue
-    if (tm.content.trimStart().startsWith('Error:')) {
-      errorCallIds.add(tm.tool_call_id)
-      continue
-    }
-    const extracted = extractTextFromJsonResult(tm.content)
-    if (extracted && extracted.trimStart().startsWith('Error:')) {
+    if (extractErrorFlagFromJsonResult(tm.content) === true) {
       errorCallIds.add(tm.tool_call_id)
     }
   }

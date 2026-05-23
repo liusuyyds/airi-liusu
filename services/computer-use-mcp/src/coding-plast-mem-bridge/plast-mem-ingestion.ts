@@ -1,10 +1,13 @@
-import type { CodingPlastMemBridgeConfidence, CodingPlastMemBridgeRecordKind, CodingPlastMemBridgeRecordV1 } from './bridge-record'
+import type { CodingPlastMemBridgeRecordV1 } from './bridge-record'
 
 import {
+  CODING_PLAST_MEM_BRIDGE_CONFIDENCE_VALUES,
+  CODING_PLAST_MEM_BRIDGE_RECORD_KINDS,
   CODING_PLAST_MEM_BRIDGE_SCHEMA,
   CODING_PLAST_MEM_BRIDGE_SOURCE,
   CODING_PLAST_MEM_BRIDGE_TRUST,
 } from './bridge-record'
+import { normalizePlastMemBaseUrl } from './plast-mem-url'
 
 export const PLAST_MEM_IMPORT_BATCH_MESSAGES_PATH = '/api/v0/import_batch_messages'
 export const PLAST_MEM_BRIDGE_MESSAGE_ROLE = 'computer-use-mcp'
@@ -52,19 +55,6 @@ export interface IngestCodingPlastMemBridgeRecordsResult {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const BRIDGE_RECORD_KINDS: readonly CodingPlastMemBridgeRecordKind[] = [
-  'constraint',
-  'fact',
-  'pitfall',
-  'command',
-  'file_note',
-]
-const BRIDGE_CONFIDENCE_VALUES: readonly CodingPlastMemBridgeConfidence[] = [
-  'low',
-  'medium',
-  'high',
-]
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -95,16 +85,8 @@ function timestampFromIso(value: string): number | undefined {
   return Number.isFinite(timestamp) ? timestamp : undefined
 }
 
-function normalizeBaseUrl(baseUrl: string): string {
-  const normalized = baseUrl.trim()
-  if (!normalized)
-    throw new Error('plast-mem baseUrl is required')
-
-  return normalized.replace(/\/+$/g, '')
-}
-
 function plastMemImportUrl(baseUrl: string): string {
-  return `${normalizeBaseUrl(baseUrl)}${PLAST_MEM_IMPORT_BATCH_MESSAGES_PATH}`
+  return `${normalizePlastMemBaseUrl(baseUrl)}${PLAST_MEM_IMPORT_BATCH_MESSAGES_PATH}`
 }
 
 export function collectCodingPlastMemBridgeRecordIssues(value: unknown): string[] {
@@ -124,9 +106,9 @@ export function collectCodingPlastMemBridgeRecordIssues(value: unknown): string[
     if (!hasRequiredString(value, key))
       issues.push(`${key} is required`)
   }
-  if (!hasEnumValue(value, 'kind', BRIDGE_RECORD_KINDS))
+  if (!hasEnumValue(value, 'kind', CODING_PLAST_MEM_BRIDGE_RECORD_KINDS))
     issues.push('kind is invalid')
-  if (!hasEnumValue(value, 'confidence', BRIDGE_CONFIDENCE_VALUES))
+  if (!hasEnumValue(value, 'confidence', CODING_PLAST_MEM_BRIDGE_CONFIDENCE_VALUES))
     issues.push('confidence is invalid')
   if (!hasStringArray(value, 'tags'))
     issues.push('tags must be a string array')

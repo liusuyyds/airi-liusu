@@ -1,6 +1,7 @@
 import type { ComputerUseConfig } from '../types'
 
 import { PLAST_MEM_REVIEWED_CONTEXT_LABEL } from './bridge-record'
+import { normalizePlastMemBaseUrl } from './plast-mem-url'
 
 export const PLAST_MEM_CONTEXT_PRE_RETRIEVE_PATH = '/api/v0/context_pre_retrieve'
 
@@ -71,16 +72,8 @@ function requireQuery(query: string): string {
   return normalized
 }
 
-function normalizeBaseUrl(baseUrl: string): string {
-  const normalized = baseUrl.trim()
-  if (!normalized)
-    throw new Error('plast-mem baseUrl is required')
-
-  return normalized.replace(/\/+$/g, '')
-}
-
 function plastMemContextUrl(baseUrl: string): string {
-  return `${normalizeBaseUrl(baseUrl)}${PLAST_MEM_CONTEXT_PRE_RETRIEVE_PATH}`
+  return `${normalizePlastMemBaseUrl(baseUrl)}${PLAST_MEM_CONTEXT_PRE_RETRIEVE_PATH}`
 }
 
 function normalizeMarkdown(markdown: string): string {

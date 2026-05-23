@@ -1,41 +1,20 @@
 import type {
-  CodingPlastMemBridgeConfidence,
-  CodingPlastMemBridgeRecordKind,
   ReviewedCodingMemoryEntryV1,
-  ReviewedCodingMemoryStatus,
 } from './bridge-record'
 
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import {
+  CODING_PLAST_MEM_BRIDGE_CONFIDENCE_VALUES,
+  CODING_PLAST_MEM_BRIDGE_RECORD_KINDS,
+  REVIEWED_CODING_MEMORY_STATUSES,
   serializeCodingPlastMemBridgeRecord,
 } from './bridge-record'
 
 export interface BuildCodingPlastMemBridgeJsonlOptions {
   exportedAt: string
 }
-
-const BRIDGE_RECORD_KINDS: readonly CodingPlastMemBridgeRecordKind[] = [
-  'constraint',
-  'fact',
-  'pitfall',
-  'command',
-  'file_note',
-]
-
-const BRIDGE_CONFIDENCE_VALUES: readonly CodingPlastMemBridgeConfidence[] = [
-  'low',
-  'medium',
-  'high',
-]
-
-const REVIEWED_MEMORY_STATUSES: readonly ReviewedCodingMemoryStatus[] = [
-  'active',
-  'inactive',
-  'archived',
-  'rejected',
-]
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value)
@@ -87,11 +66,11 @@ function parseReviewedCodingMemoryEntry(value: unknown): ReviewedCodingMemoryEnt
   return {
     workspaceKey: readRequiredString(value, 'workspaceKey'),
     memoryId: readRequiredString(value, 'memoryId'),
-    status: readEnum(value, 'status', REVIEWED_MEMORY_STATUSES),
-    kind: readEnum(value, 'kind', BRIDGE_RECORD_KINDS),
+    status: readEnum(value, 'status', REVIEWED_CODING_MEMORY_STATUSES),
+    kind: readEnum(value, 'kind', CODING_PLAST_MEM_BRIDGE_RECORD_KINDS),
     statement: readRequiredString(value, 'statement'),
     evidence: readRequiredString(value, 'evidence'),
-    confidence: readEnum(value, 'confidence', BRIDGE_CONFIDENCE_VALUES),
+    confidence: readEnum(value, 'confidence', CODING_PLAST_MEM_BRIDGE_CONFIDENCE_VALUES),
     tags: readStringArray(value, 'tags'),
     relatedFiles: readStringArray(value, 'relatedFiles'),
     sourceRunId: readOptionalString(value, 'sourceRunId'),

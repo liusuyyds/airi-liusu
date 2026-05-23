@@ -204,6 +204,22 @@ describe('plast mem Electron service', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
+  it('treats malformed ingest acceptance payloads as rejected', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('not-json', { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await ingestPlastMemChatMessages({
+      messages: [
+        { role: 'user', content: 'Do not silently accept malformed replies.', timestamp: 1760000004000 },
+      ],
+    })
+
+    expect(result.enabled).toBe(true)
+    expect(result.accepted).toBe(false)
+  })
+
   it('does not call Plast Mem when the bridge is disabled', async () => {
     env.COMPUTER_USE_PLAST_MEM_ENABLED = 'false'
     const fetchMock = vi.fn<typeof fetch>()

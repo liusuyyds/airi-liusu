@@ -453,7 +453,7 @@ export function setupAgentSparkNotifyHandler(deps: SparkNotifyAgentDeps): {
           traceSpark(deps, {
             type: 'model-output-text',
             payload: {
-              eventId: event.data.id,
+              eventId: event.data.eventId,
               text: streamEvent.text,
               accumulatedText: nextText,
             },

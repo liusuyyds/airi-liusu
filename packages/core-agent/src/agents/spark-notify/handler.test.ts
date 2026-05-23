@@ -57,6 +57,44 @@ describe('setupAgentSparkNotifyHandler', () => {
     expect(traces.length).toBeGreaterThan(0)
   })
 
+  it('uses the notify eventId for streamed text trace payloads', async () => {
+    const traces: Array<{ type: string, payload: Record<string, unknown> }> = []
+    const handler = setupAgentSparkNotifyHandler({
+      stream: async (_model, _provider, _messages, options) => {
+        await options.onStreamEvent?.({ type: 'text-delta', text: 'hello' } as any)
+        await options.onStreamEvent?.({ type: 'finish' } as any)
+        return undefined
+      },
+      getActiveProvider: () => 'mock-provider',
+      getActiveModel: () => 'mock-model',
+      getProviderInstance: async () => ({} as any),
+      onReactionDelta: vi.fn(),
+      onReactionEnd: vi.fn(),
+      getSystemPrompt: () => 'system',
+      getProcessing: () => false,
+      setProcessing: vi.fn(),
+      getPending: () => [],
+      setPending: vi.fn(),
+      onTrace: (event: { type: string, payload: Record<string, unknown> }) => traces.push(event),
+    } as any)
+
+    await handler.handle({
+      type: 'spark:notify',
+      source: 'plugin:airi-plugin-game-chess',
+      data: {
+        id: 'spark-trace-1',
+        eventId: 'evt-trace-1',
+        kind: 'ping',
+        urgency: 'immediate',
+        headline: 'trace update',
+        destinations: ['character'],
+      },
+    })
+
+    const textTrace = traces.find(event => event.type === 'model-output-text')
+    expect(textTrace?.payload.eventId).toBe('evt-trace-1')
+  })
+
   it('routes forceSparkCommandResponse to the model call', async () => {
     const stream = vi.fn(async (_model, _provider, _messages, options) => {
       await options.onStreamEvent?.({ type: 'finish' } as any)

@@ -9,6 +9,27 @@ export type CodingPlastMemBridgeConfidence = 'low' | 'medium' | 'high'
 
 export type ReviewedCodingMemoryStatus = 'active' | 'inactive' | 'archived' | 'rejected'
 
+export const CODING_PLAST_MEM_BRIDGE_RECORD_KINDS: readonly CodingPlastMemBridgeRecordKind[] = [
+  'constraint',
+  'fact',
+  'pitfall',
+  'command',
+  'file_note',
+]
+
+export const CODING_PLAST_MEM_BRIDGE_CONFIDENCE_VALUES: readonly CodingPlastMemBridgeConfidence[] = [
+  'low',
+  'medium',
+  'high',
+]
+
+export const REVIEWED_CODING_MEMORY_STATUSES: readonly ReviewedCodingMemoryStatus[] = [
+  'active',
+  'inactive',
+  'archived',
+  'rejected',
+]
+
 export interface ReviewedCodingMemoryReview {
   reviewer: string
   rationale: string

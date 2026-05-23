@@ -57,6 +57,7 @@ import {
   electronPlastMemStartSidecar,
   electronPlastMemStopSidecar,
 } from '../../../../shared/eventa'
+import { parseBoolean, trimOptional } from '../runtime-config'
 import {
   applyPlastMemConfig,
   getPlastMemConfig,
@@ -131,34 +132,12 @@ interface PlastMemRuntimeConfig {
   workspaceKey?: string
 }
 
-function parseBoolean(value: string | undefined, fallback: boolean) {
-  if (value == null)
-    return fallback
-
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 'yes', 'on'].includes(normalized))
-    return true
-  if (['0', 'false', 'no', 'off'].includes(normalized))
-    return false
-
-  return fallback
-}
-
 function parsePositiveInteger(value: string | undefined, fallback: number) {
   if (value == null)
     return fallback
 
   const parsed = Number.parseInt(value, 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function trimOptional(value: string | undefined) {
-  const trimmed = value?.trim()
-  return trimmed || undefined
-}
-
-function stringifyError(error: unknown) {
-  return errorMessageFrom(error) ?? String(error)
 }
 
 function logPlastMemInfo(message: string, details?: Record<string, unknown>) {
@@ -441,10 +420,10 @@ function parseAcceptedResponse(responseText: string) {
 
   try {
     const parsed = JSON.parse(responseText) as { accepted?: unknown }
-    return parsed.accepted !== false
+    return parsed.accepted === true
   }
   catch {
-    return true
+    return false
   }
 }
 
@@ -466,7 +445,7 @@ async function probePlastMem(baseUrl: string) {
   catch (error) {
     return {
       reachable: false,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
     }
   }
   finally {
@@ -595,13 +574,13 @@ export async function checkPlastMemHealth(payload: ElectronPlastMemHealthPayload
   }
   catch (error) {
     logPlastMemWarn('health:error', {
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
     })
     return {
       baseUrl: config.baseUrl,
       databaseOk: false,
       enabled: config.enabled,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
     }
   }
 }
@@ -718,7 +697,7 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
   }
   catch (error) {
     logPlastMemWarn('recall:error', {
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       queryCharacters: payload.query.trim().length,
     })
     recordContextAttempt({
@@ -726,7 +705,7 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
       baseUrl: config.baseUrl,
       contextBlock: '',
       contextCharacters: 0,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       queryCharacters: payload.query.trim().length,
       source: 'retrieve',
       status: 'error',
@@ -735,7 +714,7 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
       baseUrl: config.baseUrl,
       contextBlock: '',
       enabled: config.enabled,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       recalled: false,
     }
   }
@@ -873,20 +852,20 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
       recentIngestSignatures.delete(claimedIngestSignature)
 
     logPlastMemWarn('ingest:error', {
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       messageCount: payload.messages.length,
     })
     recordIngestAttempt({
       at: Date.now(),
       baseUrl: config.baseUrl,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       messageCount: payload.messages.length,
       status: 'error',
     })
     return {
       accepted: false,
       enabled: config.enabled,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
     }
   }
 }
@@ -963,12 +942,12 @@ export async function addPlastMemMessage(payload: ElectronPlastMemAddMessagePayl
   }
   catch (error) {
     logPlastMemWarn('add-message:error', {
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
     })
     return {
       accepted: false,
       enabled: config.enabled,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
     }
   }
 }
@@ -1073,7 +1052,7 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
   }
   catch (error) {
     logPlastMemWarn('pre-retrieve:error', {
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       queryCharacters: payload.query.trim().length,
     })
     recordContextAttempt({
@@ -1081,7 +1060,7 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
       baseUrl: config.baseUrl,
       contextBlock: '',
       contextCharacters: 0,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       queryCharacters: payload.query.trim().length,
       source: 'preRetrieve',
       status: 'error',
@@ -1090,7 +1069,7 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
       baseUrl: config.baseUrl,
       contextBlock: '',
       enabled: config.enabled,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       recalled: false,
     }
   }
@@ -1170,14 +1149,14 @@ export async function retrievePlastMemRecentMemory(payload: ElectronPlastMemRece
   }
   catch (error) {
     logPlastMemWarn('recent:error', {
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
     })
     recordContextAttempt({
       at: Date.now(),
       baseUrl: config.baseUrl,
       contextBlock: '',
       contextCharacters: 0,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       source: 'recent',
       status: 'error',
     })
@@ -1185,7 +1164,7 @@ export async function retrievePlastMemRecentMemory(payload: ElectronPlastMemRece
       baseUrl: config.baseUrl,
       contextBlock: '',
       enabled: config.enabled,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       recalled: false,
     }
   }
@@ -1249,13 +1228,13 @@ export async function retrievePlastMemRecentMemoryRaw(payload: ElectronPlastMemR
   }
   catch (error) {
     logPlastMemWarn('recent-raw:error', {
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
     })
     return {
       baseUrl: config.baseUrl,
       memories: [],
       enabled: config.enabled,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
     }
   }
 }
@@ -1338,14 +1317,14 @@ export async function retrievePlastMemMemoryRaw(payload: ElectronPlastMemRetriev
   }
   catch (error) {
     logPlastMemWarn('retrieve-raw:error', {
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       queryCharacters: payload.query.trim().length,
     })
     return {
       baseUrl: config.baseUrl,
       enabled: config.enabled,
       episodic: [],
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       semantic: [],
     }
   }
@@ -1411,12 +1390,12 @@ export async function retrievePlastMemSemanticMemoryRaw(payload: ElectronPlastMe
   }
   catch (error) {
     logPlastMemWarn('semantic-raw:error', {
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
     })
     return {
       baseUrl: config.baseUrl,
       enabled: config.enabled,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       memories: [],
     }
   }
@@ -1480,14 +1459,14 @@ export async function setPlastMemSemanticMemoryInvalid(payload: ElectronPlastMem
   }
   catch (error) {
     logPlastMemWarn('semantic-set-invalid:error', {
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
       invalid: payload.invalid,
       memoryId: payload.memoryId,
     })
     return {
       baseUrl: config.baseUrl,
       enabled: config.enabled,
-      error: stringifyError(error),
+      error: errorMessageFrom(error) ?? String(error),
     }
   }
 }
