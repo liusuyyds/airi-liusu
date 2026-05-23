@@ -3,6 +3,7 @@ import type { createContext } from '@moeru/eventa/adapters/electron/main'
 import type {
   ElectronPlastMemChatDiagnostics,
   ElectronPlastMemContextDetail,
+  ElectronPlastMemContextDiagnostics,
   ElectronPlastMemContextPreRetrievePayload,
   ElectronPlastMemContextPreRetrieveResult,
   ElectronPlastMemHealthPayload,
@@ -15,6 +16,8 @@ import type {
   ElectronPlastMemRecentMemoryResult,
   ElectronPlastMemRetrieveChatContextPayload,
   ElectronPlastMemRetrieveChatContextResult,
+  ElectronPlastMemRetrieveMemoryRawPayload,
+  ElectronPlastMemRetrieveMemoryRawResult,
   ElectronPlastMemRuntimeStatus,
   ElectronPlastMemSemanticMemoryRawPayload,
   ElectronPlastMemSemanticMemoryRawResult,
@@ -44,6 +47,7 @@ import {
   electronPlastMemReportChatBridgeTrace,
   electronPlastMemRestartSidecar,
   electronPlastMemRetrieveChatContext,
+  electronPlastMemRetrieveMemoryRaw,
   electronPlastMemSemanticMemoryRaw,
   electronPlastMemSetSemanticMemoryInvalid,
   electronPlastMemStartSidecar,
@@ -64,6 +68,7 @@ const defaultSemanticLimit = 12
 const defaultMaxContextCharacters = 5000
 const computerUseMcpServerName = 'computer_use'
 const retrieveMemoryPath = 'api/v0/retrieve_memory'
+const retrieveMemoryRawPath = 'api/v0/retrieve_memory/raw'
 const contextPreRetrievePath = 'api/v0/context_pre_retrieve'
 const healthPath = 'api/v0/health'
 const recentMemoryPath = 'api/v0/recent_memory'
@@ -77,6 +82,7 @@ const recentRecallSignatureTtlMsec = 10_000
 const recentTraceSignatureTtlMsec = 5_000
 
 const chatDiagnostics: ElectronPlastMemChatDiagnostics = {
+  contexts: [],
   ingest: {
     status: 'idle',
   },
@@ -104,6 +110,10 @@ interface PlastMemRuntimeConfig {
   databaseUrl?: string
   devMode: boolean
   enabled: boolean
+  enableChatIngest: boolean
+  enableChatRetrieve: boolean
+  enableContextPreRetrieve: boolean
+  enableRecentMemory: boolean
   episodicLimit: number
   maxContextCharacters: number
   openaiApiKey?: string
@@ -221,6 +231,7 @@ function ownerIdFromTraceDetail(detail: Record<string, unknown> | undefined) {
 
 function snapshotChatDiagnostics(): ElectronPlastMemChatDiagnostics {
   return {
+    contexts: chatDiagnostics.contexts?.map(context => ({ ...context })) ?? [],
     ingest: { ...chatDiagnostics.ingest },
     recall: { ...chatDiagnostics.recall },
   }
@@ -228,6 +239,16 @@ function snapshotChatDiagnostics(): ElectronPlastMemChatDiagnostics {
 
 function recordRecallAttempt(attempt: ElectronPlastMemChatDiagnostics['recall']) {
   chatDiagnostics.recall = attempt
+}
+
+function recordContextAttempt(attempt: ElectronPlastMemContextDiagnostics) {
+  chatDiagnostics.contexts = [
+    attempt,
+    ...(chatDiagnostics.contexts ?? []).filter(context => context.source !== attempt.source),
+  ].slice(0, 3)
+
+  if (attempt.source === 'retrieve')
+    recordRecallAttempt(attempt)
 }
 
 function recordIngestAttempt(attempt: ElectronPlastMemChatDiagnostics['ingest']) {
@@ -268,6 +289,10 @@ function resolveEnvPlastMemRuntimeConfig(): PlastMemRuntimeConfig {
     databaseUrl: trimOptional(env.DATABASE_URL),
     devMode,
     enabled,
+    enableChatIngest: parseBoolean(env.COMPUTER_USE_PLAST_MEM_CHAT_INGEST_ENABLED, true),
+    enableChatRetrieve: parseBoolean(env.COMPUTER_USE_PLAST_MEM_CHAT_RETRIEVE_ENABLED, true),
+    enableContextPreRetrieve: parseBoolean(env.COMPUTER_USE_PLAST_MEM_CONTEXT_PRE_RETRIEVE_ENABLED, true),
+    enableRecentMemory: parseBoolean(env.COMPUTER_USE_PLAST_MEM_RECENT_MEMORY_ENABLED, true),
     episodicLimit: parsePositiveInteger(env.COMPUTER_USE_PLAST_MEM_EPISODIC_LIMIT, defaultEpisodicLimit),
     maxContextCharacters: parsePositiveInteger(env.COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS, defaultMaxContextCharacters),
     openaiApiKey: trimOptional(env.OPENAI_API_KEY),
@@ -296,6 +321,10 @@ function resolvePlastMemRuntimeConfig(): PlastMemRuntimeConfig {
     databaseUrl: trimOptional(config.databaseUrl) ?? envConfig.databaseUrl,
     devMode: envConfig.devMode,
     enabled: config.enabled,
+    enableChatIngest: config.enableChatIngest,
+    enableChatRetrieve: config.enableChatRetrieve,
+    enableContextPreRetrieve: config.enableContextPreRetrieve,
+    enableRecentMemory: config.enableRecentMemory,
     episodicLimit: config.episodicLimit,
     maxContextCharacters: config.maxContextCharacters,
     openaiApiKey: trimOptional(config.openaiApiKey) ?? envConfig.openaiApiKey,
@@ -576,6 +605,16 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
     }
   }
 
+  if (!config.enableChatRetrieve) {
+    logPlastMemInfo('recall:disabled-by-config')
+    return {
+      baseUrl: config.baseUrl,
+      contextBlock: '',
+      enabled: false,
+      recalled: false,
+    }
+  }
+
   if (isStaleChatBridgeOwner(payload.ownerId)) {
     logPlastMemInfo('recall:skip-stale-owner', {
       activeOwnerId: chatBridgeOwnerId,
@@ -594,12 +633,13 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
     const query = payload.query.trim()
     if (!query) {
       logPlastMemInfo('recall:skip-empty', { baseUrl })
-      recordRecallAttempt({
+      recordContextAttempt({
         at: Date.now(),
         baseUrl,
         contextBlock: '',
         contextCharacters: 0,
         queryCharacters: 0,
+        source: 'retrieve',
         status: 'empty',
       })
       return {
@@ -639,12 +679,13 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
       contextCharacters: contextBlock.length,
       statusCode: response.statusCode,
     })
-    recordRecallAttempt({
+    recordContextAttempt({
       at: Date.now(),
       baseUrl,
       contextBlock,
       contextCharacters: contextBlock.length,
       queryCharacters: query.length,
+      source: 'retrieve',
       status: contextBlock ? 'recalled' : 'empty',
       statusCode: response.statusCode,
     })
@@ -662,13 +703,14 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
       error: stringifyError(error),
       queryCharacters: payload.query.trim().length,
     })
-    recordRecallAttempt({
+    recordContextAttempt({
       at: Date.now(),
       baseUrl: config.baseUrl,
       contextBlock: '',
       contextCharacters: 0,
       error: stringifyError(error),
       queryCharacters: payload.query.trim().length,
+      source: 'retrieve',
       status: 'error',
     })
     return {
@@ -699,6 +741,20 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
 
   if (!config.enabled) {
     logPlastMemInfo('ingest:disabled')
+    return {
+      accepted: false,
+      enabled: false,
+    }
+  }
+
+  if (!config.enableChatIngest) {
+    logPlastMemInfo('ingest:disabled-by-config')
+    recordIngestAttempt({
+      at: Date.now(),
+      baseUrl: config.baseUrl,
+      messageCount: payload.messages.length,
+      status: 'rejected',
+    })
     return {
       accepted: false,
       enabled: false,
@@ -830,6 +886,16 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
     }
   }
 
+  if (!config.enableContextPreRetrieve) {
+    logPlastMemInfo('pre-retrieve:disabled-by-config')
+    return {
+      baseUrl: config.baseUrl,
+      contextBlock: '',
+      enabled: false,
+      recalled: false,
+    }
+  }
+
   if (isStaleChatBridgeOwner(payload.ownerId)) {
     logPlastMemInfo('pre-retrieve:skip-stale-owner', {
       activeOwnerId: chatBridgeOwnerId,
@@ -848,6 +914,15 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
     const query = payload.query.trim()
     if (!query) {
       logPlastMemInfo('pre-retrieve:skip-empty', { baseUrl })
+      recordContextAttempt({
+        at: Date.now(),
+        baseUrl,
+        contextBlock: '',
+        contextCharacters: 0,
+        queryCharacters: 0,
+        source: 'preRetrieve',
+        status: 'empty',
+      })
       return {
         baseUrl,
         contextBlock: '',
@@ -873,6 +948,16 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
       contextCharacters: contextBlock.length,
       statusCode: response.statusCode,
     })
+    recordContextAttempt({
+      at: Date.now(),
+      baseUrl,
+      contextBlock,
+      contextCharacters: contextBlock.length,
+      queryCharacters: query.length,
+      source: 'preRetrieve',
+      status: contextBlock ? 'recalled' : 'empty',
+      statusCode: response.statusCode,
+    })
 
     return {
       baseUrl,
@@ -886,6 +971,16 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
     logPlastMemWarn('pre-retrieve:error', {
       error: stringifyError(error),
       queryCharacters: payload.query.trim().length,
+    })
+    recordContextAttempt({
+      at: Date.now(),
+      baseUrl: config.baseUrl,
+      contextBlock: '',
+      contextCharacters: 0,
+      error: stringifyError(error),
+      queryCharacters: payload.query.trim().length,
+      source: 'preRetrieve',
+      status: 'error',
     })
     return {
       baseUrl: config.baseUrl,
@@ -902,6 +997,16 @@ export async function retrievePlastMemRecentMemory(payload: ElectronPlastMemRece
 
   if (!config.enabled) {
     logPlastMemInfo('recent:disabled')
+    return {
+      baseUrl: config.baseUrl,
+      contextBlock: '',
+      enabled: false,
+      recalled: false,
+    }
+  }
+
+  if (!config.enableRecentMemory) {
+    logPlastMemInfo('recent:disabled-by-config')
     return {
       baseUrl: config.baseUrl,
       contextBlock: '',
@@ -941,6 +1046,15 @@ export async function retrievePlastMemRecentMemory(payload: ElectronPlastMemRece
       contextCharacters: contextBlock.length,
       statusCode: response.statusCode,
     })
+    recordContextAttempt({
+      at: Date.now(),
+      baseUrl,
+      contextBlock,
+      contextCharacters: contextBlock.length,
+      source: 'recent',
+      status: contextBlock ? 'recalled' : 'empty',
+      statusCode: response.statusCode,
+    })
 
     return {
       baseUrl,
@@ -953,6 +1067,15 @@ export async function retrievePlastMemRecentMemory(payload: ElectronPlastMemRece
   catch (error) {
     logPlastMemWarn('recent:error', {
       error: stringifyError(error),
+    })
+    recordContextAttempt({
+      at: Date.now(),
+      baseUrl: config.baseUrl,
+      contextBlock: '',
+      contextCharacters: 0,
+      error: stringifyError(error),
+      source: 'recent',
+      status: 'error',
     })
     return {
       baseUrl: config.baseUrl,
@@ -1029,6 +1152,93 @@ export async function retrievePlastMemRecentMemoryRaw(payload: ElectronPlastMemR
       memories: [],
       enabled: config.enabled,
       error: stringifyError(error),
+    }
+  }
+}
+
+export async function retrievePlastMemMemoryRaw(payload: ElectronPlastMemRetrieveMemoryRawPayload): Promise<ElectronPlastMemRetrieveMemoryRawResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    logPlastMemInfo('retrieve-raw:disabled')
+    return {
+      baseUrl: config.baseUrl,
+      enabled: false,
+      episodic: [],
+      semantic: [],
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    logPlastMemInfo('retrieve-raw:skip-stale-owner', {
+      activeOwnerId: chatBridgeOwnerId,
+      requestedOwnerId: payload.ownerId,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: true,
+      episodic: [],
+      semantic: [],
+    }
+  }
+
+  try {
+    const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
+    const query = payload.query.trim()
+    if (!query) {
+      return {
+        baseUrl,
+        enabled: true,
+        episodic: [],
+        semantic: [],
+      }
+    }
+
+    logPlastMemInfo('retrieve-raw:start', {
+      baseUrl,
+      episodicLimit: payload.episodicLimit ?? config.episodicLimit,
+      queryCharacters: query.length,
+      semanticLimit: payload.semanticLimit ?? config.semanticLimit,
+    })
+    const response = await postJsonText(baseUrl, retrieveMemoryRawPath, {
+      conversation_id: conversationId,
+      query,
+      episodic_limit: payload.episodicLimit ?? config.episodicLimit,
+      semantic_limit: payload.semanticLimit ?? config.semanticLimit,
+      detail: payload.detail ?? ('low' satisfies ElectronPlastMemContextDetail),
+      category: payload.category || config.category || undefined,
+    }, config.requestTimeoutMsec)
+    const result = parseJsonResponse<Pick<ElectronPlastMemRetrieveMemoryRawResult, 'episodic' | 'semantic'>>(
+      response.text,
+      { episodic: [], semantic: [] },
+      'retrieve-raw',
+    )
+
+    logPlastMemInfo('retrieve-raw:ok', {
+      episodicCount: result.episodic.length,
+      semanticCount: result.semantic.length,
+      statusCode: response.statusCode,
+    })
+
+    return {
+      baseUrl,
+      enabled: true,
+      episodic: result.episodic,
+      semantic: result.semantic,
+      statusCode: response.statusCode,
+    }
+  }
+  catch (error) {
+    logPlastMemWarn('retrieve-raw:error', {
+      error: stringifyError(error),
+      queryCharacters: payload.query.trim().length,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: config.enabled,
+      episodic: [],
+      error: stringifyError(error),
+      semantic: [],
     }
   }
 }
@@ -1194,6 +1404,7 @@ export function createPlastMemService(params: {
   })
   defineInvokeHandler(params.context, electronPlastMemHealth, payload => checkPlastMemHealth(payload))
   defineInvokeHandler(params.context, electronPlastMemRetrieveChatContext, payload => retrievePlastMemChatContext(payload))
+  defineInvokeHandler(params.context, electronPlastMemRetrieveMemoryRaw, payload => retrievePlastMemMemoryRaw(payload))
   defineInvokeHandler(params.context, electronPlastMemContextPreRetrieve, payload => contextPreRetrievePlastMemChatContext(payload))
   defineInvokeHandler(params.context, electronPlastMemRecentMemory, payload => retrievePlastMemRecentMemory(payload))
   defineInvokeHandler(params.context, electronPlastMemRecentMemoryRaw, payload => retrievePlastMemRecentMemoryRaw(payload))

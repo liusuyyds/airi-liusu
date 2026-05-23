@@ -99,7 +99,7 @@ const setLocale = useElectronEventaInvoke(i18nSetLocale)
 const getGodotStageStatus = useElectronEventaInvoke(electronGodotStageGetStatus)
 const syncArtistryConfig = useElectronEventaInvoke(artistrySyncConfig)
 const isChatWindowRoute = () => route.path === '/chat'
-const isMainStageRoute = () => route.path === '/'
+const isChatMemoryRoute = () => route.path === '/' || route.path === '/chat'
 const isGodotStageRoute = () => route.path === '/' || route.path.startsWith('/settings')
 const isWidgetsWindowRoute = () => route.path === '/widgets'
 
@@ -234,7 +234,7 @@ onMounted(async () => {
     token: serverChannelConfig.authToken || undefined,
     possibleEvents: ['ui:configure'],
   }).catch(err => console.error('Failed to initialize Mods Server Channel in App.vue:', err))
-  if (isMainStageRoute())
+  if (isChatMemoryRoute())
     void plastMemChatMemoryStore.initialize()
 
   if (!isChatWindowRoute()) {
@@ -271,7 +271,7 @@ watch(themeColorsHueDynamic, () => {
 }, { immediate: true })
 
 onUnmounted(() => {
-  if (isMainStageRoute())
+  if (isChatMemoryRoute())
     plastMemChatMemoryStore.dispose()
 
   if (!isChatWindowRoute()) {

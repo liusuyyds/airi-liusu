@@ -650,6 +650,43 @@ pages:
               env: Environment fallback
               ui: UI configuration
             title: Manual connection
+            quick:
+              autostart: Auto-start
+              enabled: Bridge
+            test:
+              action: Test
+              complete: Connection test complete
+              description: Check the local service, database, conversation, model provider, and sidecar state.
+              title: Connection test
+              details:
+                conversation: Conversation UUID has not been checked yet.
+                database: Database answered the health check.
+                models: Model provider settings have not been checked yet.
+                service: Service has not been checked yet.
+                waiting: Waiting for a test run.
+              items:
+                conversation: Conversation
+                database: Database
+                models: Models
+                service: Service
+                sidecar: Sidecar
+              status:
+                error: Issue
+                ok: OK
+                unknown: Pending
+            groups:
+              behavior:
+                description: Choose exactly which chat-memory paths can read or write Plast Mem.
+                title: Chat memory behavior
+              connection:
+                description: Configure the local service, database, workspace identity, and bridge request timeout.
+                title: Connection
+              limits:
+                description: Tune what memory is retrieved and how much context can be injected.
+                title: Recall limits
+              models:
+                description: Provider credentials, models, token budget, and provider timeout used by the sidecar.
+                title: Model provider
             fields:
               auto-start:
                 description: Allows AIRI to start the local Plast Mem sidecar when the app starts.
@@ -666,6 +703,18 @@ pages:
               enabled:
                 description: Enables formal chat recall before replies and capture after replies.
                 label: Enable Plast Mem bridge
+              enable-context-pre-retrieve:
+                description: Adds semantic facts before the model sees the user message.
+                label: Semantic pre-retrieve
+              enable-chat-retrieve:
+                description: Retrieves semantic and episodic memory before each reply.
+                label: Full pre-reply recall
+              enable-recent-memory:
+                description: Injects recent episodic memories once when the chat bridge starts.
+                label: Recent memory injection
+              enable-chat-ingest:
+                description: Writes completed user and assistant turns back to Plast Mem.
+                label: Post-reply capture
               episodic-limit:
                 description: Number of episodic memories requested during recall.
                 label: Episodic recall limit
@@ -776,6 +825,16 @@ pages:
           chat-diagnostics:
             never: Never
             title: Chat bridge diagnostics
+            contexts:
+              characters: '{characters} chars'
+              empty: No injected context has been recorded yet.
+              query: 'Query: {characters} chars'
+              source:
+                preRetrieve: Semantic pre-retrieve
+                recent: Recent memory
+                retrieve: Full recall
+              time: 'At: {time}'
+              title: Injected context sources
             recall:
               detail:
                 empty: Request succeeded, but no semantic memory matched yet.
@@ -803,6 +862,36 @@ pages:
                 rejected: Rejected
               time: 'Last write: {time}'
               title: Post-reply capture
+          manual-import:
+            accepted: Imported {count} message(s)
+            action: Import
+            description: Imports the newest {count} user/assistant messages from the active chat.
+            empty: No importable user or assistant messages in the active chat.
+            error: Manual import failed
+            limit:
+              description: Number of latest user/assistant messages to send to Plast Mem.
+              label: Message count
+            rejected: Plast Mem rejected the import.
+            saved-description: Background segmentation will process them next.
+            title: Manual recent chat import
+          recall-preview:
+            action: Preview
+            description: Run raw retrieval for a test query without injecting anything into chat.
+            empty-query: Enter a query before previewing recall.
+            episodic: Episodic
+            error: Recall preview failed
+            query:
+              description: Use the same wording you expect the user to ask later.
+              label: Query
+              placeholder: What should AIRI remember?
+            semantic: Semantic
+            title: Manual recall preview
+          review-queue:
+            description: Tracks retrieval feedback waiting for the Plast Mem review worker.
+            pending: '{count} pending'
+            status-description: Plast Mem exposes the pending count through health checks. Review actions need a service API before this panel can approve or edit items directly.
+            status-title: Action API not available yet
+            title: Review queue
           recent-memories:
             title: Recent memories
             refresh: Refresh
@@ -831,9 +920,14 @@ pages:
             actions:
               invalidate: Mark invalid
               restore: Restore
+              sources: Sources
             status:
               active: Active
               invalid: Invalid
+            sources-view:
+              empty: Source episodic memories are not in the loaded recent-memory window.
+              missing: '{count} source id(s) not loaded'
+              title: Source episodes
           facts:
             external:
               description: >-

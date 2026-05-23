@@ -7,7 +7,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { env } from 'node:process'
 
-import { boolean, number, object, string } from 'valibot'
+import { boolean, number, object, optional, string } from 'valibot'
 
 import {
   defaultElectronPlastMemConfig,
@@ -21,6 +21,10 @@ const plastMemConfigSchema = object({
   conversationId: string(),
   databaseUrl: string(),
   enabled: boolean(),
+  enableChatIngest: optional(boolean()),
+  enableChatRetrieve: optional(boolean()),
+  enableContextPreRetrieve: optional(boolean()),
+  enableRecentMemory: optional(boolean()),
   episodicLimit: number(),
   maxContextCharacters: number(),
   openaiApiKey: string(),
@@ -72,6 +76,10 @@ function normalizeConfig(
     conversationId: asString(payload.conversationId, fallback.conversationId),
     databaseUrl: asString(payload.databaseUrl, fallback.databaseUrl),
     enabled: asBoolean(payload.enabled, fallback.enabled),
+    enableChatIngest: asBoolean(payload.enableChatIngest, fallback.enableChatIngest),
+    enableChatRetrieve: asBoolean(payload.enableChatRetrieve, fallback.enableChatRetrieve),
+    enableContextPreRetrieve: asBoolean(payload.enableContextPreRetrieve, fallback.enableContextPreRetrieve),
+    enableRecentMemory: asBoolean(payload.enableRecentMemory, fallback.enableRecentMemory),
     episodicLimit: asPositiveInteger(payload.episodicLimit, fallback.episodicLimit),
     maxContextCharacters: asPositiveInteger(payload.maxContextCharacters, fallback.maxContextCharacters),
     openaiApiKey: asString(payload.openaiApiKey, fallback.openaiApiKey),

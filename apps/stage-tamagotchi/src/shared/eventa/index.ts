@@ -262,6 +262,10 @@ export interface ElectronPlastMemConfig {
   conversationId: string
   databaseUrl: string
   enabled: boolean
+  enableChatIngest: boolean
+  enableChatRetrieve: boolean
+  enableContextPreRetrieve: boolean
+  enableRecentMemory: boolean
   episodicLimit: number
   maxContextCharacters: number
   openaiApiKey: string
@@ -284,6 +288,10 @@ export const defaultElectronPlastMemConfig: ElectronPlastMemConfig = {
   conversationId: '',
   databaseUrl: 'postgres://plastmem:plastmem@localhost:5433/plastmem',
   enabled: false,
+  enableChatIngest: true,
+  enableChatRetrieve: true,
+  enableContextPreRetrieve: true,
+  enableRecentMemory: true,
   episodicLimit: 4,
   maxContextCharacters: 6000,
   openaiApiKey: '',
@@ -368,6 +376,7 @@ export const electronPlastMemRestartSidecar = defineInvokeEventa<ElectronPlastMe
 export type ElectronPlastMemContextDetail = 'auto' | 'none' | 'low' | 'high'
 export type ElectronPlastMemRecallStatus = 'idle' | 'recalled' | 'empty' | 'error'
 export type ElectronPlastMemIngestStatus = 'idle' | 'accepted' | 'rejected' | 'error'
+export type ElectronPlastMemContextSource = 'retrieve' | 'preRetrieve' | 'recent'
 
 export interface ElectronPlastMemRecallDiagnostics {
   at?: number
@@ -380,6 +389,10 @@ export interface ElectronPlastMemRecallDiagnostics {
   statusCode?: number
 }
 
+export interface ElectronPlastMemContextDiagnostics extends ElectronPlastMemRecallDiagnostics {
+  source: ElectronPlastMemContextSource
+}
+
 export interface ElectronPlastMemIngestDiagnostics {
   at?: number
   baseUrl?: string
@@ -390,6 +403,7 @@ export interface ElectronPlastMemIngestDiagnostics {
 }
 
 export interface ElectronPlastMemChatDiagnostics {
+  contexts?: ElectronPlastMemContextDiagnostics[]
   ingest: ElectronPlastMemIngestDiagnostics
   recall: ElectronPlastMemRecallDiagnostics
 }
@@ -545,8 +559,35 @@ export interface ElectronPlastMemSetSemanticMemoryInvalidResult {
   statusCode?: number
 }
 
+export interface ElectronPlastMemScoredSemanticMemory extends ElectronPlastMemSemanticMemory {
+  score: number
+}
+
+export interface ElectronPlastMemScoredEpisodicMemory extends ElectronPlastMemEpisodicMemory {
+  score: number
+}
+
+export interface ElectronPlastMemRetrieveMemoryRawPayload {
+  category?: string
+  detail?: ElectronPlastMemContextDetail
+  episodicLimit?: number
+  ownerId?: string
+  query: string
+  semanticLimit?: number
+}
+
+export interface ElectronPlastMemRetrieveMemoryRawResult {
+  baseUrl?: string
+  enabled: boolean
+  episodic: ElectronPlastMemScoredEpisodicMemory[]
+  error?: string
+  semantic: ElectronPlastMemScoredSemanticMemory[]
+  statusCode?: number
+}
+
 export const electronPlastMemHealth = defineInvokeEventa<ElectronPlastMemHealthResult, ElectronPlastMemHealthPayload>('eventa:invoke:electron:plast-mem:health')
 export const electronPlastMemRetrieveChatContext = defineInvokeEventa<ElectronPlastMemRetrieveChatContextResult, ElectronPlastMemRetrieveChatContextPayload>('eventa:invoke:electron:plast-mem:retrieve-chat-context')
+export const electronPlastMemRetrieveMemoryRaw = defineInvokeEventa<ElectronPlastMemRetrieveMemoryRawResult, ElectronPlastMemRetrieveMemoryRawPayload>('eventa:invoke:electron:plast-mem:retrieve-memory-raw')
 export const electronPlastMemContextPreRetrieve = defineInvokeEventa<ElectronPlastMemContextPreRetrieveResult, ElectronPlastMemContextPreRetrievePayload>('eventa:invoke:electron:plast-mem:context-pre-retrieve')
 export const electronPlastMemRecentMemory = defineInvokeEventa<ElectronPlastMemRecentMemoryResult, ElectronPlastMemRecentMemoryPayload>('eventa:invoke:electron:plast-mem:recent-memory')
 export const electronPlastMemRecentMemoryRaw = defineInvokeEventa<ElectronPlastMemRecentMemoryRawResult, ElectronPlastMemRecentMemoryRawPayload>('eventa:invoke:electron:plast-mem:recent-memory-raw')

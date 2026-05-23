@@ -621,6 +621,43 @@ pages:
               env: 环境变量兜底
               ui: UI 配置
             title: 手动连接
+            quick:
+              autostart: 自动启动
+              enabled: 桥接
+            test:
+              action: 测试
+              complete: 连接测试完成
+              description: 检查本地服务、数据库、会话、模型服务和 sidecar 状态。
+              title: 连接测试
+              details:
+                conversation: 尚未检查 Conversation UUID。
+                database: 数据库健康检查已响应。
+                models: 尚未检查模型服务配置。
+                service: 尚未检查服务状态。
+                waiting: 等待运行测试。
+              items:
+                conversation: 会话
+                database: 数据库
+                models: 模型
+                service: 服务
+                sidecar: Sidecar
+              status:
+                error: 异常
+                ok: 正常
+                unknown: 待检查
+            groups:
+              behavior:
+                description: 选择聊天记忆中哪些路径可以读取或写入 Plast Mem。
+                title: 聊天记忆行为
+              connection:
+                description: 配置桥接使用的本地服务、数据库、工作区身份和请求超时。
+                title: 连接
+              limits:
+                description: 调整召回哪些记忆，以及最多向聊天注入多少上下文。
+                title: 召回限制
+              models:
+                description: Plast Mem sidecar 使用的服务凭据、模型、token 预算和模型请求超时。
+                title: 模型服务
             fields:
               auto-start:
                 description: 允许 AIRI 启动时自动启动本地 Plast Mem sidecar。
@@ -637,6 +674,18 @@ pages:
               enabled:
                 description: 开启正式聊天的回复前召回和回复后捕获。
                 label: 启用 Plast Mem 桥
+              enable-context-pre-retrieve:
+                description: 在模型看到用户消息前注入语义事实。
+                label: 语义预召回
+              enable-chat-retrieve:
+                description: 每次回复前召回语义和情节记忆。
+                label: 完整回复前召回
+              enable-recent-memory:
+                description: 聊天记忆桥启动后注入一次最近的情节记忆。
+                label: 最近记忆注入
+              enable-chat-ingest:
+                description: 回复完成后把用户和助手消息写回 Plast Mem。
+                label: 回复后捕获
               episodic-limit:
                 description: 召回时请求的 episodic 记忆数量。
                 label: Episodic 召回数量
@@ -747,6 +796,16 @@ pages:
           chat-diagnostics:
             never: 从未
             title: 聊天桥诊断
+            contexts:
+              characters: '{characters} 字符'
+              empty: 还没有记录到注入的上下文。
+              query: '查询：{characters} 字符'
+              source:
+                preRetrieve: 语义预召回
+                recent: 最近记忆
+                retrieve: 完整召回
+              time: '时间：{time}'
+              title: 注入上下文来源
             recall:
               detail:
                 empty: 请求成功，但还没有匹配到 semantic 记忆。
@@ -774,6 +833,36 @@ pages:
                 rejected: 已拒绝
               time: '上次写入：{time}'
               title: 回复后捕获
+          manual-import:
+            accepted: 已导入 {count} 条消息
+            action: 导入
+            description: 把当前聊天中最新 {count} 条用户/助手消息写入 Plast Mem。
+            empty: 当前聊天里没有可导入的用户或助手消息。
+            error: 手动导入失败
+            limit:
+              description: 发送给 Plast Mem 的最近用户/助手消息数量。
+              label: 消息数量
+            rejected: Plast Mem 拒绝了本次导入。
+            saved-description: 后台分段会继续处理这些消息。
+            title: 手动导入最近聊天
+          recall-preview:
+            action: 预览
+            description: 对测试查询运行原始召回，但不会注入到聊天里。
+            empty-query: 请输入查询后再预览召回。
+            episodic: Episodic
+            error: 召回预览失败
+            query:
+              description: 用接近用户以后会问的表达。
+              label: 查询
+              placeholder: AIRI 应该想起什么？
+            semantic: Semantic
+            title: 手动召回预览
+          review-queue:
+            description: 显示等待 Plast Mem 复习 worker 处理的检索反馈。
+            pending: '{count} 待处理'
+            status-description: Plast Mem 目前只通过健康检查暴露待处理数量；要在这里直接批准或改写，还需要服务端提供操作 API。
+            status-title: 暂无操作接口
+            title: 记忆审核队列
           recent-memories:
             title: 最近记忆
             refresh: 刷新
@@ -802,9 +891,14 @@ pages:
             actions:
               invalidate: 标记失效
               restore: 恢复生效
+              sources: 来源
             status:
               active: 生效中
               invalid: 已失效
+            sources-view:
+              empty: 来源 episodic 记忆不在当前已加载的最近记忆窗口里。
+              missing: '{count} 个来源 id 未加载'
+              title: 来源片段
           facts:
             external:
               description: >-

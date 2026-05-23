@@ -14,8 +14,12 @@ const envKeys = [
   'AIRI_LOCAL_PLAST_MEM_DEV',
   'COMPUTER_USE_PLAST_MEM_ENABLED',
   'COMPUTER_USE_PLAST_MEM_BASE_URL',
+  'COMPUTER_USE_PLAST_MEM_CHAT_INGEST_ENABLED',
+  'COMPUTER_USE_PLAST_MEM_CHAT_RETRIEVE_ENABLED',
   'COMPUTER_USE_PLAST_MEM_CONVERSATION_ID',
+  'COMPUTER_USE_PLAST_MEM_CONTEXT_PRE_RETRIEVE_ENABLED',
   'COMPUTER_USE_PLAST_MEM_EPISODIC_LIMIT',
+  'COMPUTER_USE_PLAST_MEM_RECENT_MEMORY_ENABLED',
   'COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT',
   'COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS',
   'COMPUTER_USE_PLAST_MEM_TIMEOUT_MS',
@@ -177,6 +181,35 @@ describe('plast mem Electron service', () => {
     expect(result.enabled).toBe(false)
     expect(result.recalled).toBe(false)
     expect(result.contextBlock).toBe('')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('does not call retrieve_memory when pre-reply recall is disabled', async () => {
+    env.COMPUTER_USE_PLAST_MEM_CHAT_RETRIEVE_ENABLED = 'false'
+    const fetchMock = vi.fn<typeof fetch>()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await retrievePlastMemChatContext({ query: 'hello' })
+
+    expect(result.enabled).toBe(false)
+    expect(result.recalled).toBe(false)
+    expect(result.contextBlock).toBe('')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('does not call import_batch_messages when chat capture is disabled', async () => {
+    env.COMPUTER_USE_PLAST_MEM_CHAT_INGEST_ENABLED = 'false'
+    const fetchMock = vi.fn<typeof fetch>()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await ingestPlastMemChatMessages({
+      messages: [
+        { role: 'user', content: 'Do not persist this.', timestamp: 1760000004000 },
+      ],
+    })
+
+    expect(result.enabled).toBe(false)
+    expect(result.accepted).toBe(false)
     expect(fetchMock).not.toHaveBeenCalled()
   })
 

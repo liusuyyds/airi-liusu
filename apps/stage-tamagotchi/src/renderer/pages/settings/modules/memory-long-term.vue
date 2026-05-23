@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import type {
+  ChatHistoryItem,
+} from '@proj-airi/stage-ui/types/chat'
+
+import type {
+  ElectronPlastMemChatMessage,
   ElectronPlastMemConfig,
   ElectronPlastMemEpisodicMemory,
   ElectronPlastMemHealthResult,
+  ElectronPlastMemRetrieveMemoryRawResult,
   ElectronPlastMemRuntimeStatus,
   ElectronPlastMemSemanticMemory,
   ElectronPlastMemSidecarStatus,
@@ -10,7 +16,8 @@ import type {
 
 import { errorMessageFrom } from '@moeru/std'
 import { useElectronEventaInvoke } from '@proj-airi/electron-vueuse'
-import { Button, Callout, FieldCheckbox, FieldInput, Input, SelectTab } from '@proj-airi/ui'
+import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
+import { Button, Callout, FieldCheckbox, FieldInput, Input } from '@proj-airi/ui'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -21,8 +28,10 @@ import {
   electronPlastMemGetRuntimeStatus,
   electronPlastMemGetSidecarStatus,
   electronPlastMemHealth,
+  electronPlastMemIngestChatMessages,
   electronPlastMemRecentMemoryRaw,
   electronPlastMemRestartSidecar,
+  electronPlastMemRetrieveMemoryRaw,
   electronPlastMemSemanticMemoryRaw,
   electronPlastMemSetSemanticMemoryInvalid,
   electronPlastMemStartSidecar,
@@ -30,6 +39,7 @@ import {
 } from '../../../../shared/eventa'
 
 type BridgeStatusKind = 'checking' | 'disabled' | 'offline' | 'online'
+type ConnectionCheckKind = 'error' | 'ok' | 'unknown'
 type DetailPanelId = 'config' | 'runtime' | 'diagnostics' | 'semantic' | 'recent' | 'health' | 'about'
 
 const { t } = useI18n()
@@ -43,9 +53,12 @@ const invokeStartPlastMemSidecar = useElectronEventaInvoke(electronPlastMemStart
 const invokeStopPlastMemSidecar = useElectronEventaInvoke(electronPlastMemStopSidecar)
 const invokeRestartPlastMemSidecar = useElectronEventaInvoke(electronPlastMemRestartSidecar)
 const invokePlastMemHealth = useElectronEventaInvoke(electronPlastMemHealth)
+const invokeIngestChatMessages = useElectronEventaInvoke(electronPlastMemIngestChatMessages)
 const invokeRecentMemoryRaw = useElectronEventaInvoke(electronPlastMemRecentMemoryRaw)
+const invokeRetrieveMemoryRaw = useElectronEventaInvoke(electronPlastMemRetrieveMemoryRaw)
 const invokeSemanticMemoryRaw = useElectronEventaInvoke(electronPlastMemSemanticMemoryRaw)
 const invokeSetSemanticMemoryInvalid = useElectronEventaInvoke(electronPlastMemSetSemanticMemoryInvalid)
+const chatSessionStore = useChatSessionStore()
 
 const bridgeFacts = [
   {
@@ -70,6 +83,10 @@ const bridgeEnvVars = [
   'COMPUTER_USE_PLAST_MEM_BASE_URL',
   'COMPUTER_USE_PLAST_MEM_CONVERSATION_ID',
   'COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY',
+  'COMPUTER_USE_PLAST_MEM_CONTEXT_PRE_RETRIEVE_ENABLED',
+  'COMPUTER_USE_PLAST_MEM_CHAT_RETRIEVE_ENABLED',
+  'COMPUTER_USE_PLAST_MEM_RECENT_MEMORY_ENABLED',
+  'COMPUTER_USE_PLAST_MEM_CHAT_INGEST_ENABLED',
   'COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT',
   'COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS',
   'COMPUTER_USE_PLAST_MEM_TIMEOUT_MS',
@@ -87,6 +104,7 @@ const configError = ref('')
 const configSavedMessage = ref('')
 const isLoadingConfig = ref(false)
 const isSavingConfig = ref(false)
+const isTestingConnection = ref(false)
 const apiKeyVisible = ref(false)
 const status = ref<ElectronPlastMemRuntimeStatus>()
 const statusError = ref('')
@@ -108,6 +126,15 @@ const semanticMemoriesError = ref('')
 const isLoadingSemanticMemories = ref(false)
 const mutatingSemanticMemoryId = ref('')
 const includeInvalidSemanticMemories = ref(false)
+const manualImportMessageLimit = ref(20)
+const manualImportMessage = ref('')
+const manualImportError = ref('')
+const isManualImporting = ref(false)
+const previewQuery = ref('')
+const previewResult = ref<ElectronPlastMemRetrieveMemoryRawResult>()
+const previewError = ref('')
+const isPreviewingRecall = ref(false)
+const selectedSourceMemoryIds = ref<string[]>([])
 const activeDetailPanel = ref<DetailPanelId>('config')
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 
@@ -157,6 +184,7 @@ const checkedAt = computed(() => {
 
 const recallDiagnostics = computed(() => status.value?.chatDiagnostics?.recall ?? { status: 'idle' as const })
 const ingestDiagnostics = computed(() => status.value?.chatDiagnostics?.ingest ?? { status: 'idle' as const })
+const contextDiagnostics = computed(() => status.value?.chatDiagnostics?.contexts ?? [])
 const apiKeyInputType = computed(() => apiKeyVisible.value ? 'text' : 'password')
 const recallStatusBadgeClass = computed(() => chatAttemptBadgeClass(recallDiagnostics.value.status))
 const ingestStatusBadgeClass = computed(() => chatAttemptBadgeClass(ingestDiagnostics.value.status))
@@ -164,6 +192,13 @@ const recallStatusLabel = computed(() => tn(`chat-diagnostics.recall.status.${re
 const ingestStatusLabel = computed(() => tn(`chat-diagnostics.ingest.status.${ingestDiagnostics.value.status}`))
 const recallContextPreview = computed(() => recallDiagnostics.value.contextBlock?.trim() ?? '')
 const hasRecallContextPreview = computed(() => recallContextPreview.value.length > 0)
+const normalizedManualImportMessageLimit = computed(() => Math.max(1, Number(manualImportMessageLimit.value) || 20))
+const importableChatMessages = computed(() => chatSessionStore.messages
+  .map(toPlastMemChatMessage)
+  .filter((message): message is ElectronPlastMemChatMessage => Boolean(message))
+  .slice(-normalizedManualImportMessageLimit.value))
+const selectedSourceMemories = computed(() => recentMemories.value.filter(memory => selectedSourceMemoryIds.value.includes(memory.id)))
+const missingSourceMemoryIds = computed(() => selectedSourceMemoryIds.value.filter(id => !selectedSourceMemories.value.some(memory => memory.id === id)))
 const sidecarState = computed(() => sidecarStatus.value?.state ?? 'stopped')
 const sidecarStatusLabel = computed(() => {
   if (sidecarStatus.value?.external)
@@ -191,6 +226,41 @@ const healthCheckedAt = computed(() => health.value?.serverTime ? new Date(healt
 const healthServiceBadgeClass = computed(() => healthStatusBadgeClass(healthServiceOk.value ? true : health.value ? false : undefined))
 const healthDatabaseBadgeClass = computed(() => healthStatusBadgeClass(health.value?.databaseOk))
 const healthCounts = computed(() => health.value?.counts)
+const pendingReviewCount = computed(() => healthCounts.value?.pending_reviews ?? 0)
+const connectionChecks = computed<Array<{ detail: string, icon: string, kind: ConnectionCheckKind, label: string }>>(() => [
+  {
+    detail: status.value?.error ?? status.value?.baseUrl ?? tn('config.test.details.service'),
+    icon: 'i-solar:server-square-bold-duotone',
+    kind: status.value ? (status.value.reachable ? 'ok' : 'error') : 'unknown',
+    label: tn('config.test.items.service'),
+  },
+  {
+    detail: health.value?.databaseError ?? (health.value ? tn('config.test.details.database') : tn('config.test.details.waiting')),
+    icon: 'i-solar:database-bold-duotone',
+    kind: health.value ? (health.value.databaseOk ? 'ok' : 'error') : 'unknown',
+    label: tn('config.test.items.database'),
+  },
+  {
+    detail: health.value?.conversationId ?? status.value?.workspaceKey ?? tn('config.test.details.conversation'),
+    icon: 'i-solar:dialog-2-bold-duotone',
+    kind: status.value ? (status.value.conversationIdConfigured ? 'ok' : 'error') : 'unknown',
+    label: tn('config.test.items.conversation'),
+  },
+  {
+    detail: status.value?.openaiChatModel ?? status.value?.openaiEmbeddingModel ?? tn('config.test.details.models'),
+    icon: 'i-solar:cpu-bold-duotone',
+    kind: status.value
+      ? (status.value.openaiBaseUrlConfigured && status.value.openaiApiKeyConfigured && Boolean(status.value.openaiChatModel) && Boolean(status.value.openaiEmbeddingModel) ? 'ok' : 'error')
+      : 'unknown',
+    label: tn('config.test.items.models'),
+  },
+  {
+    detail: sidecarStatus.value?.lastError ?? sidecarStatusLabel.value,
+    icon: 'i-solar:restart-bold-duotone',
+    kind: sidecarStatus.value ? (sidecarStatus.value.external || sidecarStatus.value.state === 'running' ? 'ok' : 'error') : 'unknown',
+    label: tn('config.test.items.sidecar'),
+  },
+])
 const detailPanelOptions = computed<Array<{ icon: string, label: string, value: DetailPanelId }>>(() => [
   {
     icon: 'i-solar:tuning-square-bold-duotone',
@@ -277,6 +347,60 @@ function healthStatusBadgeClass(ok: boolean | undefined) {
   return 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300'
 }
 
+function connectionCheckBadgeClass(kind: ConnectionCheckKind) {
+  if (kind === 'ok')
+    return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+  if (kind === 'error')
+    return 'bg-red-500/15 text-red-700 dark:text-red-300'
+
+  return 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300'
+}
+
+function connectionCheckStatusLabel(kind: ConnectionCheckKind) {
+  return tn(`config.test.status.${kind}`)
+}
+
+function hasRecordShape(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function textFromUnknown(value: unknown): string {
+  if (typeof value === 'string')
+    return value
+  if (Array.isArray(value))
+    return value.map(textFromUnknown).filter(Boolean).join('\n')
+  if (!hasRecordShape(value))
+    return ''
+
+  if (typeof value.text === 'string')
+    return value.text
+  if (typeof value.content === 'string')
+    return value.content
+  if (Array.isArray(value.slices))
+    return textFromUnknown(value.slices)
+
+  return ''
+}
+
+function toPlastMemChatMessage(message: ChatHistoryItem): ElectronPlastMemChatMessage | undefined {
+  if (message.role !== 'user' && message.role !== 'assistant')
+    return undefined
+
+  const content = textFromUnknown(message).trim()
+  if (!content)
+    return undefined
+
+  const createdAt = hasRecordShape(message) && typeof message.createdAt === 'number'
+    ? message.createdAt
+    : undefined
+
+  return {
+    content,
+    role: message.role,
+    ...(createdAt ? { timestamp: createdAt } : {}),
+  }
+}
+
 function formatAttemptTime(value: number | undefined) {
   if (!value)
     return tn('chat-diagnostics.never')
@@ -324,6 +448,33 @@ async function saveConfig(refreshAfterSave: boolean) {
   }
   finally {
     isSavingConfig.value = false
+  }
+}
+
+async function testConnection(saveBeforeTest: boolean) {
+  if (isTestingConnection.value)
+    return
+
+  isTestingConnection.value = true
+  configError.value = ''
+  configSavedMessage.value = ''
+  try {
+    if (saveBeforeTest) {
+      const saved = await saveConfig(false)
+      if (!saved)
+        return
+    }
+
+    await Promise.all([
+      refreshStatus(),
+      refreshSidecarStatus(),
+      refreshHealth(),
+    ])
+    if (saveBeforeTest)
+      configSavedMessage.value = tn('config.test.complete')
+  }
+  finally {
+    isTestingConnection.value = false
   }
 }
 
@@ -505,6 +656,80 @@ async function refreshSemanticMemories() {
   }
 }
 
+async function importRecentChatMessages() {
+  if (isManualImporting.value)
+    return
+
+  isManualImporting.value = true
+  manualImportError.value = ''
+  manualImportMessage.value = ''
+  try {
+    const messages = importableChatMessages.value
+    if (messages.length === 0) {
+      manualImportError.value = tn('manual-import.empty')
+      return
+    }
+
+    const result = await invokeIngestChatMessages({ messages })
+    if (result.error) {
+      manualImportError.value = result.error
+      return
+    }
+
+    manualImportMessage.value = result.accepted
+      ? tn('manual-import.accepted', { count: messages.length })
+      : tn('manual-import.rejected')
+    await refreshStatus()
+    await refreshHealth()
+  }
+  catch (error) {
+    manualImportError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    isManualImporting.value = false
+  }
+}
+
+async function previewMemoryRecall() {
+  if (isPreviewingRecall.value)
+    return
+
+  isPreviewingRecall.value = true
+  previewError.value = ''
+  previewResult.value = undefined
+  try {
+    const query = previewQuery.value.trim()
+    if (!query) {
+      previewError.value = tn('recall-preview.empty-query')
+      return
+    }
+
+    const result = await invokeRetrieveMemoryRaw({
+      category: configDraft.value.category.trim() || undefined,
+      detail: 'low',
+      episodicLimit: configDraft.value.episodicLimit,
+      query,
+      semanticLimit: configDraft.value.semanticLimit,
+    })
+    previewResult.value = result
+    if (result.error)
+      previewError.value = result.error
+  }
+  catch (error) {
+    previewError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    isPreviewingRecall.value = false
+  }
+}
+
+async function showSemanticMemorySources(memory: ElectronPlastMemSemanticMemory) {
+  selectedSourceMemoryIds.value = memory.source_episodic_ids
+  activeDetailPanel.value = 'semantic'
+  if (recentMemories.value.length < 100)
+    await refreshRecentMemories()
+}
+
 async function setSemanticMemoryInvalid(memory: ElectronPlastMemSemanticMemory, invalid: boolean) {
   if (mutatingSemanticMemoryId.value)
     return
@@ -576,6 +801,10 @@ watch(includeInvalidSemanticMemories, () => {
   void refreshSemanticMemories()
 })
 
+function contextSourceLabel(source: string) {
+  return tn(`chat-diagnostics.contexts.source.${source}`)
+}
+
 onMounted(() => {
   void refreshConfig()
   void refreshStatus()
@@ -639,13 +868,67 @@ onBeforeUnmount(() => {
             {{ tn('panels.title') }}
           </h3>
         </div>
-        <SelectTab
-          v-model="activeDetailPanel"
-          :options="detailPanelOptions"
-          :class="['w-full']"
-          size="sm"
-          tab-space="compact"
-        />
+        <div
+          role="tablist"
+          :aria-label="tn('panels.title')"
+          :class="[
+            'flex',
+            'flex-wrap',
+            'gap-1.5',
+          ]"
+        >
+          <button
+            v-for="panel in detailPanelOptions"
+            :key="panel.value"
+            type="button"
+            role="tab"
+            :aria-selected="activeDetailPanel === panel.value"
+            :class="[
+              'min-h-8',
+              'max-w-full',
+              'inline-flex',
+              'items-center',
+              'justify-center',
+              'gap-1.5',
+              'rounded-md',
+              'border',
+              'px-2',
+              'py-1.5',
+              'text-[11px]',
+              'font-medium',
+              'transition-[background-color,border-color,color,box-shadow]',
+              'duration-200',
+              activeDetailPanel === panel.value
+                ? [
+                  'border-primary-400/60',
+                  'bg-primary-300/30',
+                  'text-primary-950',
+                  'shadow-sm',
+                  'dark:border-primary-400/40',
+                  'dark:bg-primary-400/20',
+                  'dark:text-primary-50',
+                ]
+                : [
+                  'border-neutral-200/70',
+                  'bg-neutral-100/70',
+                  'text-neutral-600',
+                  'hover:border-primary-300/50',
+                  'hover:bg-primary-300/15',
+                  'dark:border-neutral-800/70',
+                  'dark:bg-neutral-950/30',
+                  'dark:text-neutral-300',
+                  'dark:hover:border-primary-400/40',
+                  'dark:hover:bg-primary-400/15',
+                ],
+            ]"
+            @click="activeDetailPanel = panel.value"
+          >
+            <span :class="[panel.icon, 'size-3.5', 'shrink-0']" />
+            <span :class="['truncate']">
+              {{ panel.label }}
+            </span>
+          </button>
+        </div>
       </section>
 
       <section
@@ -690,142 +973,270 @@ onBeforeUnmount(() => {
           </span>
         </div>
 
-        <Callout theme="primary" :label="tn('config.notice.title')">
-          {{ tn('config.notice.description') }}
-        </Callout>
+        <div :class="['grid', 'grid-cols-1', 'gap-3', 'lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)]']">
+          <Callout theme="primary" :label="tn('config.notice.title')">
+            {{ tn('config.notice.description') }}
+          </Callout>
 
-        <div :class="['grid', 'grid-cols-1', 'gap-4', 'lg:grid-cols-2']">
-          <FieldCheckbox
-            v-model="configDraft.enabled"
-            :label="tn('config.fields.enabled.label')"
-            :description="tn('config.fields.enabled.description')"
-          />
-          <FieldCheckbox
-            v-model="configDraft.autoStart"
-            :label="tn('config.fields.auto-start.label')"
-            :description="tn('config.fields.auto-start.description')"
-          />
-          <FieldInput
-            v-model="configDraft.baseUrl"
-            :label="tn('config.fields.base-url.label')"
-            :description="tn('config.fields.base-url.description')"
-            placeholder="http://127.0.0.1:3000"
-          />
-          <FieldInput
-            v-model="configDraft.conversationId"
-            :label="tn('config.fields.conversation-id.label')"
-            :description="tn('config.fields.conversation-id.description')"
-            placeholder="c2cb0334-d2ed-4989-8659-7ead6b5f4d3c"
-          />
-          <FieldInput
-            v-model="configDraft.workspaceKey"
-            :label="tn('config.fields.workspace-key.label')"
-            :description="tn('config.fields.workspace-key.description')"
-            placeholder="airi-main"
-          />
-          <FieldInput
-            v-model="configDraft.category"
-            :label="tn('config.fields.category.label')"
-            :description="tn('config.fields.category.description')"
-            placeholder=""
-          />
-          <FieldInput
-            v-model="configDraft.databaseUrl"
-            :label="tn('config.fields.database-url.label')"
-            :description="tn('config.fields.database-url.description')"
-            placeholder="postgres://postgres:postgres@localhost:5433/nocturne"
-          />
-          <FieldInput
-            v-model="configDraft.openaiBaseUrl"
-            :label="tn('config.fields.openai-base-url.label')"
-            :description="tn('config.fields.openai-base-url.description')"
-            placeholder="https://api.siliconflow.cn/v1/"
-          />
+          <div
+            :class="[
+              'grid',
+              'grid-cols-2',
+              'gap-2',
+              'rounded-md',
+              'bg-neutral-100/70',
+              'p-3',
+              'dark:bg-neutral-950/30',
+            ]"
+          >
+            <div :class="['flex', 'items-center', 'gap-2']">
+              <div :class="['i-solar:power-bold-duotone', 'text-lg', configDraft.enabled ? 'text-emerald-500' : 'text-neutral-400']" />
+              <div :class="['min-w-0', 'flex', 'flex-col']">
+                <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
+                  {{ tn('config.quick.enabled') }}
+                </span>
+                <span :class="['truncate', 'text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                  {{ configDraft.enabled ? tn('runtime.status.online') : tn('runtime.status.disabled') }}
+                </span>
+              </div>
+            </div>
+            <div :class="['flex', 'items-center', 'gap-2']">
+              <div :class="['i-solar:restart-bold-duotone', 'text-lg', configDraft.autoStart ? 'text-sky-500' : 'text-neutral-400']" />
+              <div :class="['min-w-0', 'flex', 'flex-col']">
+                <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
+                  {{ tn('config.quick.autostart') }}
+                </span>
+                <span :class="['truncate', 'text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                  {{ configDraft.autoStart ? tn('health.status.ok') : tn('runtime.status.disabled') }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
 
-          <div :class="['max-w-full']">
-            <label :class="['flex', 'flex-col', 'gap-4']">
-              <div>
-                <div :class="['flex', 'items-center', 'gap-1', 'text-sm', 'font-medium']">
-                  {{ tn('config.fields.openai-api-key.label') }}
-                </div>
-                <div :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']" text-wrap>
-                  {{ tn('config.fields.openai-api-key.description') }}
+        <div :class="['grid', 'grid-cols-1', 'gap-4', 'xl:grid-cols-[minmax(0,1.05fr)_minmax(20rem,0.95fr)]']">
+          <div :class="['flex', 'flex-col', 'gap-4']">
+            <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
+              <div :class="['flex', 'items-start', 'gap-2']">
+                <div :class="['i-solar:plug-circle-bold-duotone', 'mt-0.5', 'text-lg', 'text-primary-500', 'dark:text-primary-300']" />
+                <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                  <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                    {{ tn('config.groups.connection.title') }}
+                  </h4>
+                  <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
+                    {{ tn('config.groups.connection.description') }}
+                  </p>
                 </div>
               </div>
-              <div :class="['flex', 'items-center', 'gap-2']">
-                <Input
-                  v-model="configDraft.openaiApiKey"
-                  :type="apiKeyInputType"
-                  placeholder="sk-..."
+
+              <div :class="['grid', 'grid-cols-1', 'gap-4', 'lg:grid-cols-2']">
+                <FieldCheckbox
+                  v-model="configDraft.enabled"
+                  :label="tn('config.fields.enabled.label')"
+                  :description="tn('config.fields.enabled.description')"
                 />
-                <Button
-                  type="button"
-                  variant="secondary-muted"
-                  size="sm"
-                  shape="square"
-                  :icon="apiKeyVisible ? 'i-solar:eye-closed-bold-duotone' : 'i-solar:eye-bold-duotone'"
-                  :aria-label="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
-                  :title="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
-                  @click="apiKeyVisible = !apiKeyVisible"
+                <FieldCheckbox
+                  v-model="configDraft.autoStart"
+                  :label="tn('config.fields.auto-start.label')"
+                  :description="tn('config.fields.auto-start.description')"
+                />
+                <FieldInput
+                  v-model="configDraft.baseUrl"
+                  :label="tn('config.fields.base-url.label')"
+                  :description="tn('config.fields.base-url.description')"
+                  placeholder="http://127.0.0.1:3000"
+                />
+                <FieldInput
+                  v-model="configDraft.databaseUrl"
+                  :label="tn('config.fields.database-url.label')"
+                  :description="tn('config.fields.database-url.description')"
+                  placeholder="postgres://postgres:postgres@localhost:5433/nocturne"
+                />
+                <FieldInput
+                  v-model="configDraft.conversationId"
+                  :label="tn('config.fields.conversation-id.label')"
+                  :description="tn('config.fields.conversation-id.description')"
+                  placeholder="c2cb0334-d2ed-4989-8659-7ead6b5f4d3c"
+                />
+                <FieldInput
+                  v-model="configDraft.workspaceKey"
+                  :label="tn('config.fields.workspace-key.label')"
+                  :description="tn('config.fields.workspace-key.description')"
+                  placeholder="airi-main"
+                />
+                <FieldInput
+                  v-model="configDraft.requestTimeoutMsec"
+                  type="number"
+                  :label="tn('config.fields.request-timeout-msec.label')"
+                  :description="tn('config.fields.request-timeout-msec.description')"
+                  placeholder="10000"
                 />
               </div>
-            </label>
+            </section>
+
+            <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
+              <div :class="['flex', 'items-start', 'gap-2']">
+                <div :class="['i-solar:cpu-bold-duotone', 'mt-0.5', 'text-lg', 'text-primary-500', 'dark:text-primary-300']" />
+                <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                  <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                    {{ tn('config.groups.models.title') }}
+                  </h4>
+                  <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
+                    {{ tn('config.groups.models.description') }}
+                  </p>
+                </div>
+              </div>
+
+              <div :class="['grid', 'grid-cols-1', 'gap-4', 'lg:grid-cols-2']">
+                <FieldInput
+                  v-model="configDraft.openaiBaseUrl"
+                  :label="tn('config.fields.openai-base-url.label')"
+                  :description="tn('config.fields.openai-base-url.description')"
+                  placeholder="https://api.siliconflow.cn/v1/"
+                />
+
+                <div :class="['max-w-full']">
+                  <label :class="['flex', 'flex-col', 'gap-4']">
+                    <div>
+                      <div :class="['flex', 'items-center', 'gap-1', 'text-sm', 'font-medium']">
+                        {{ tn('config.fields.openai-api-key.label') }}
+                      </div>
+                      <div :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']" text-wrap>
+                        {{ tn('config.fields.openai-api-key.description') }}
+                      </div>
+                    </div>
+                    <div :class="['flex', 'items-center', 'gap-2']">
+                      <Input
+                        v-model="configDraft.openaiApiKey"
+                        :type="apiKeyInputType"
+                        placeholder="sk-..."
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary-muted"
+                        size="sm"
+                        shape="square"
+                        :icon="apiKeyVisible ? 'i-solar:eye-closed-bold-duotone' : 'i-solar:eye-bold-duotone'"
+                        :aria-label="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
+                        :title="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
+                        @click="apiKeyVisible = !apiKeyVisible"
+                      />
+                    </div>
+                  </label>
+                </div>
+
+                <FieldInput
+                  v-model="configDraft.openaiChatModel"
+                  :label="tn('config.fields.openai-chat-model.label')"
+                  :description="tn('config.fields.openai-chat-model.description')"
+                  placeholder="Qwen/Qwen3.5-9B"
+                />
+                <FieldInput
+                  v-model="configDraft.openaiEmbeddingModel"
+                  :label="tn('config.fields.openai-embedding-model.label')"
+                  :description="tn('config.fields.openai-embedding-model.description')"
+                  placeholder="Qwen/Qwen3-Embedding-0.6B"
+                />
+                <FieldInput
+                  v-model="configDraft.openaiChatMaxTokens"
+                  type="number"
+                  :label="tn('config.fields.openai-chat-max-tokens.label')"
+                  :description="tn('config.fields.openai-chat-max-tokens.description')"
+                  placeholder="2048"
+                />
+                <FieldInput
+                  v-model="configDraft.openaiRequestTimeoutSeconds"
+                  type="number"
+                  :label="tn('config.fields.openai-request-timeout.label')"
+                  :description="tn('config.fields.openai-request-timeout.description')"
+                  placeholder="120"
+                />
+              </div>
+            </section>
           </div>
 
-          <FieldInput
-            v-model="configDraft.openaiChatModel"
-            :label="tn('config.fields.openai-chat-model.label')"
-            :description="tn('config.fields.openai-chat-model.description')"
-            placeholder="Qwen/Qwen3.5-9B"
-          />
-          <FieldInput
-            v-model="configDraft.openaiEmbeddingModel"
-            :label="tn('config.fields.openai-embedding-model.label')"
-            :description="tn('config.fields.openai-embedding-model.description')"
-            placeholder="Qwen/Qwen3-Embedding-0.6B"
-          />
-          <FieldInput
-            v-model="configDraft.openaiChatMaxTokens"
-            type="number"
-            :label="tn('config.fields.openai-chat-max-tokens.label')"
-            :description="tn('config.fields.openai-chat-max-tokens.description')"
-            placeholder="2048"
-          />
-          <FieldInput
-            v-model="configDraft.openaiRequestTimeoutSeconds"
-            type="number"
-            :label="tn('config.fields.openai-request-timeout.label')"
-            :description="tn('config.fields.openai-request-timeout.description')"
-            placeholder="120"
-          />
-          <FieldInput
-            v-model="configDraft.episodicLimit"
-            type="number"
-            :label="tn('config.fields.episodic-limit.label')"
-            :description="tn('config.fields.episodic-limit.description')"
-            placeholder="4"
-          />
-          <FieldInput
-            v-model="configDraft.semanticLimit"
-            type="number"
-            :label="tn('config.fields.semantic-limit.label')"
-            :description="tn('config.fields.semantic-limit.description')"
-            placeholder="8"
-          />
-          <FieldInput
-            v-model="configDraft.maxContextCharacters"
-            type="number"
-            :label="tn('config.fields.max-context-characters.label')"
-            :description="tn('config.fields.max-context-characters.description')"
-            placeholder="6000"
-          />
-          <FieldInput
-            v-model="configDraft.requestTimeoutMsec"
-            type="number"
-            :label="tn('config.fields.request-timeout-msec.label')"
-            :description="tn('config.fields.request-timeout-msec.description')"
-            placeholder="10000"
-          />
+          <div :class="['flex', 'flex-col', 'gap-4']">
+            <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
+              <div :class="['flex', 'items-start', 'gap-2']">
+                <div :class="['i-solar:chat-round-like-bold-duotone', 'mt-0.5', 'text-lg', 'text-primary-500', 'dark:text-primary-300']" />
+                <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                  <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                    {{ tn('config.groups.behavior.title') }}
+                  </h4>
+                  <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
+                    {{ tn('config.groups.behavior.description') }}
+                  </p>
+                </div>
+              </div>
+
+              <div :class="['grid', 'grid-cols-1', 'gap-3']">
+                <FieldCheckbox
+                  v-model="configDraft.enableContextPreRetrieve"
+                  :label="tn('config.fields.enable-context-pre-retrieve.label')"
+                  :description="tn('config.fields.enable-context-pre-retrieve.description')"
+                />
+                <FieldCheckbox
+                  v-model="configDraft.enableChatRetrieve"
+                  :label="tn('config.fields.enable-chat-retrieve.label')"
+                  :description="tn('config.fields.enable-chat-retrieve.description')"
+                />
+                <FieldCheckbox
+                  v-model="configDraft.enableRecentMemory"
+                  :label="tn('config.fields.enable-recent-memory.label')"
+                  :description="tn('config.fields.enable-recent-memory.description')"
+                />
+                <FieldCheckbox
+                  v-model="configDraft.enableChatIngest"
+                  :label="tn('config.fields.enable-chat-ingest.label')"
+                  :description="tn('config.fields.enable-chat-ingest.description')"
+                />
+              </div>
+            </section>
+
+            <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
+              <div :class="['flex', 'items-start', 'gap-2']">
+                <div :class="['i-solar:settings-minimalistic-bold-duotone', 'mt-0.5', 'text-lg', 'text-primary-500', 'dark:text-primary-300']" />
+                <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                  <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                    {{ tn('config.groups.limits.title') }}
+                  </h4>
+                  <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
+                    {{ tn('config.groups.limits.description') }}
+                  </p>
+                </div>
+              </div>
+
+              <div :class="['grid', 'grid-cols-1', 'gap-4', 'sm:grid-cols-2']">
+                <FieldInput
+                  v-model="configDraft.category"
+                  :label="tn('config.fields.category.label')"
+                  :description="tn('config.fields.category.description')"
+                  placeholder=""
+                />
+                <FieldInput
+                  v-model="configDraft.episodicLimit"
+                  type="number"
+                  :label="tn('config.fields.episodic-limit.label')"
+                  :description="tn('config.fields.episodic-limit.description')"
+                  placeholder="4"
+                />
+                <FieldInput
+                  v-model="configDraft.semanticLimit"
+                  type="number"
+                  :label="tn('config.fields.semantic-limit.label')"
+                  :description="tn('config.fields.semantic-limit.description')"
+                  placeholder="8"
+                />
+                <FieldInput
+                  v-model="configDraft.maxContextCharacters"
+                  type="number"
+                  :label="tn('config.fields.max-context-characters.label')"
+                  :description="tn('config.fields.max-context-characters.description')"
+                  placeholder="6000"
+                />
+              </div>
+            </section>
+          </div>
         </div>
 
         <Callout v-if="configError" theme="orange" :label="tn('config.error')">
@@ -847,9 +1258,9 @@ onBeforeUnmount(() => {
             @click="saveConfig(false)"
           />
           <Button
-            size="sm" :loading="isSavingConfig || isRefreshing"
+            size="sm" :loading="isTestingConnection || isSavingConfig || isRefreshing"
             icon="i-solar:plug-circle-bold-duotone" :label="tn('config.save-and-check')"
-            @click="saveConfig(true)"
+            @click="testConnection(true)"
           />
         </div>
       </section>
@@ -958,14 +1369,6 @@ onBeforeUnmount(() => {
 
         <div :class="['grid', 'grid-cols-1', 'gap-2', 'md:grid-cols-2']">
           <div :class="['min-w-0', 'flex', 'items-center', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'dark:bg-neutral-950/30']">
-            <div :class="['i-solar:server-square-bold-duotone', 'text-lg', 'text-neutral-500']" />
-            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
-              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.service-url') }}</span>
-              <span :class="['truncate', 'font-mono', 'text-xs', 'text-neutral-700', 'dark:text-neutral-200']">{{ status?.baseUrl ?? '-' }}</span>
-            </div>
-          </div>
-
-          <div :class="['min-w-0', 'flex', 'items-center', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'dark:bg-neutral-950/30']">
             <div :class="['i-solar:plug-circle-bold-duotone', 'text-lg', 'text-neutral-500']" />
             <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
               <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.mcp-server') }}</span>
@@ -974,40 +1377,10 @@ onBeforeUnmount(() => {
           </div>
 
           <div :class="['min-w-0', 'flex', 'items-center', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'dark:bg-neutral-950/30']">
-            <div :class="['i-solar:key-minimalistic-bold-duotone', 'text-lg', 'text-neutral-500']" />
-            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
-              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.conversation') }}</span>
-              <span :class="['text-xs', 'font-medium', 'text-neutral-700', 'dark:text-neutral-200']">
-                {{ status?.conversationIdConfigured ? tn('runtime.configured') : tn('runtime.missing') }}
-              </span>
-            </div>
-          </div>
-
-          <div :class="['min-w-0', 'flex', 'items-center', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'dark:bg-neutral-950/30']">
             <div :class="['i-solar:folder-with-files-bold-duotone', 'text-lg', 'text-neutral-500']" />
             <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
               <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.workspace') }}</span>
               <span :class="['truncate', 'font-mono', 'text-xs', 'text-neutral-700', 'dark:text-neutral-200']">{{ status?.workspaceKey ?? '-' }}</span>
-            </div>
-          </div>
-
-          <div :class="['min-w-0', 'flex', 'items-center', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'dark:bg-neutral-950/30']">
-            <div :class="['i-solar:database-bold-duotone', 'text-lg', 'text-neutral-500']" />
-            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
-              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.database') }}</span>
-              <span :class="['text-xs', 'font-medium', 'text-neutral-700', 'dark:text-neutral-200']">
-                {{ status?.databaseUrlConfigured ? tn('runtime.configured') : tn('runtime.missing') }}
-              </span>
-            </div>
-          </div>
-
-          <div :class="['min-w-0', 'flex', 'items-center', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'dark:bg-neutral-950/30']">
-            <div :class="['i-solar:cpu-bolt-bold-duotone', 'text-lg', 'text-neutral-500']" />
-            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
-              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.model') }}</span>
-              <span :class="['truncate', 'font-mono', 'text-xs', 'text-neutral-700', 'dark:text-neutral-200']">
-                {{ status?.openaiChatModel || status?.openaiEmbeddingModel || '-' }}
-              </span>
             </div>
           </div>
         </div>
@@ -1021,6 +1394,61 @@ onBeforeUnmount(() => {
         <Callout v-else-if="status?.enabled && !status.conversationIdConfigured" theme="orange" :label="tn('runtime.conversation-missing-title')">
           {{ tn('runtime.conversation-missing') }}
         </Callout>
+
+        <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
+          <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-3']">
+            <div :class="['flex', 'items-start', 'gap-2']">
+              <div :class="['i-solar:shield-check-bold-duotone', 'mt-0.5', 'text-lg', 'text-primary-500', 'dark:text-primary-300']" />
+              <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                  {{ tn('config.test.title') }}
+                </h4>
+                <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
+                  {{ tn('config.test.description') }}
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              :loading="isTestingConnection"
+              icon="i-solar:play-circle-bold-duotone"
+              :label="tn('config.test.action')"
+              @click="testConnection(false)"
+            />
+          </div>
+
+          <div :class="['grid', 'grid-cols-1', 'gap-2', 'md:grid-cols-2', 'xl:grid-cols-5']">
+            <div
+              v-for="check in connectionChecks"
+              :key="check.label"
+              :class="[
+                'min-w-0',
+                'flex',
+                'flex-col',
+                'gap-2',
+                'rounded-md',
+                'bg-white/70',
+                'p-2.5',
+                'dark:bg-neutral-900/70',
+              ]"
+            >
+              <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                <div :class="['min-w-0', 'flex', 'items-center', 'gap-2']">
+                  <div :class="[check.icon, 'shrink-0', 'text-base', 'text-neutral-500']" />
+                  <span :class="['truncate', 'text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                    {{ check.label }}
+                  </span>
+                </div>
+                <span :class="['shrink-0', 'rounded-full', 'px-2', 'py-0.5', 'text-[10px]', 'font-medium', connectionCheckBadgeClass(check.kind)]">
+                  {{ connectionCheckStatusLabel(check.kind) }}
+                </span>
+              </div>
+              <p :class="['line-clamp-2', 'break-words', 'text-[11px]', 'text-neutral-500', 'leading-4', 'dark:text-neutral-400']">
+                {{ check.detail }}
+              </p>
+            </div>
+          </div>
+        </section>
 
         <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-2']">
           <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
@@ -1114,6 +1542,28 @@ onBeforeUnmount(() => {
         <Callout v-if="healthError" theme="orange" :label="tn('health.error')">
           {{ healthError }}
         </Callout>
+
+        <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
+          <div :class="['flex', 'items-start', 'justify-between', 'gap-3']">
+            <div :class="['flex', 'items-start', 'gap-2']">
+              <div :class="['i-solar:checklist-minimalistic-bold-duotone', 'mt-0.5', 'text-lg', 'text-neutral-500']" />
+              <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                  {{ tn('review-queue.title') }}
+                </h4>
+                <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
+                  {{ tn('review-queue.description') }}
+                </p>
+              </div>
+            </div>
+            <span :class="['rounded-full', 'px-2', 'py-0.5', 'text-xs', 'font-medium', pendingReviewCount > 0 ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300']">
+              {{ tn('review-queue.pending', { count: pendingReviewCount }) }}
+            </span>
+          </div>
+          <Callout theme="primary" :label="tn('review-queue.status-title')">
+            {{ tn('review-queue.status-description') }}
+          </Callout>
+        </section>
       </section>
 
       <section
@@ -1189,6 +1639,169 @@ onBeforeUnmount(() => {
               </p>
             </div>
           </div>
+        </div>
+
+        <div :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
+          <div :class="['flex', 'items-center', 'justify-between', 'gap-3']">
+            <div :class="['flex', 'items-center', 'gap-2']">
+              <div :class="['i-solar:layers-minimalistic-bold-duotone', 'text-lg', 'text-neutral-500']" />
+              <span :class="['text-sm', 'font-medium', 'text-neutral-700', 'dark:text-neutral-200']">
+                {{ tn('chat-diagnostics.contexts.title') }}
+              </span>
+            </div>
+            <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+              {{ formatCount(contextDiagnostics.length) }}
+            </span>
+          </div>
+
+          <div v-if="contextDiagnostics.length === 0" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
+            {{ tn('chat-diagnostics.contexts.empty') }}
+          </div>
+
+          <div v-else :class="['grid', 'grid-cols-1', 'gap-2', 'xl:grid-cols-3']">
+            <div
+              v-for="context in contextDiagnostics"
+              :key="context.source"
+              :class="['min-w-0', 'flex', 'flex-col', 'gap-2', 'rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']"
+            >
+              <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                <span :class="['text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                  {{ contextSourceLabel(context.source) }}
+                </span>
+                <span :class="['rounded-full', 'px-2', 'py-0.5', 'text-[10px]', 'font-medium', chatAttemptBadgeClass(context.status)]">
+                  {{ tn(`chat-diagnostics.recall.status.${context.status}`) }}
+                </span>
+              </div>
+
+              <div :class="['flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                <span>{{ tn('chat-diagnostics.contexts.time', { time: formatAttemptTime(context.at) }) }}</span>
+                <span>{{ tn('chat-diagnostics.contexts.characters', { characters: context.contextCharacters ?? 0 }) }}</span>
+                <span v-if="context.queryCharacters != null">{{ tn('chat-diagnostics.contexts.query', { characters: context.queryCharacters }) }}</span>
+              </div>
+
+              <p v-if="context.error" :class="['break-words', 'text-xs', 'text-red-600', 'leading-5', 'dark:text-red-300']">
+                {{ context.error }}
+              </p>
+
+              <pre
+                v-if="context.contextBlock?.trim()"
+                :class="['max-h-36', 'overflow-auto', 'whitespace-pre-wrap', 'break-words', 'rounded-md', 'bg-neutral-100/70', 'p-2', 'font-mono', 'text-[11px]', 'text-neutral-600', 'leading-4', 'dark:bg-neutral-950/50', 'dark:text-neutral-300']"
+              >{{ context.contextBlock.trim() }}</pre>
+            </div>
+          </div>
+        </div>
+
+        <div :class="['grid', 'grid-cols-1', 'gap-3', 'xl:grid-cols-2']">
+          <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
+            <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-3']">
+              <div :class="['flex', 'items-start', 'gap-2']">
+                <div :class="['i-solar:import-bold-duotone', 'mt-0.5', 'text-lg', 'text-neutral-500']" />
+                <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                  <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                    {{ tn('manual-import.title') }}
+                  </h4>
+                  <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
+                    {{ tn('manual-import.description', { count: importableChatMessages.length }) }}
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                :loading="isManualImporting"
+                icon="i-solar:upload-square-bold-duotone"
+                :label="tn('manual-import.action')"
+                @click="importRecentChatMessages"
+              />
+            </div>
+
+            <FieldInput
+              v-model="manualImportMessageLimit"
+              type="number"
+              :label="tn('manual-import.limit.label')"
+              :description="tn('manual-import.limit.description')"
+              placeholder="20"
+            />
+            <Callout v-if="manualImportError" theme="orange" :label="tn('manual-import.error')">
+              {{ manualImportError }}
+            </Callout>
+            <Callout v-else-if="manualImportMessage" theme="lime" :label="manualImportMessage">
+              {{ tn('manual-import.saved-description') }}
+            </Callout>
+          </section>
+
+          <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
+            <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-3']">
+              <div :class="['flex', 'items-start', 'gap-2']">
+                <div :class="['i-solar:magnifer-bold-duotone', 'mt-0.5', 'text-lg', 'text-neutral-500']" />
+                <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                  <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                    {{ tn('recall-preview.title') }}
+                  </h4>
+                  <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
+                    {{ tn('recall-preview.description') }}
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                :loading="isPreviewingRecall"
+                icon="i-solar:eye-bold-duotone"
+                :label="tn('recall-preview.action')"
+                @click="previewMemoryRecall"
+              />
+            </div>
+
+            <FieldInput
+              v-model="previewQuery"
+              :label="tn('recall-preview.query.label')"
+              :description="tn('recall-preview.query.description')"
+              :placeholder="tn('recall-preview.query.placeholder')"
+            />
+            <Callout v-if="previewError" theme="orange" :label="tn('recall-preview.error')">
+              {{ previewError }}
+            </Callout>
+            <div
+              v-if="previewResult"
+              :class="['grid', 'grid-cols-2', 'gap-2']"
+            >
+              <div :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']">
+                <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">{{ tn('recall-preview.semantic') }}</span>
+                <span :class="['block', 'font-mono', 'text-lg', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ formatCount(previewResult.semantic.length) }}</span>
+              </div>
+              <div :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']">
+                <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">{{ tn('recall-preview.episodic') }}</span>
+                <span :class="['block', 'font-mono', 'text-lg', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ formatCount(previewResult.episodic.length) }}</span>
+              </div>
+            </div>
+            <div v-if="previewResult" :class="['flex', 'flex-col', 'gap-2', 'max-h-72', 'overflow-y-auto']">
+              <div
+                v-for="memory in previewResult.semantic"
+                :key="`semantic-${memory.id}`"
+                :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']"
+              >
+                <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                  <span :class="['text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ memory.category || tn('semantic-memories.uncategorized') }}</span>
+                  <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">{{ memory.score.toFixed(4) }}</span>
+                </div>
+                <p :class="['mt-1', 'line-clamp-3', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
+                  {{ memory.fact }}
+                </p>
+              </div>
+              <div
+                v-for="memory in previewResult.episodic"
+                :key="`episodic-${memory.id}`"
+                :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']"
+              >
+                <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                  <span :class="['text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ memory.title || tn('recent-memories.untitled') }}</span>
+                  <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">{{ memory.score.toFixed(4) }}</span>
+                </div>
+                <p :class="['mt-1', 'line-clamp-3', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
+                  {{ memory.content }}
+                </p>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -1362,7 +1975,15 @@ onBeforeUnmount(() => {
               <span>{{ tn('semantic-memories.sources', { count: memory.source_episodic_ids.length }) }}</span>
             </div>
 
-            <div :class="['flex', 'justify-end']">
+            <div :class="['flex', 'flex-wrap', 'justify-end', 'gap-2']">
+              <Button
+                variant="secondary"
+                size="sm"
+                icon="i-solar:link-round-angle-bold-duotone"
+                :disabled="memory.source_episodic_ids.length === 0"
+                :label="tn('semantic-memories.actions.sources')"
+                @click="showSemanticMemorySources(memory)"
+              />
               <Button
                 :variant="memory.invalid_at ? 'secondary' : 'caution'"
                 size="sm"
@@ -1374,6 +1995,44 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
+
+        <section
+          v-if="selectedSourceMemoryIds.length > 0"
+          :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']"
+        >
+          <div :class="['flex', 'items-center', 'justify-between', 'gap-3']">
+            <div :class="['flex', 'items-center', 'gap-2']">
+              <div :class="['i-solar:link-round-angle-bold-duotone', 'text-lg', 'text-neutral-500']" />
+              <span :class="['text-sm', 'font-medium', 'text-neutral-700', 'dark:text-neutral-200']">
+                {{ tn('semantic-memories.sources-view.title') }}
+              </span>
+            </div>
+            <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+              {{ formatCount(selectedSourceMemoryIds.length) }}
+            </span>
+          </div>
+          <div v-if="selectedSourceMemories.length === 0" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
+            {{ tn('semantic-memories.sources-view.empty') }}
+          </div>
+          <div v-else :class="['flex', 'flex-col', 'gap-2', 'max-h-64', 'overflow-y-auto']">
+            <div
+              v-for="memory in selectedSourceMemories"
+              :key="memory.id"
+              :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']"
+            >
+              <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                <span :class="['text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ memory.title || tn('recent-memories.untitled') }}</span>
+                <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">{{ memory.id.slice(0, 8) }}</span>
+              </div>
+              <p :class="['mt-1', 'whitespace-pre-wrap', 'break-words', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
+                {{ memory.content }}
+              </p>
+            </div>
+          </div>
+          <div v-if="missingSourceMemoryIds.length > 0" :class="['text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+            {{ tn('semantic-memories.sources-view.missing', { count: missingSourceMemoryIds.length }) }}
+          </div>
+        </section>
       </section>
 
       <section
