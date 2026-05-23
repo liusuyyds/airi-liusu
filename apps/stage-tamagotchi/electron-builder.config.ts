@@ -5,7 +5,8 @@ import type { Configuration } from 'electron-builder'
 import process from 'node:process'
 
 import { execFileSync, execSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -17,6 +18,8 @@ const plastMemDir = resolve(repoRoot, 'services', 'plast-mem')
 const plastMemReleaseDir = resolve(plastMemDir, 'target', 'release')
 const computerUseMcpDir = resolve(repoRoot, 'services', 'computer-use-mcp')
 const computerUseMcpDistDir = resolve(computerUseMcpDir, 'dist')
+const computerUseMcpDistNodeModulesDir = resolve(computerUseMcpDistDir, 'node_modules')
+const requireFromConfig = createRequire(import.meta.url)
 
 function hasXcode26OrAbove() {
   if (!isMacOS)
@@ -60,6 +63,33 @@ function plastMemBinaryName(electronPlatformName: string) {
   return electronPlatformName === 'win32' ? 'plastmem.exe' : 'plastmem'
 }
 
+function resolveComputerUseRuntimePackageDir(packageName: string) {
+  const manifestPath = requireFromConfig.resolve(`${packageName}/package.json`, {
+    paths: [computerUseMcpDir],
+  })
+  return dirname(manifestPath)
+}
+
+function copyComputerUseRuntimePackage(packageName: string) {
+  const sourceDir = resolveComputerUseRuntimePackageDir(packageName)
+  const targetDir = resolve(computerUseMcpDistNodeModulesDir, packageName)
+
+  rmSync(targetDir, { recursive: true, force: true })
+  mkdirSync(dirname(targetDir), { recursive: true })
+  cpSync(sourceDir, targetDir, { recursive: true })
+
+  if (!existsSync(resolve(targetDir, 'package.json'))) {
+    throw new Error(`Failed to stage ${packageName} into ${targetDir}.`)
+  }
+}
+
+function prepareComputerUseRuntimeDependencies() {
+  // NOTICE: The packaged MCP process is copied into app resources and launched from there.
+  // Native runtime dependencies such as node-pty therefore need a real node_modules copy
+  // inside dist/, otherwise require('node-pty') cannot resolve after installation.
+  copyComputerUseRuntimePackage('node-pty')
+}
+
 function buildComputerUseMcpBundle() {
   if ((process.env.AIRI_SKIP_COMPUTER_USE_MCP_BUILD ?? '').trim() === '1') {
     console.warn('[electron-builder/config] Skipping computer-use MCP build because AIRI_SKIP_COMPUTER_USE_MCP_BUILD=1.')
@@ -82,6 +112,8 @@ function buildComputerUseMcpBundle() {
   if (!existsSync(runnerPath)) {
     throw new Error(`computer-use MCP runner was not produced at ${runnerPath}.`)
   }
+
+  prepareComputerUseRuntimeDependencies()
 }
 
 function buildPlastMemSidecarBinary(electronPlatformName: string) {

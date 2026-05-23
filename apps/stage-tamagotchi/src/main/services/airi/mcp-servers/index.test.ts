@@ -98,12 +98,16 @@ describe('createMcpStdioManager', () => {
     const tempRoot = await mkdtemp(join(tmpdir(), 'airi-packaged-computer-use-mcp-'))
     const userDataDir = join(tempRoot, 'user-data')
     const runnerPath = join(tempRoot, 'resources', 'computer-use-mcp', 'bin', 'run.mjs')
+    let capturedServerConfig: { cwd?: string, env?: Record<string, string>, args?: string[] } | undefined
     await mkdir(join(tempRoot, 'resources', 'computer-use-mcp', 'bin'), { recursive: true })
     await mkdir(userDataDir, { recursive: true })
     await writeFile(runnerPath, 'export {}\n')
 
     process.env.AIRI_COMPUTER_USE_MCP_RUNNER = runnerPath
     appMock.getPath.mockReturnValue(userDataDir)
+    clientMocks.connect.mockImplementationOnce(async (transport: { server: typeof capturedServerConfig }) => {
+      capturedServerConfig = transport.server
+    })
 
     const { createMcpStdioManager } = await import('./index')
     const manager = createMcpStdioManager()
@@ -114,5 +118,8 @@ describe('createMcpStdioManager', () => {
     expect(status?.state).toBe('running')
     expect(status?.command).toBe(process.execPath)
     expect(status?.args).toEqual([runnerPath])
+    expect(capturedServerConfig?.cwd).toBe(join(tempRoot, 'resources', 'computer-use-mcp'))
+    expect(capturedServerConfig?.env?.COMPUTER_USE_SESSION_ROOT).toBe(join(userDataDir, 'computer-use-mcp'))
+    expect(capturedServerConfig?.env?.ELECTRON_RUN_AS_NODE).toBe('1')
   })
 })

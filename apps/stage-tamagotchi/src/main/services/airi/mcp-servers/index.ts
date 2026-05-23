@@ -182,8 +182,14 @@ async function resolvePackagedComputerUseMcpRunner() {
 }
 
 function createPackagedComputerUseEnv() {
+  const sessionRoot = env.COMPUTER_USE_SESSION_ROOT?.trim() || join(app.getPath('userData'), 'computer-use-mcp')
+
   return {
     ...collectLocalDevComputerUseEnv(),
+    // NOTICE: The packaged MCP service runs from app resources, which is often read-only
+    // after installation. Pin the session root into userData so screenshots, audit logs,
+    // and Chrome profiles are created in a writable location.
+    COMPUTER_USE_SESSION_ROOT: sessionRoot,
     ELECTRON_RUN_AS_NODE: '1',
   }
 }
