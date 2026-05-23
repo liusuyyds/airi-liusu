@@ -318,6 +318,31 @@ export interface ElectronPlastMemRuntimeStatus {
   workspaceKey?: string
 }
 
+export interface ElectronPlastMemHealthCounts {
+  active_semantic_memories: number
+  conversation_messages: number
+  episode_spans: number
+  episodic_memories: number
+  pending_reviews: number
+  semantic_memories: number
+}
+
+export interface ElectronPlastMemHealthPayload {
+  ownerId?: string
+}
+
+export interface ElectronPlastMemHealthResult {
+  baseUrl?: string
+  conversationId?: string
+  counts?: ElectronPlastMemHealthCounts
+  databaseError?: string
+  databaseOk: boolean
+  enabled: boolean
+  error?: string
+  serverTime?: string
+  statusCode?: number
+}
+
 export type ElectronPlastMemSidecarState = 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
 
 export interface ElectronPlastMemSidecarStatus {
@@ -347,6 +372,7 @@ export type ElectronPlastMemIngestStatus = 'idle' | 'accepted' | 'rejected' | 'e
 export interface ElectronPlastMemRecallDiagnostics {
   at?: number
   baseUrl?: string
+  contextBlock?: string
   contextCharacters?: number
   error?: string
   queryCharacters?: number
@@ -479,10 +505,53 @@ export interface ElectronPlastMemRecentMemoryRawResult {
   statusCode?: number
 }
 
+export interface ElectronPlastMemSemanticMemory {
+  id: string
+  conversation_id: string
+  category: string
+  fact: string
+  source_episodic_ids: string[]
+  valid_at: string
+  invalid_at?: string | null
+  created_at: string
+}
+
+export interface ElectronPlastMemSemanticMemoryRawPayload {
+  category?: string
+  includeInvalid?: boolean
+  limit?: number
+  ownerId?: string
+}
+
+export interface ElectronPlastMemSemanticMemoryRawResult {
+  baseUrl?: string
+  enabled: boolean
+  error?: string
+  memories: ElectronPlastMemSemanticMemory[]
+  statusCode?: number
+}
+
+export interface ElectronPlastMemSetSemanticMemoryInvalidPayload {
+  invalid: boolean
+  memoryId: string
+  ownerId?: string
+}
+
+export interface ElectronPlastMemSetSemanticMemoryInvalidResult {
+  baseUrl?: string
+  enabled: boolean
+  error?: string
+  memory?: ElectronPlastMemSemanticMemory
+  statusCode?: number
+}
+
+export const electronPlastMemHealth = defineInvokeEventa<ElectronPlastMemHealthResult, ElectronPlastMemHealthPayload>('eventa:invoke:electron:plast-mem:health')
 export const electronPlastMemRetrieveChatContext = defineInvokeEventa<ElectronPlastMemRetrieveChatContextResult, ElectronPlastMemRetrieveChatContextPayload>('eventa:invoke:electron:plast-mem:retrieve-chat-context')
 export const electronPlastMemContextPreRetrieve = defineInvokeEventa<ElectronPlastMemContextPreRetrieveResult, ElectronPlastMemContextPreRetrievePayload>('eventa:invoke:electron:plast-mem:context-pre-retrieve')
 export const electronPlastMemRecentMemory = defineInvokeEventa<ElectronPlastMemRecentMemoryResult, ElectronPlastMemRecentMemoryPayload>('eventa:invoke:electron:plast-mem:recent-memory')
 export const electronPlastMemRecentMemoryRaw = defineInvokeEventa<ElectronPlastMemRecentMemoryRawResult, ElectronPlastMemRecentMemoryRawPayload>('eventa:invoke:electron:plast-mem:recent-memory-raw')
+export const electronPlastMemSemanticMemoryRaw = defineInvokeEventa<ElectronPlastMemSemanticMemoryRawResult, ElectronPlastMemSemanticMemoryRawPayload>('eventa:invoke:electron:plast-mem:semantic-memory-raw')
+export const electronPlastMemSetSemanticMemoryInvalid = defineInvokeEventa<ElectronPlastMemSetSemanticMemoryInvalidResult, ElectronPlastMemSetSemanticMemoryInvalidPayload>('eventa:invoke:electron:plast-mem:semantic-memory:set-invalid')
 export const electronPlastMemIngestChatMessages = defineInvokeEventa<ElectronPlastMemIngestChatMessagesResult, ElectronPlastMemIngestChatMessagesPayload>('eventa:invoke:electron:plast-mem:ingest-chat-messages')
 export const electronPlastMemReportChatBridgeTrace = defineInvokeEventa<void, ElectronPlastMemChatBridgeTracePayload>('eventa:invoke:electron:plast-mem:report-chat-bridge-trace')
 export const electronPlastMemAcquireChatBridge = defineInvokeEventa<ElectronPlastMemChatBridgeLeaseResult, ElectronPlastMemChatBridgeLeasePayload>('eventa:invoke:electron:plast-mem:acquire-chat-bridge')

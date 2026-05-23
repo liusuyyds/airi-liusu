@@ -8,29 +8,36 @@ use crate::utils::AppState;
 mod add_message;
 #[cfg(debug_assertions)]
 mod benchmark;
+mod health;
 mod recent_memory;
 mod retrieve_memory;
+mod semantic_memory;
 
 pub use add_message::{
   IngestMessageResult, InputConversationMessage, InputConversationMessages, InputMessage,
 };
 #[cfg(debug_assertions)]
 pub use benchmark::BenchmarkJobStatus;
+pub use health::{HealthCheck, HealthCheckResult, HealthCounts};
 pub use recent_memory::RecentMemory;
 pub use retrieve_memory::{
   ContextPreRetrieve, EpisodicMemoryResult, RetrieveMemory, RetrieveMemoryRawResult,
   SemanticMemoryResult,
 };
+pub use semantic_memory::{SemanticMemoryList, SemanticMemorySetInvalid};
 
 pub fn app() -> Router<AppState> {
   let router = OpenApiRouter::with_openapi(ApiDoc::openapi())
     .routes(routes!(add_message::add_message))
     .routes(routes!(add_message::import_batch_messages))
+    .routes(routes!(health::health))
     .routes(routes!(recent_memory::recent_memory))
     .routes(routes!(recent_memory::recent_memory_raw))
     .routes(routes!(retrieve_memory::retrieve_memory))
     .routes(routes!(retrieve_memory::retrieve_memory_raw))
-    .routes(routes!(retrieve_memory::context_pre_retrieve));
+    .routes(routes!(retrieve_memory::context_pre_retrieve))
+    .routes(routes!(semantic_memory::semantic_memory_raw))
+    .routes(routes!(semantic_memory::semantic_memory_set_invalid));
 
   #[cfg(debug_assertions)]
   let router = router.routes(routes!(benchmark::benchmark_job_status));
@@ -56,8 +63,13 @@ pub fn app() -> Router<AppState> {
     InputConversationMessage,
     InputConversationMessages,
     IngestMessageResult,
+    HealthCheck,
+    HealthCheckResult,
+    HealthCounts,
     BenchmarkJobStatus,
     RecentMemory,
+    SemanticMemoryList,
+    SemanticMemorySetInvalid,
     RetrieveMemory,
     ContextPreRetrieve,
     RetrieveMemoryRawResult,
@@ -81,7 +93,12 @@ pub struct ApiDoc;
     InputConversationMessage,
     InputConversationMessages,
     IngestMessageResult,
+    HealthCheck,
+    HealthCheckResult,
+    HealthCounts,
     RecentMemory,
+    SemanticMemoryList,
+    SemanticMemorySetInvalid,
     RetrieveMemory,
     ContextPreRetrieve,
     RetrieveMemoryRawResult,

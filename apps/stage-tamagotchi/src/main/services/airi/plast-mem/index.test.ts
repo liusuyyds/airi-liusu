@@ -3,8 +3,11 @@ import { env } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  checkPlastMemHealth,
   ingestPlastMemChatMessages,
   retrievePlastMemChatContext,
+  retrievePlastMemSemanticMemoryRaw,
+  setPlastMemSemanticMemoryInvalid,
 } from './index'
 
 const envKeys = [
@@ -175,5 +178,112 @@ describe('plast mem Electron service', () => {
     expect(result.recalled).toBe(false)
     expect(result.contextBlock).toBe('')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('checks Plast Mem sidecar and database health', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({
+        database_ok: true,
+        server_time: '2026-05-22T09:00:00Z',
+        conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+        counts: {
+          conversation_messages: 4,
+          episode_spans: 2,
+          episodic_memories: 1,
+          semantic_memories: 3,
+          active_semantic_memories: 2,
+          pending_reviews: 0,
+        },
+      }), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await checkPlastMemHealth()
+
+    expect(result.databaseOk).toBe(true)
+    expect(result.enabled).toBe(true)
+    expect(result.serverTime).toBe('2026-05-22T09:00:00Z')
+    expect(result.counts?.semantic_memories).toBe(3)
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [input, init] = fetchMock.mock.calls[0]!
+    expect(input).toBe('http://127.0.0.1:3000/api/v0/health')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+    })
+  })
+
+  it('lists semantic memories through semantic_memory raw endpoint', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify([
+        {
+          id: 'd0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+          conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+          category: 'preference',
+          fact: 'The user prefers concise answers.',
+          source_episodic_ids: ['2f72c8fb-7a8c-4285-90a9-85f32ef2db65'],
+          valid_at: '2026-05-22T09:00:00Z',
+          invalid_at: null,
+          created_at: '2026-05-22T09:00:01Z',
+        },
+      ]), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await retrievePlastMemSemanticMemoryRaw({
+      category: 'preference',
+      includeInvalid: true,
+      limit: 2,
+    })
+
+    expect(result.enabled).toBe(true)
+    expect(result.memories).toHaveLength(1)
+    expect(result.memories[0]?.fact).toBe('The user prefers concise answers.')
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [input, init] = fetchMock.mock.calls[0]!
+    expect(input).toBe('http://127.0.0.1:3000/api/v0/semantic_memory/raw')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+      category: 'preference',
+      include_invalid: true,
+      limit: 2,
+    })
+  })
+
+  it('marks semantic memories invalid through semantic_memory set-invalid endpoint', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({
+        id: 'd0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+        conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+        category: 'preference',
+        fact: 'The user prefers concise answers.',
+        source_episodic_ids: ['2f72c8fb-7a8c-4285-90a9-85f32ef2db65'],
+        valid_at: '2026-05-22T09:00:00Z',
+        invalid_at: '2026-05-23T09:00:00Z',
+        created_at: '2026-05-22T09:00:01Z',
+      }), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await setPlastMemSemanticMemoryInvalid({
+      invalid: true,
+      memoryId: 'd0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+    })
+
+    expect(result.enabled).toBe(true)
+    expect(result.memory?.invalid_at).toBe('2026-05-23T09:00:00Z')
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [input, init] = fetchMock.mock.calls[0]!
+    expect(input).toBe('http://127.0.0.1:3000/api/v0/semantic_memory/set_invalid')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+      memory_id: 'd0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+      invalid: true,
+    })
   })
 })

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { WIP } from '@proj-airi/stage-ui/components'
-import { Callout } from '@proj-airi/ui'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -57,18 +56,6 @@ const bridgeEnvVars = [
           {{ t('settings.pages.modules.memory-long-term.sections.plast-mem-bridge.description') }}
         </p>
       </div>
-
-      <Callout theme="primary">
-        <template #label>
-          <div :class="['flex', 'items-center', 'gap-2']">
-            <div :class="['i-solar:code-square-bold-duotone', 'text-lg']" />
-            <span>{{ t('settings.pages.modules.memory-long-term.sections.plast-mem-bridge.scope.title') }}</span>
-          </div>
-        </template>
-        <p :class="['text-sm', 'text-neutral-700', 'leading-6', 'dark:text-neutral-300']">
-          {{ t('settings.pages.modules.memory-long-term.sections.plast-mem-bridge.scope.description') }}
-        </p>
-      </Callout>
 
       <div :class="['grid', 'grid-cols-1', 'gap-3', 'lg:grid-cols-3']">
         <div

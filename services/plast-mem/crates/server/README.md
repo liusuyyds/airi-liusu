@@ -27,6 +27,14 @@ side effects.
 - `POST /api/v0/recent_memory`
 - `POST /api/v0/recent_memory/raw`
 
+### Semantic memory
+
+- `POST /api/v0/semantic_memory/raw`
+
+### Health
+
+- `POST /api/v0/health`
+
 ### Debug-only benchmark route
 
 - `GET /api/v0/benchmark/job_status`

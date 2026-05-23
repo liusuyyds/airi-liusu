@@ -58,7 +58,7 @@ function createChatMemoryContext(contextId: string, text: string) {
     createdAt: Date.now(),
     metadata: {
       source: {
-        id: 'chat',
+        id: contextId,
         kind: 'plugin' as const,
         plugin: {
           id: 'plast-mem',
@@ -101,6 +101,7 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
   const releaseChatBridge = useElectronEventaInvoke(electronPlastMemReleaseChatBridge)
   const lastRecallError = ref<string>()
   const lastRecallAt = ref<number>()
+  const lastRecallContextBlock = ref('')
   const lastRecallContextCharacters = ref(0)
   const lastRecallStatus = ref<RecallStatus>('idle')
   const lastIngestError = ref<string>()
@@ -176,6 +177,7 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
 
         if (recallResult.error) {
           lastRecallAt.value = Date.now()
+          lastRecallContextBlock.value = ''
           lastRecallContextCharacters.value = 0
           lastRecallError.value = recallResult.error
           lastRecallStatus.value = 'error'
@@ -186,11 +188,13 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
           lastRecallAt.value = Date.now()
           lastRecallError.value = undefined
           if (!recallResult.contextBlock) {
+            lastRecallContextBlock.value = ''
             lastRecallContextCharacters.value = 0
             lastRecallStatus.value = 'empty'
             reportTrace('recall:empty')
           }
           else {
+            lastRecallContextBlock.value = recallResult.contextBlock
             lastRecallContextCharacters.value = recallResult.contextBlock.length
             lastRecallStatus.value = 'recalled'
             reportTrace('recall:context-ingested', {
@@ -309,6 +313,7 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
     lastIngestMessageCount,
     lastIngestStatus,
     lastRecallAt,
+    lastRecallContextBlock,
     lastRecallContextCharacters,
     lastRecallError,
     lastRecallStatus,

@@ -717,6 +717,33 @@ pages:
             status-error: 状态不可用
             title: 本地运行状态
             workspace: Workspace key
+          panels:
+            title: 更多记忆工具
+            config: 配置
+            runtime: 运行
+            diagnostics: 聊天诊断
+            semantic: 语义事实
+            recent: 最近记忆
+            health: 健康检查
+            about: 说明
+          health:
+            title: 数据库与 sidecar 健康检查
+            refresh: 检查健康状态
+            service: Sidecar API
+            database: 数据库
+            server-time: 服务端时间
+            error: 健康检查失败
+            status:
+              ok: 正常
+              error: 异常
+              unknown: 未知
+            counts:
+              conversation-messages: 消息
+              episode-spans: 分段
+              episodic-memories: Episodic
+              semantic-memories: Semantic
+              active-semantic-memories: 活跃 Semantic
+              pending-reviews: 待复习
           chat-diagnostics:
             never: 从未
             title: 聊天桥诊断
@@ -733,6 +760,7 @@ pages:
                 recalled: 已召回
               time: '上次召回：{time}'
               title: 回复前召回
+              preview: 注入内容
             ingest:
               detail:
                 accepted: 已写入 {count} 条消息到 Plast Mem。
@@ -758,6 +786,25 @@ pages:
             classification:
               informative: 有信息量
               low-info: 低信息量
+          semantic-memories:
+            title: Semantic Memory 查看器
+            refresh: 刷新
+            error: 加载 semantic memory 失败
+            empty: 暂无 semantic facts。等后台 consolidate 跑完后再看。
+            uncategorized: 未分类
+            created: '创建时间：{time}'
+            valid-at: '生效时间：{time}'
+            invalid-at: '失效时间：{time}'
+            sources: '来源 episodic：{count} 条'
+            include-invalid:
+              label: 显示失效 facts
+              description: 把已经被覆盖或失效的旧事实也一起显示出来。
+            actions:
+              invalidate: 标记失效
+              restore: 恢复生效
+            status:
+              active: 生效中
+              invalid: 已失效
           facts:
             external:
               description: >-
@@ -770,11 +817,6 @@ pages:
             reviewed:
               description: 聊天轮次会在回复后写入，Plast Mem worker 会在后台生成 episodic 和 semantic 记忆。
               title: 聊天捕获
-          scope:
-            description: >-
-              这套本地配置面向私有 Tamagotchi 使用。这里显示运行状态，正式聊天会注入召回记忆，同时不会把
-              Plast Mem 暴露为模型可见工具。
-            title: 正式聊天记忆
           title: 本地 Plast Mem 记忆
       title: 长期记忆
     memory-short-term:

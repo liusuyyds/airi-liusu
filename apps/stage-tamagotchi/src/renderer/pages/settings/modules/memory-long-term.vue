@@ -2,14 +2,16 @@
 import type {
   ElectronPlastMemConfig,
   ElectronPlastMemEpisodicMemory,
+  ElectronPlastMemHealthResult,
   ElectronPlastMemRuntimeStatus,
+  ElectronPlastMemSemanticMemory,
   ElectronPlastMemSidecarStatus,
 } from '../../../../shared/eventa'
 
 import { errorMessageFrom } from '@moeru/std'
 import { useElectronEventaInvoke } from '@proj-airi/electron-vueuse'
-import { Button, Callout, FieldCheckbox, FieldInput, Input } from '@proj-airi/ui'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Button, Callout, FieldCheckbox, FieldInput, Input, SelectTab } from '@proj-airi/ui'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import {
@@ -18,13 +20,17 @@ import {
   electronPlastMemGetConfig,
   electronPlastMemGetRuntimeStatus,
   electronPlastMemGetSidecarStatus,
+  electronPlastMemHealth,
   electronPlastMemRecentMemoryRaw,
   electronPlastMemRestartSidecar,
+  electronPlastMemSemanticMemoryRaw,
+  electronPlastMemSetSemanticMemoryInvalid,
   electronPlastMemStartSidecar,
   electronPlastMemStopSidecar,
 } from '../../../../shared/eventa'
 
 type BridgeStatusKind = 'checking' | 'disabled' | 'offline' | 'online'
+type DetailPanelId = 'config' | 'runtime' | 'diagnostics' | 'semantic' | 'recent' | 'health' | 'about'
 
 const { t } = useI18n()
 const tn = (key: string, params?: Record<string, unknown>) => t(`settings.pages.modules.memory-long-term.sections.plast-mem-bridge.${key}`, params ?? {})
@@ -36,7 +42,10 @@ const invokeGetPlastMemSidecarStatus = useElectronEventaInvoke(electronPlastMemG
 const invokeStartPlastMemSidecar = useElectronEventaInvoke(electronPlastMemStartSidecar)
 const invokeStopPlastMemSidecar = useElectronEventaInvoke(electronPlastMemStopSidecar)
 const invokeRestartPlastMemSidecar = useElectronEventaInvoke(electronPlastMemRestartSidecar)
+const invokePlastMemHealth = useElectronEventaInvoke(electronPlastMemHealth)
 const invokeRecentMemoryRaw = useElectronEventaInvoke(electronPlastMemRecentMemoryRaw)
+const invokeSemanticMemoryRaw = useElectronEventaInvoke(electronPlastMemSemanticMemoryRaw)
+const invokeSetSemanticMemoryInvalid = useElectronEventaInvoke(electronPlastMemSetSemanticMemoryInvalid)
 
 const bridgeFacts = [
   {
@@ -88,9 +97,18 @@ const isRefreshingSidecar = ref(false)
 const isStartingSidecar = ref(false)
 const isStoppingSidecar = ref(false)
 const isRestartingSidecar = ref(false)
+const health = ref<ElectronPlastMemHealthResult>()
+const healthError = ref('')
+const isCheckingHealth = ref(false)
 const recentMemories = ref<ElectronPlastMemEpisodicMemory[]>([])
 const recentMemoriesError = ref('')
 const isLoadingRecentMemories = ref(false)
+const semanticMemories = ref<ElectronPlastMemSemanticMemory[]>([])
+const semanticMemoriesError = ref('')
+const isLoadingSemanticMemories = ref(false)
+const mutatingSemanticMemoryId = ref('')
+const includeInvalidSemanticMemories = ref(false)
+const activeDetailPanel = ref<DetailPanelId>('config')
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 
 const statusKind = computed<BridgeStatusKind>(() => {
@@ -144,6 +162,8 @@ const recallStatusBadgeClass = computed(() => chatAttemptBadgeClass(recallDiagno
 const ingestStatusBadgeClass = computed(() => chatAttemptBadgeClass(ingestDiagnostics.value.status))
 const recallStatusLabel = computed(() => tn(`chat-diagnostics.recall.status.${recallDiagnostics.value.status}`))
 const ingestStatusLabel = computed(() => tn(`chat-diagnostics.ingest.status.${ingestDiagnostics.value.status}`))
+const recallContextPreview = computed(() => recallDiagnostics.value.contextBlock?.trim() ?? '')
+const hasRecallContextPreview = computed(() => recallContextPreview.value.length > 0)
 const sidecarState = computed(() => sidecarStatus.value?.state ?? 'stopped')
 const sidecarStatusLabel = computed(() => {
   if (sidecarStatus.value?.external)
@@ -166,6 +186,48 @@ const sidecarStatusBadgeClass = computed(() => {
 const sidecarCanStart = computed(() => !['starting', 'running', 'stopping'].includes(sidecarState.value))
 const sidecarCanStop = computed(() => Boolean(sidecarStatus.value?.pid) && ['starting', 'running'].includes(sidecarState.value))
 const sidecarCanRestart = computed(() => !sidecarStatus.value?.external && sidecarState.value !== 'stopping')
+const healthServiceOk = computed(() => Boolean(health.value && !health.value.error))
+const healthCheckedAt = computed(() => health.value?.serverTime ? new Date(health.value.serverTime).toLocaleTimeString() : '-')
+const healthServiceBadgeClass = computed(() => healthStatusBadgeClass(healthServiceOk.value ? true : health.value ? false : undefined))
+const healthDatabaseBadgeClass = computed(() => healthStatusBadgeClass(health.value?.databaseOk))
+const healthCounts = computed(() => health.value?.counts)
+const detailPanelOptions = computed<Array<{ icon: string, label: string, value: DetailPanelId }>>(() => [
+  {
+    icon: 'i-solar:tuning-square-bold-duotone',
+    label: tn('panels.config'),
+    value: 'config',
+  },
+  {
+    icon: 'i-solar:pulse-2-bold-duotone',
+    label: tn('panels.runtime'),
+    value: 'runtime',
+  },
+  {
+    icon: 'i-solar:chat-round-dots-bold-duotone',
+    label: tn('panels.diagnostics'),
+    value: 'diagnostics',
+  },
+  {
+    icon: 'i-solar:document-add-bold-duotone',
+    label: tn('panels.semantic'),
+    value: 'semantic',
+  },
+  {
+    icon: 'i-solar:brain-bold-duotone',
+    label: tn('panels.recent'),
+    value: 'recent',
+  },
+  {
+    icon: 'i-solar:shield-check-bold-duotone',
+    label: tn('panels.health'),
+    value: 'health',
+  },
+  {
+    icon: 'i-solar:info-circle-bold-duotone',
+    label: tn('panels.about'),
+    value: 'about',
+  },
+])
 const recallDetail = computed(() => {
   if (recallDiagnostics.value.status === 'recalled') {
     return tn('chat-diagnostics.recall.detail.recalled', {
@@ -201,6 +263,15 @@ function chatAttemptBadgeClass(state: string) {
   if (state === 'empty')
     return 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
   if (state === 'error' || state === 'rejected')
+    return 'bg-red-500/15 text-red-700 dark:text-red-300'
+
+  return 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300'
+}
+
+function healthStatusBadgeClass(ok: boolean | undefined) {
+  if (ok === true)
+    return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+  if (ok === false)
     return 'bg-red-500/15 text-red-700 dark:text-red-300'
 
   return 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300'
@@ -243,6 +314,7 @@ async function saveConfig(refreshAfterSave: boolean) {
     if (refreshAfterSave) {
       await refreshStatus()
       await refreshSidecarStatus()
+      await refreshHealth()
     }
     return true
   }
@@ -289,6 +361,28 @@ async function refreshSidecarStatus() {
   }
 }
 
+async function refreshHealth() {
+  if (isCheckingHealth.value)
+    return
+
+  isCheckingHealth.value = true
+  healthError.value = ''
+  try {
+    const result = await invokePlastMemHealth({})
+    health.value = result
+    if (result.error)
+      healthError.value = result.error
+    else if (result.databaseError)
+      healthError.value = result.databaseError
+  }
+  catch (error) {
+    healthError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    isCheckingHealth.value = false
+  }
+}
+
 async function startSidecar() {
   if (isStartingSidecar.value)
     return
@@ -302,6 +396,7 @@ async function startSidecar() {
 
     sidecarStatus.value = await invokeStartPlastMemSidecar()
     await refreshStatus()
+    await refreshHealth()
   }
   catch (error) {
     sidecarError.value = errorMessageFrom(error) ?? 'Unknown error'
@@ -321,6 +416,7 @@ async function stopSidecar() {
   try {
     sidecarStatus.value = await invokeStopPlastMemSidecar()
     await refreshStatus()
+    await refreshHealth()
   }
   catch (error) {
     sidecarError.value = errorMessageFrom(error) ?? 'Unknown error'
@@ -344,6 +440,7 @@ async function restartSidecar() {
 
     sidecarStatus.value = await invokeRestartPlastMemSidecar()
     await refreshStatus()
+    await refreshHealth()
   }
   catch (error) {
     sidecarError.value = errorMessageFrom(error) ?? 'Unknown error'
@@ -379,10 +476,79 @@ async function refreshRecentMemories() {
   }
 }
 
+async function refreshSemanticMemories() {
+  if (isLoadingSemanticMemories.value)
+    return
+
+  isLoadingSemanticMemories.value = true
+  semanticMemoriesError.value = ''
+  try {
+    const result = await invokeSemanticMemoryRaw({
+      category: configDraft.value.category.trim() || undefined,
+      includeInvalid: includeInvalidSemanticMemories.value,
+      limit: 50,
+    })
+    if (result.error) {
+      semanticMemoriesError.value = result.error
+      semanticMemories.value = []
+    }
+    else {
+      semanticMemories.value = result.memories
+    }
+  }
+  catch (error) {
+    semanticMemoriesError.value = errorMessageFrom(error) ?? 'Unknown error'
+    semanticMemories.value = []
+  }
+  finally {
+    isLoadingSemanticMemories.value = false
+  }
+}
+
+async function setSemanticMemoryInvalid(memory: ElectronPlastMemSemanticMemory, invalid: boolean) {
+  if (mutatingSemanticMemoryId.value)
+    return
+
+  mutatingSemanticMemoryId.value = memory.id
+  semanticMemoriesError.value = ''
+  try {
+    const result = await invokeSetSemanticMemoryInvalid({
+      invalid,
+      memoryId: memory.id,
+    })
+    if (result.error) {
+      semanticMemoriesError.value = result.error
+      return
+    }
+
+    if (!includeInvalidSemanticMemories.value && invalid) {
+      semanticMemories.value = semanticMemories.value.filter(item => item.id !== memory.id)
+    }
+    else if (result.memory) {
+      const updatedMemory = result.memory
+      semanticMemories.value = semanticMemories.value.map(item =>
+        item.id === updatedMemory.id ? updatedMemory : item,
+      )
+    }
+
+    await refreshHealth()
+  }
+  catch (error) {
+    semanticMemoriesError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    mutatingSemanticMemoryId.value = ''
+  }
+}
+
 function formatMemoryTime(value: string | undefined) {
   if (!value)
     return '-'
   return new Date(value).toLocaleString()
+}
+
+function formatCount(value: number | undefined) {
+  return value == null ? '-' : value.toLocaleString()
 }
 
 function classificationLabel(classification: string | null | undefined) {
@@ -393,10 +559,29 @@ function classificationLabel(classification: string | null | undefined) {
   return '-'
 }
 
+function semanticMemoryStatusLabel(memory: ElectronPlastMemSemanticMemory) {
+  return memory.invalid_at
+    ? tn('semantic-memories.status.invalid')
+    : tn('semantic-memories.status.active')
+}
+
+function semanticMemoryStatusBadgeClass(memory: ElectronPlastMemSemanticMemory) {
+  if (memory.invalid_at)
+    return 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300'
+
+  return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+}
+
+watch(includeInvalidSemanticMemories, () => {
+  void refreshSemanticMemories()
+})
+
 onMounted(() => {
   void refreshConfig()
   void refreshStatus()
   void refreshSidecarStatus()
+  void refreshHealth()
+  void refreshSemanticMemories()
   refreshTimer = setInterval(() => {
     void refreshStatus()
     void refreshSidecarStatus()
@@ -435,6 +620,36 @@ onBeforeUnmount(() => {
       </div>
 
       <section
+        :class="[
+          'flex',
+          'flex-col',
+          'gap-3',
+          'rounded-lg',
+          'border',
+          'border-neutral-200/70',
+          'bg-white/70',
+          'p-3',
+          'dark:border-neutral-800/70',
+          'dark:bg-neutral-900/30',
+        ]"
+      >
+        <div :class="['flex', 'items-center', 'gap-2']">
+          <div :class="['i-solar:layers-bold-duotone', 'text-xl', 'text-primary-500', 'dark:text-primary-300']" />
+          <h3 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+            {{ tn('panels.title') }}
+          </h3>
+        </div>
+        <SelectTab
+          v-model="activeDetailPanel"
+          :options="detailPanelOptions"
+          :class="['w-full']"
+          size="sm"
+          tab-space="compact"
+        />
+      </section>
+
+      <section
+        v-if="activeDetailPanel === 'config'"
         :class="[
           'flex',
           'flex-col',
@@ -640,6 +855,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section
+        v-else-if="activeDetailPanel === 'runtime'"
         :class="[
           'flex',
           'flex-col',
@@ -819,6 +1035,89 @@ onBeforeUnmount(() => {
       </section>
 
       <section
+        v-else-if="activeDetailPanel === 'health'"
+        :class="[
+          'flex',
+          'flex-col',
+          'gap-4',
+          'rounded-lg',
+          'border',
+          'border-neutral-200/70',
+          'bg-white/70',
+          'p-3',
+          'dark:border-neutral-800/70',
+          'dark:bg-neutral-900/30',
+        ]"
+      >
+        <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-3']">
+          <div :class="['flex', 'items-center', 'gap-2']">
+            <div :class="['i-solar:shield-check-bold-duotone', 'text-xl', 'text-primary-500', 'dark:text-primary-300']" />
+            <h3 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+              {{ tn('health.title') }}
+            </h3>
+          </div>
+          <Button
+            variant="secondary" size="sm" :loading="isCheckingHealth"
+            icon="i-solar:refresh-bold-duotone" :label="tn('health.refresh')"
+            @click="refreshHealth"
+          />
+        </div>
+
+        <div :class="['grid', 'grid-cols-1', 'gap-2', 'md:grid-cols-3']">
+          <div :class="['min-w-0', 'flex', 'items-center', 'justify-between', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'dark:bg-neutral-950/30']">
+            <div :class="['flex', 'items-center', 'gap-2']">
+              <div :class="['i-solar:server-square-bold-duotone', 'text-lg', 'text-neutral-500']" />
+              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('health.service') }}</span>
+            </div>
+            <span :class="['rounded-full', 'px-2', 'py-0.5', 'text-xs', 'font-medium', healthServiceBadgeClass]">
+              {{ healthServiceOk ? tn('health.status.ok') : health ? tn('health.status.error') : tn('health.status.unknown') }}
+            </span>
+          </div>
+
+          <div :class="['min-w-0', 'flex', 'items-center', 'justify-between', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'dark:bg-neutral-950/30']">
+            <div :class="['flex', 'items-center', 'gap-2']">
+              <div :class="['i-solar:database-bold-duotone', 'text-lg', 'text-neutral-500']" />
+              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('health.database') }}</span>
+            </div>
+            <span :class="['rounded-full', 'px-2', 'py-0.5', 'text-xs', 'font-medium', healthDatabaseBadgeClass]">
+              {{ health?.databaseOk ? tn('health.status.ok') : health ? tn('health.status.error') : tn('health.status.unknown') }}
+            </span>
+          </div>
+
+          <div :class="['min-w-0', 'flex', 'items-center', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'dark:bg-neutral-950/30']">
+            <div :class="['i-solar:clock-circle-bold-duotone', 'text-lg', 'text-neutral-500']" />
+            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
+              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('health.server-time') }}</span>
+              <span :class="['truncate', 'font-mono', 'text-xs', 'text-neutral-700', 'dark:text-neutral-200']">{{ healthCheckedAt }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div :class="['grid', 'grid-cols-2', 'gap-2', 'lg:grid-cols-6']">
+          <div
+            v-for="item in [
+              { key: 'conversation-messages', value: healthCounts?.conversation_messages },
+              { key: 'episode-spans', value: healthCounts?.episode_spans },
+              { key: 'episodic-memories', value: healthCounts?.episodic_memories },
+              { key: 'semantic-memories', value: healthCounts?.semantic_memories },
+              { key: 'active-semantic-memories', value: healthCounts?.active_semantic_memories },
+              { key: 'pending-reviews', value: healthCounts?.pending_reviews },
+            ]"
+            :key="item.key"
+            :class="['min-w-0', 'flex', 'flex-col', 'gap-1', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']"
+          >
+            <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">{{ tn(`health.counts.${item.key}`) }}</span>
+            <span :class="['font-mono', 'text-lg', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ formatCount(item.value) }}</span>
+          </div>
+        </div>
+
+        <Callout v-if="healthError" theme="orange" :label="tn('health.error')">
+          {{ healthError }}
+        </Callout>
+      </section>
+
+      <section
+        v-else-if="activeDetailPanel === 'diagnostics'"
         :class="[
           'flex',
           'flex-col',
@@ -857,6 +1156,17 @@ onBeforeUnmount(() => {
               <p :class="['break-words', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
                 {{ recallDetail }}
               </p>
+              <div v-if="hasRecallContextPreview" :class="['mt-2', 'flex', 'flex-col', 'gap-2']">
+                <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                  <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
+                    {{ tn('chat-diagnostics.recall.preview') }}
+                  </span>
+                  <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                    {{ formatCount(recallContextPreview.length) }}
+                  </span>
+                </div>
+                <pre :class="['max-h-44', 'overflow-auto', 'whitespace-pre-wrap', 'break-words', 'rounded-md', 'bg-white/70', 'p-2', 'font-mono', 'text-[11px]', 'text-neutral-600', 'leading-4', 'dark:bg-neutral-900/70', 'dark:text-neutral-300']">{{ recallContextPreview }}</pre>
+              </div>
             </div>
           </div>
 
@@ -883,6 +1193,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section
+        v-else-if="activeDetailPanel === 'recent'"
         :class="[
           'flex',
           'flex-col',
@@ -939,12 +1250,15 @@ onBeforeUnmount(() => {
               <span :class="['text-sm', 'font-medium', 'text-neutral-700', 'dark:text-neutral-200']">
                 {{ memory.title || tn('recent-memories.untitled') }}
               </span>
-              <span v-if="memory.classification" :class="[
-                'shrink-0', 'rounded-full', 'px-1.5', 'py-0.5', 'text-[10px]', 'font-medium',
-                memory.classification === 'informative'
-                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                  : 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300',
-              ]">
+              <span
+                v-if="memory.classification"
+                :class="[
+                  'shrink-0', 'rounded-full', 'px-1.5', 'py-0.5', 'text-[10px]', 'font-medium',
+                  memory.classification === 'informative'
+                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300',
+                ]"
+              >
                 {{ classificationLabel(memory.classification) }}
               </span>
             </div>
@@ -960,69 +1274,172 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <Callout theme="primary">
-        <template #label>
+      <section
+        v-else-if="activeDetailPanel === 'semantic'"
+        :class="[
+          'flex',
+          'flex-col',
+          'gap-4',
+          'rounded-lg',
+          'border',
+          'border-neutral-200/70',
+          'bg-white/70',
+          'p-3',
+          'dark:border-neutral-800/70',
+          'dark:bg-neutral-900/30',
+        ]"
+      >
+        <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-3']">
           <div :class="['flex', 'items-center', 'gap-2']">
-            <div :class="['i-solar:chat-round-dots-bold-duotone', 'text-lg']" />
-            <span>{{ t('settings.pages.modules.memory-long-term.sections.plast-mem-bridge.scope.title') }}</span>
-          </div>
-        </template>
-        <p :class="['text-sm', 'text-neutral-700', 'leading-6', 'dark:text-neutral-300']">
-          {{ t('settings.pages.modules.memory-long-term.sections.plast-mem-bridge.scope.description') }}
-        </p>
-      </Callout>
-
-      <div :class="['grid', 'grid-cols-1', 'gap-3', 'lg:grid-cols-3']">
-        <div
-          v-for="fact in bridgeFacts"
-          :key="fact.titleKey"
-          :class="[
-            'flex',
-            'gap-3',
-            'rounded-lg',
-            'border',
-            'border-neutral-200/70',
-            'bg-white/70',
-            'p-3',
-            'dark:border-neutral-800/70',
-            'dark:bg-neutral-900/30',
-          ]"
-        >
-          <div :class="[fact.icon, 'mt-0.5', 'text-xl', 'text-primary-500', 'dark:text-primary-300']" />
-          <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+            <div :class="['i-solar:document-add-bold-duotone', 'text-xl', 'text-primary-500', 'dark:text-primary-300']" />
             <h3 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-              {{ t(fact.titleKey) }}
+              {{ tn('semantic-memories.title') }}
             </h3>
-            <p :class="['text-sm', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
-              {{ t(fact.descriptionKey) }}
-            </p>
+          </div>
+          <div :class="['flex', 'flex-wrap', 'items-center', 'justify-end', 'gap-2']">
+            <div :class="['min-w-52']">
+              <FieldCheckbox
+                v-model="includeInvalidSemanticMemories"
+                :label="tn('semantic-memories.include-invalid.label')"
+                :description="tn('semantic-memories.include-invalid.description')"
+              />
+            </div>
+            <Button
+              variant="secondary" size="sm" :loading="isLoadingSemanticMemories"
+              icon="i-solar:refresh-bold-duotone" :label="tn('semantic-memories.refresh')"
+              @click="refreshSemanticMemories"
+            />
           </div>
         </div>
-      </div>
 
-      <div :class="['flex', 'flex-col', 'gap-3']">
-        <h3 :class="['text-sm', 'font-semibold', 'text-neutral-600', 'dark:text-neutral-300']">
-          {{ t('settings.pages.modules.memory-long-term.sections.plast-mem-bridge.env.title') }}
-        </h3>
-        <div :class="['flex', 'flex-wrap', 'gap-2']">
-          <code
-            v-for="envVar in bridgeEnvVars"
-            :key="envVar"
+        <Callout v-if="semanticMemoriesError" theme="orange" :label="tn('semantic-memories.error')">
+          {{ semanticMemoriesError }}
+        </Callout>
+
+        <div v-if="semanticMemories.length === 0 && !semanticMemoriesError && !isLoadingSemanticMemories" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
+          {{ tn('semantic-memories.empty') }}
+        </div>
+
+        <div :class="['flex', 'flex-col', 'gap-2', 'max-h-96', 'overflow-y-auto']">
+          <div
+            v-for="memory in semanticMemories"
+            :key="memory.id"
             :class="[
+              'flex',
+              'flex-col',
+              'gap-2',
               'rounded-md',
-              'bg-neutral-200/70',
-              'px-2',
-              'py-1',
-              'text-xs',
-              'text-neutral-700',
-              'dark:bg-neutral-800/80',
-              'dark:text-neutral-300',
+              'border',
+              'border-neutral-200/50',
+              'bg-neutral-50/70',
+              'p-2.5',
+              'dark:border-neutral-800/50',
+              'dark:bg-neutral-950/30',
             ]"
           >
-            {{ envVar }}
-          </code>
+            <div :class="['flex', 'flex-wrap', 'items-start', 'justify-between', 'gap-2']">
+              <div :class="['flex', 'flex-wrap', 'items-center', 'gap-1.5']">
+                <span :class="['rounded-full', 'bg-sky-500/15', 'px-1.5', 'py-0.5', 'text-[10px]', 'font-medium', 'text-sky-700', 'dark:text-sky-300']">
+                  {{ memory.category || tn('semantic-memories.uncategorized') }}
+                </span>
+                <span :class="['rounded-full', 'px-1.5', 'py-0.5', 'text-[10px]', 'font-medium', semanticMemoryStatusBadgeClass(memory)]">
+                  {{ semanticMemoryStatusLabel(memory) }}
+                </span>
+              </div>
+              <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                {{ memory.id.slice(0, 8) }}
+              </span>
+            </div>
+
+            <p :class="['break-words', 'text-sm', 'text-neutral-700', 'leading-5', 'dark:text-neutral-200']">
+              {{ memory.fact }}
+            </p>
+
+            <div :class="['flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+              <span>{{ tn('semantic-memories.created', { time: formatMemoryTime(memory.created_at) }) }}</span>
+              <span>{{ tn('semantic-memories.valid-at', { time: formatMemoryTime(memory.valid_at) }) }}</span>
+              <span v-if="memory.invalid_at">{{ tn('semantic-memories.invalid-at', { time: formatMemoryTime(memory.invalid_at) }) }}</span>
+              <span>{{ tn('semantic-memories.sources', { count: memory.source_episodic_ids.length }) }}</span>
+            </div>
+
+            <div :class="['flex', 'justify-end']">
+              <Button
+                :variant="memory.invalid_at ? 'secondary' : 'caution'"
+                size="sm"
+                :loading="mutatingSemanticMemoryId === memory.id"
+                :icon="memory.invalid_at ? 'i-solar:restart-bold-duotone' : 'i-solar:trash-bin-minimalistic-bold-duotone'"
+                :label="memory.invalid_at ? tn('semantic-memories.actions.restore') : tn('semantic-memories.actions.invalidate')"
+                @click="setSemanticMemoryInvalid(memory, !memory.invalid_at)"
+              />
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
+
+      <section
+        v-else-if="activeDetailPanel === 'about'"
+        :class="[
+          'flex',
+          'flex-col',
+          'gap-4',
+          'rounded-lg',
+          'border',
+          'border-neutral-200/70',
+          'bg-white/70',
+          'p-3',
+          'dark:border-neutral-800/70',
+          'dark:bg-neutral-900/30',
+        ]"
+      >
+        <div :class="['grid', 'grid-cols-1', 'gap-3', 'lg:grid-cols-3']">
+          <div
+            v-for="fact in bridgeFacts"
+            :key="fact.titleKey"
+            :class="[
+              'flex',
+              'gap-3',
+              'rounded-md',
+              'bg-neutral-100/70',
+              'p-3',
+              'dark:bg-neutral-950/30',
+            ]"
+          >
+            <div :class="[fact.icon, 'mt-0.5', 'text-xl', 'text-primary-500', 'dark:text-primary-300']" />
+            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+              <h3 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                {{ t(fact.titleKey) }}
+              </h3>
+              <p :class="['text-sm', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
+                {{ t(fact.descriptionKey) }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div :class="['flex', 'flex-col', 'gap-3']">
+          <h3 :class="['text-sm', 'font-semibold', 'text-neutral-600', 'dark:text-neutral-300']">
+            {{ t('settings.pages.modules.memory-long-term.sections.plast-mem-bridge.env.title') }}
+          </h3>
+          <div :class="['flex', 'flex-wrap', 'gap-2']">
+            <code
+              v-for="envVar in bridgeEnvVars"
+              :key="envVar"
+              :class="[
+                'rounded-md',
+                'bg-neutral-200/70',
+                'px-2',
+                'py-1',
+                'text-xs',
+                'text-neutral-700',
+                'dark:bg-neutral-800/80',
+                'dark:text-neutral-300',
+              ]"
+            >
+              {{ envVar }}
+            </code>
+          </div>
+        </div>
+      </section>
     </section>
   </div>
 

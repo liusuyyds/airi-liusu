@@ -746,6 +746,33 @@ pages:
             status-error: Status unavailable
             title: Local runtime status
             workspace: Workspace key
+          panels:
+            title: More memory tools
+            config: Config
+            runtime: Runtime
+            diagnostics: Diagnostics
+            semantic: Semantic facts
+            recent: Recent
+            health: Health
+            about: About
+          health:
+            title: Database and sidecar health
+            refresh: Check health
+            service: Sidecar API
+            database: Database
+            server-time: Server time
+            error: Health check failed
+            status:
+              ok: OK
+              error: Error
+              unknown: Unknown
+            counts:
+              conversation-messages: Messages
+              episode-spans: Spans
+              episodic-memories: Episodes
+              semantic-memories: Facts
+              active-semantic-memories: Active facts
+              pending-reviews: Reviews
           chat-diagnostics:
             never: Never
             title: Chat bridge diagnostics
@@ -762,6 +789,7 @@ pages:
                 recalled: Recalled
               time: 'Last recall: {time}'
               title: Pre-reply recall
+              preview: Injected context
             ingest:
               detail:
                 accepted: Wrote {count} message(s) to Plast Mem.
@@ -787,6 +815,25 @@ pages:
             classification:
               informative: Informative
               low-info: Low info
+          semantic-memories:
+            title: Semantic memory
+            refresh: Refresh
+            error: Error loading semantic memory
+            empty: No semantic facts found yet. Wait for background consolidation to finish.
+            uncategorized: uncategorized
+            created: 'Created: {time}'
+            valid-at: 'Valid: {time}'
+            invalid-at: 'Invalid: {time}'
+            sources: '{count} source(s)'
+            include-invalid:
+              label: Show invalidated facts
+              description: Includes older facts that Plast Mem has superseded or invalidated.
+            actions:
+              invalidate: Mark invalid
+              restore: Restore
+            status:
+              active: Active
+              invalid: Invalid
           facts:
             external:
               description: >-
@@ -804,12 +851,6 @@ pages:
                 Chat turns are captured after responses and Plast Mem's worker
                 turns them into episodic and semantic memory in the background.
               title: Chat capture
-          scope:
-            description: >-
-              This local setup is intended for private Tamagotchi use. It
-              surfaces runtime status here, injects recalled memory into formal
-              chat, and keeps Plast Mem hidden from model-visible tool lists.
-            title: Formal chat memory
           title: Local Plast Mem Memory
       title: Long-Term Memory
     memory-short-term:

@@ -3,7 +3,9 @@ use async_openai::{
   Client,
   config::OpenAIConfig,
   types::chat::{
-    ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage, CreateChatCompletionRequest,
+    ChatCompletionRequestMessage, ChatCompletionRequestMessageContentPartText,
+    ChatCompletionRequestSystemMessage, ChatCompletionRequestSystemMessageContent,
+    ChatCompletionRequestSystemMessageContentPart, CreateChatCompletionRequest,
     CreateChatCompletionRequestArgs, ReasoningEffort, ResponseFormat, ResponseFormatJsonSchema,
   },
 };
@@ -231,14 +233,47 @@ fn build_json_object_fallback_messages(
   schema_description: Option<&str>,
   schema: &serde_json::Value,
 ) -> Result<Vec<ChatCompletionRequestMessage>, AppError> {
+  fn system_message_text(message: &ChatCompletionRequestSystemMessage) -> String {
+    match &message.content {
+      ChatCompletionRequestSystemMessageContent::Text(text) => text.clone(),
+      ChatCompletionRequestSystemMessageContent::Array(parts) => parts
+        .iter()
+        .map(|part| match part {
+          ChatCompletionRequestSystemMessageContentPart::Text(
+            ChatCompletionRequestMessageContentPartText { text },
+          ) => text.as_str(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n"),
+    }
+  }
+
+  let original_system_prompt = messages
+    .iter()
+    .filter_map(|message| match message {
+      ChatCompletionRequestMessage::System(system) => {
+        let text = system_message_text(system);
+        let trimmed = text.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_owned())
+      }
+      _ => None,
+    })
+    .collect::<Vec<_>>()
+    .join("\n\n");
+
   let schema_text = serde_json::to_string_pretty(schema)?;
   let description = schema_description
     .filter(|value| !value.trim().is_empty())
     .map(|value| format!("\nPurpose: {value}"))
     .unwrap_or_default();
-  let instruction = format!(
+  let mut instruction = format!(
     "Return only one JSON object. Do not include markdown, prose, or code fences.\nSchema name: {schema_name}{description}\nJSON schema:\n{schema_text}"
   );
+
+  if !original_system_prompt.is_empty() {
+    instruction.push_str("\n\nOriginal task instructions:\n");
+    instruction.push_str(&original_system_prompt);
+  }
 
   messages.retain(|m| !matches!(m, ChatCompletionRequestMessage::System(_)));
 
@@ -315,5 +350,58 @@ where
         ))
       })
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use async_openai::types::chat::ChatCompletionRequestUserMessage;
+  use serde_json::json;
+
+  use super::*;
+
+  #[test]
+  fn json_object_fallback_keeps_original_system_prompt_in_single_system_message() {
+    let messages = vec![
+      ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage::from(
+        "Extract semantic memory updates from the episode.",
+      )),
+      ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage::from(
+        "Episode content goes here.",
+      )),
+    ];
+
+    let fallback_messages = build_json_object_fallback_messages(
+      messages,
+      "semantic_action",
+      Some("Generate semantic memory actions"),
+      &json!({
+        "type": "object",
+        "properties": {
+          "actions": { "type": "array" }
+        }
+      }),
+    )
+    .expect("fallback messages should build");
+
+    let system_count = fallback_messages
+      .iter()
+      .filter(|message| matches!(message, ChatCompletionRequestMessage::System(_)))
+      .count();
+    assert_eq!(system_count, 1);
+
+    let system_message = serde_json::to_value(&fallback_messages[0]).expect("serializable message");
+    let system_content = system_message
+      .get("content")
+      .and_then(|content| content.as_str())
+      .expect("system content should be text");
+
+    assert!(system_content.contains("Return only one JSON object."));
+    assert!(system_content.contains("Original task instructions:"));
+    assert!(system_content.contains("Extract semantic memory updates from the episode."));
+    assert!(matches!(
+      fallback_messages.get(1),
+      Some(ChatCompletionRequestMessage::User(_))
+    ));
   }
 }

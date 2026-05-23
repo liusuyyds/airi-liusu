@@ -26,7 +26,6 @@ pub struct SemanticMemory {
   pub invalid_at: Option<DateTime<Utc>>,
   #[serde(skip)]
   pub embedding: PgVector,
-  #[serde(skip)]
   pub created_at: DateTime<Utc>,
 }
 

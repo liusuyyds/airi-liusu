@@ -5,6 +5,8 @@ import type {
   ElectronPlastMemContextDetail,
   ElectronPlastMemContextPreRetrievePayload,
   ElectronPlastMemContextPreRetrieveResult,
+  ElectronPlastMemHealthPayload,
+  ElectronPlastMemHealthResult,
   ElectronPlastMemIngestChatMessagesPayload,
   ElectronPlastMemIngestChatMessagesResult,
   ElectronPlastMemRecentMemoryPayload,
@@ -14,6 +16,10 @@ import type {
   ElectronPlastMemRetrieveChatContextPayload,
   ElectronPlastMemRetrieveChatContextResult,
   ElectronPlastMemRuntimeStatus,
+  ElectronPlastMemSemanticMemoryRawPayload,
+  ElectronPlastMemSemanticMemoryRawResult,
+  ElectronPlastMemSetSemanticMemoryInvalidPayload,
+  ElectronPlastMemSetSemanticMemoryInvalidResult,
 } from '../../../../shared/eventa'
 import type { McpStdioManager } from '../mcp-servers'
 import type { PlastMemSidecarManager } from './sidecar'
@@ -30,6 +36,7 @@ import {
   electronPlastMemGetConfig,
   electronPlastMemGetRuntimeStatus,
   electronPlastMemGetSidecarStatus,
+  electronPlastMemHealth,
   electronPlastMemIngestChatMessages,
   electronPlastMemRecentMemory,
   electronPlastMemRecentMemoryRaw,
@@ -37,6 +44,8 @@ import {
   electronPlastMemReportChatBridgeTrace,
   electronPlastMemRestartSidecar,
   electronPlastMemRetrieveChatContext,
+  electronPlastMemSemanticMemoryRaw,
+  electronPlastMemSetSemanticMemoryInvalid,
   electronPlastMemStartSidecar,
   electronPlastMemStopSidecar,
 } from '../../../../shared/eventa'
@@ -56,8 +65,11 @@ const defaultMaxContextCharacters = 5000
 const computerUseMcpServerName = 'computer_use'
 const retrieveMemoryPath = 'api/v0/retrieve_memory'
 const contextPreRetrievePath = 'api/v0/context_pre_retrieve'
+const healthPath = 'api/v0/health'
 const recentMemoryPath = 'api/v0/recent_memory'
 const recentMemoryRawPath = 'api/v0/recent_memory/raw'
+const semanticMemoryRawPath = 'api/v0/semantic_memory/raw'
+const semanticMemorySetInvalidPath = 'api/v0/semantic_memory/set_invalid'
 const importBatchMessagesPath = 'api/v0/import_batch_messages'
 const plastMemBridgeVersion = 'chat-memory-2026-05-22-0249'
 const recentIngestSignatureTtlMsec = 30_000
@@ -310,6 +322,20 @@ function requireConfiguredPlastMem(config: PlastMemRuntimeConfig) {
   }
 }
 
+function requirePlastMemServiceBaseUrl(config: PlastMemRuntimeConfig) {
+  if (!config.baseUrl)
+    throw new Error('COMPUTER_USE_PLAST_MEM_BASE_URL is not configured')
+
+  return config.baseUrl
+}
+
+function requirePlastMemConversationId(config: PlastMemRuntimeConfig) {
+  if (!config.conversationId)
+    throw new Error('COMPUTER_USE_PLAST_MEM_CONVERSATION_ID is not configured')
+
+  return config.conversationId
+}
+
 function normalizeMarkdown(markdown: string) {
   return markdown
     .replace(/\r\n/g, '\n')
@@ -478,6 +504,65 @@ export async function getPlastMemRuntimeStatus(manager: McpStdioManager): Promis
   }
 }
 
+interface PlastMemHealthApiResponse {
+  conversation_id?: string | null
+  counts?: ElectronPlastMemHealthResult['counts']
+  database_error?: string | null
+  database_ok?: boolean
+  server_time?: string
+}
+
+export async function checkPlastMemHealth(payload: ElectronPlastMemHealthPayload = {}): Promise<ElectronPlastMemHealthResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    logPlastMemInfo('health:skip-stale-owner', {
+      activeOwnerId: chatBridgeOwnerId,
+      requestedOwnerId: payload.ownerId,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      databaseOk: false,
+      enabled: config.enabled,
+    }
+  }
+
+  try {
+    const baseUrl = requirePlastMemServiceBaseUrl(config)
+    const response = await postJsonText(baseUrl, healthPath, {
+      conversation_id: config.conversationId || undefined,
+    }, config.requestTimeoutMsec)
+    const health = parseJsonResponse<PlastMemHealthApiResponse>(response.text, {}, 'health')
+
+    logPlastMemInfo(health.database_ok ? 'health:ok' : 'health:database-error', {
+      counts: health.counts,
+      statusCode: response.statusCode,
+    })
+
+    return {
+      baseUrl,
+      conversationId: health.conversation_id ?? config.conversationId,
+      counts: health.counts,
+      databaseError: health.database_error ?? undefined,
+      databaseOk: health.database_ok === true,
+      enabled: config.enabled,
+      serverTime: health.server_time,
+      statusCode: response.statusCode,
+    }
+  }
+  catch (error) {
+    logPlastMemWarn('health:error', {
+      error: stringifyError(error),
+    })
+    return {
+      baseUrl: config.baseUrl,
+      databaseOk: false,
+      enabled: config.enabled,
+      error: stringifyError(error),
+    }
+  }
+}
+
 export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetrieveChatContextPayload): Promise<ElectronPlastMemRetrieveChatContextResult> {
   const config = resolvePlastMemRuntimeConfig()
 
@@ -512,6 +597,7 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
       recordRecallAttempt({
         at: Date.now(),
         baseUrl,
+        contextBlock: '',
         contextCharacters: 0,
         queryCharacters: 0,
         status: 'empty',
@@ -556,6 +642,7 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
     recordRecallAttempt({
       at: Date.now(),
       baseUrl,
+      contextBlock,
       contextCharacters: contextBlock.length,
       queryCharacters: query.length,
       status: contextBlock ? 'recalled' : 'empty',
@@ -578,6 +665,7 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
     recordRecallAttempt({
       at: Date.now(),
       baseUrl: config.baseUrl,
+      contextBlock: '',
       contextCharacters: 0,
       error: stringifyError(error),
       queryCharacters: payload.query.trim().length,
@@ -590,6 +678,19 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
       error: stringifyError(error),
       recalled: false,
     }
+  }
+}
+
+function parseJsonResponse<T>(responseText: string, fallback: T, label: string): T {
+  if (!responseText.trim())
+    return fallback
+
+  try {
+    return JSON.parse(responseText) as T
+  }
+  catch {
+    logPlastMemWarn(`${label}:parse-error`, { text: responseText.slice(0, 200) })
+    return fallback
   }
 }
 
@@ -875,7 +976,7 @@ export async function retrievePlastMemRecentMemoryRaw(payload: ElectronPlastMemR
     }
   }
 
-  if (isStaleChatBridgeOwner(payload.ownerId)) {
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
     logPlastMemInfo('recent-raw:skip-stale-owner', {
       activeOwnerId: chatBridgeOwnerId,
       requestedOwnerId: payload.ownerId,
@@ -901,13 +1002,11 @@ export async function retrievePlastMemRecentMemoryRaw(payload: ElectronPlastMemR
       limit: payload.limit ?? 10,
     }, config.requestTimeoutMsec)
 
-    let memories: ElectronPlastMemRecentMemoryRawResult['memories'] = []
-    try {
-      memories = JSON.parse(response.text)
-    }
-    catch {
-      logPlastMemWarn('recent-raw:parse-error', { text: response.text.slice(0, 200) })
-    }
+    const memories = parseJsonResponse<ElectronPlastMemRecentMemoryRawResult['memories']>(
+      response.text,
+      [],
+      'recent-raw',
+    )
 
     logPlastMemInfo('recent-raw:ok', {
       memoryCount: memories.length,
@@ -928,6 +1027,138 @@ export async function retrievePlastMemRecentMemoryRaw(payload: ElectronPlastMemR
     return {
       baseUrl: config.baseUrl,
       memories: [],
+      enabled: config.enabled,
+      error: stringifyError(error),
+    }
+  }
+}
+
+export async function retrievePlastMemSemanticMemoryRaw(payload: ElectronPlastMemSemanticMemoryRawPayload = {}): Promise<ElectronPlastMemSemanticMemoryRawResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    logPlastMemInfo('semantic-raw:skip-stale-owner', {
+      activeOwnerId: chatBridgeOwnerId,
+      requestedOwnerId: payload.ownerId,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: config.enabled,
+      memories: [],
+    }
+  }
+
+  try {
+    const baseUrl = requirePlastMemServiceBaseUrl(config)
+    const conversationId = requirePlastMemConversationId(config)
+
+    logPlastMemInfo('semantic-raw:start', {
+      baseUrl,
+      category: payload.category || config.category || undefined,
+      includeInvalid: payload.includeInvalid === true,
+      limit: payload.limit ?? 50,
+    })
+    const response = await postJsonText(baseUrl, semanticMemoryRawPath, {
+      conversation_id: conversationId,
+      category: payload.category || config.category || undefined,
+      include_invalid: payload.includeInvalid === true,
+      limit: payload.limit ?? 50,
+    }, config.requestTimeoutMsec)
+    const memories = parseJsonResponse<ElectronPlastMemSemanticMemoryRawResult['memories']>(
+      response.text,
+      [],
+      'semantic-raw',
+    )
+
+    logPlastMemInfo('semantic-raw:ok', {
+      memoryCount: memories.length,
+      statusCode: response.statusCode,
+    })
+
+    return {
+      baseUrl,
+      enabled: config.enabled,
+      memories,
+      statusCode: response.statusCode,
+    }
+  }
+  catch (error) {
+    logPlastMemWarn('semantic-raw:error', {
+      error: stringifyError(error),
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: config.enabled,
+      error: stringifyError(error),
+      memories: [],
+    }
+  }
+}
+
+export async function setPlastMemSemanticMemoryInvalid(payload: ElectronPlastMemSetSemanticMemoryInvalidPayload): Promise<ElectronPlastMemSetSemanticMemoryInvalidResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    logPlastMemInfo('semantic-set-invalid:disabled')
+    return {
+      baseUrl: config.baseUrl,
+      enabled: false,
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    logPlastMemInfo('semantic-set-invalid:skip-stale-owner', {
+      activeOwnerId: chatBridgeOwnerId,
+      requestedOwnerId: payload.ownerId,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: true,
+    }
+  }
+
+  try {
+    const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
+
+    logPlastMemInfo('semantic-set-invalid:start', {
+      baseUrl,
+      invalid: payload.invalid,
+      memoryId: payload.memoryId,
+    })
+    const response = await postJsonText(baseUrl, semanticMemorySetInvalidPath, {
+      conversation_id: conversationId,
+      memory_id: payload.memoryId,
+      invalid: payload.invalid,
+    }, config.requestTimeoutMsec)
+    const memory = parseJsonResponse<ElectronPlastMemSetSemanticMemoryInvalidResult['memory']>(
+      response.text,
+      undefined,
+      'semantic-set-invalid',
+    )
+
+    logPlastMemInfo('semantic-set-invalid:ok', {
+      invalid: payload.invalid,
+      memoryId: payload.memoryId,
+      statusCode: response.statusCode,
+    })
+
+    const result: ElectronPlastMemSetSemanticMemoryInvalidResult = {
+      baseUrl,
+      enabled: true,
+      statusCode: response.statusCode,
+    }
+    if (memory)
+      result.memory = memory
+    return result
+  }
+  catch (error) {
+    logPlastMemWarn('semantic-set-invalid:error', {
+      error: stringifyError(error),
+      invalid: payload.invalid,
+      memoryId: payload.memoryId,
+    })
+    return {
+      baseUrl: config.baseUrl,
       enabled: config.enabled,
       error: stringifyError(error),
     }
@@ -961,10 +1192,13 @@ export function createPlastMemService(params: {
   defineInvokeHandler(params.context, electronPlastMemRestartSidecar, async () => {
     return await params.sidecarManager.restart()
   })
+  defineInvokeHandler(params.context, electronPlastMemHealth, payload => checkPlastMemHealth(payload))
   defineInvokeHandler(params.context, electronPlastMemRetrieveChatContext, payload => retrievePlastMemChatContext(payload))
   defineInvokeHandler(params.context, electronPlastMemContextPreRetrieve, payload => contextPreRetrievePlastMemChatContext(payload))
   defineInvokeHandler(params.context, electronPlastMemRecentMemory, payload => retrievePlastMemRecentMemory(payload))
   defineInvokeHandler(params.context, electronPlastMemRecentMemoryRaw, payload => retrievePlastMemRecentMemoryRaw(payload))
+  defineInvokeHandler(params.context, electronPlastMemSemanticMemoryRaw, payload => retrievePlastMemSemanticMemoryRaw(payload))
+  defineInvokeHandler(params.context, electronPlastMemSetSemanticMemoryInvalid, payload => setPlastMemSemanticMemoryInvalid(payload))
   defineInvokeHandler(params.context, electronPlastMemIngestChatMessages, payload => ingestPlastMemChatMessages(payload))
   defineInvokeHandler(params.context, electronPlastMemReportChatBridgeTrace, (payload) => {
     if (isStaleChatBridgeOwner(ownerIdFromTraceDetail(payload.detail)))

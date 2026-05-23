@@ -94,8 +94,7 @@ pub async fn recent_memory(
   let mut out = String::new();
 
   if memories.is_empty() {
-    let _ = writeln!(out, "No recent memories found.");
-    return Ok(out);
+    return Ok(String::new());
   }
 
   let _ = writeln!(out, "## Recent Memories\n");
