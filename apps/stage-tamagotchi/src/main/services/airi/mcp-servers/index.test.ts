@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const appMock = vi.hoisted(() => ({
@@ -60,9 +64,12 @@ vi.mock('@modelcontextprotocol/sdk/client/stdio.js', async () => {
 describe('createMcpStdioManager', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    delete process.env.AIRI_COMPUTER_USE_MCP_RUNNER
+    delete process.env.AIRI_LOCAL_PLAST_MEM_DEV
     appMock.getPath.mockReturnValue('/tmp/airi-user-data')
     appMock.getVersion.mockReturnValue('0.10.0')
     clientMocks.close.mockResolvedValue(undefined)
+    clientMocks.connect.mockResolvedValue(undefined)
     clientMocks.listTools.mockResolvedValue({ tools: [] })
   })
 
@@ -85,5 +92,27 @@ describe('createMcpStdioManager', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toContain('connect failed')
     expect(result.error).toContain('Missing required environment variable: API_KEY')
+  })
+
+  it('auto-registers packaged computer_use MCP when its runner exists', async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), 'airi-packaged-computer-use-mcp-'))
+    const userDataDir = join(tempRoot, 'user-data')
+    const runnerPath = join(tempRoot, 'resources', 'computer-use-mcp', 'bin', 'run.mjs')
+    await mkdir(join(tempRoot, 'resources', 'computer-use-mcp', 'bin'), { recursive: true })
+    await mkdir(userDataDir, { recursive: true })
+    await writeFile(runnerPath, 'export {}\n')
+
+    process.env.AIRI_COMPUTER_USE_MCP_RUNNER = runnerPath
+    appMock.getPath.mockReturnValue(userDataDir)
+
+    const { createMcpStdioManager } = await import('./index')
+    const manager = createMcpStdioManager()
+    const result = await manager.applyAndRestart()
+    const status = manager.getRuntimeStatus().servers.find(server => server.name === 'computer_use')
+
+    expect(result.started).toEqual([{ name: 'computer_use' }])
+    expect(status?.state).toBe('running')
+    expect(status?.command).toBe(process.execPath)
+    expect(status?.args).toEqual([runnerPath])
   })
 })

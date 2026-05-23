@@ -731,9 +731,11 @@ pages:
             database: 数据库
             mcp:
               error: MCP 错误
-              missing: 未启动
+              missing: 未配置
               running: MCP 运行中
               stopped: MCP 已停止
+            mcp-missing-title: computer_use MCP 未配置
+            mcp-missing: 构建版本不会自动注入开发工作区里的 computer_use MCP 服务。请在 MCP 设置里添加它，或使用已经内置 computer-use MCP 运行时的构建。
             mcp-server: computer_use MCP
             missing: 缺失
             model: 模型

@@ -130,6 +130,39 @@ describe('plast mem Electron service', () => {
     })
   })
 
+  // ROOT CAUSE:
+  //
+  // When no conversation UUID was configured, each request generated a UUID on a
+  // freshly resolved runtime config object. Recall and ingest could then write to
+  // different Plast Mem conversations during the same app session.
+  //
+  // We keep one generated UUID for the Electron main process so recall, ingest,
+  // health checks, and inspectors address the same conversation.
+  it('keeps the auto-generated conversation UUID stable across recall and ingest', async () => {
+    delete env.COMPUTER_USE_PLAST_MEM_CONVERSATION_ID
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('known fact: stable generated conversation', { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await retrievePlastMemChatContext({
+      query: 'what should AIRI remember?',
+    })
+    await ingestPlastMemChatMessages({
+      messages: [
+        { role: 'user', content: 'Keep this in the same conversation.', timestamp: 1760000002000 },
+      ],
+    })
+
+    const [, retrieveInit] = fetchMock.mock.calls[0]!
+    const [, ingestInit] = fetchMock.mock.calls[1]!
+    const retrieveBody = JSON.parse(String(retrieveInit?.body))
+    const ingestBody = JSON.parse(String(ingestInit?.body))
+
+    expect(retrieveBody.conversation_id).toMatch(/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/)
+    expect(ingestBody.conversation_id).toBe(retrieveBody.conversation_id)
+  })
+
   it('normalizes ISO timestamps before importing chat turns', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ accepted: true }), { status: 200 }),
@@ -181,6 +214,18 @@ describe('plast mem Electron service', () => {
     expect(result.enabled).toBe(false)
     expect(result.recalled).toBe(false)
     expect(result.contextBlock).toBe('')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('does not list semantic memories when the bridge is disabled', async () => {
+    env.COMPUTER_USE_PLAST_MEM_ENABLED = 'false'
+    const fetchMock = vi.fn<typeof fetch>()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await retrievePlastMemSemanticMemoryRaw()
+
+    expect(result.enabled).toBe(false)
+    expect(result.memories).toEqual([])
     expect(fetchMock).not.toHaveBeenCalled()
   })
 

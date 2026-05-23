@@ -6,6 +6,7 @@ import type { ElectronPlastMemConfig, ElectronPlastMemSidecarStatus } from '../.
 import process from 'node:process'
 
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { access } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 
@@ -493,6 +494,12 @@ export function createPlastMemSidecarManager(): PlastMemSidecarManager {
         await updateExternalReachability(config, configuredByUser)
         if (currentStatus.state === 'running')
           return snapshotStatus(config, configuredByUser)
+
+        if (!config.conversationId) {
+          const newConversationId = randomUUID()
+          log.withFields({ conversationId: newConversationId }).log('auto-generated conversation ID')
+          config.conversationId = newConversationId
+        }
 
         const baseUrl = resolveSidecarBaseUrl(config, configuredByUser)
         if (!baseUrl)

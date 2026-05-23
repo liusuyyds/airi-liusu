@@ -13,6 +13,7 @@ import { ref } from 'vue'
 import {
   electronPlastMemAcquireChatBridge,
   electronPlastMemContextPreRetrieve,
+  electronPlastMemHealth,
   electronPlastMemIngestChatMessages,
   electronPlastMemRecentMemory,
   electronPlastMemReleaseChatBridge,
@@ -99,6 +100,7 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
   const ingestChatMessages = useElectronEventaInvoke(electronPlastMemIngestChatMessages)
   const reportChatBridgeTrace = useElectronEventaInvoke(electronPlastMemReportChatBridgeTrace)
   const releaseChatBridge = useElectronEventaInvoke(electronPlastMemReleaseChatBridge)
+  const checkHealth = useElectronEventaInvoke(electronPlastMemHealth)
   const lastRecallError = ref<string>()
   const lastRecallAt = ref<number>()
   const lastRecallContextBlock = ref('')
@@ -108,15 +110,36 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
   const lastIngestAt = ref<number>()
   const lastIngestMessageCount = ref(0)
   const lastIngestStatus = ref<IngestStatus>('idle')
+  const lastHealthCheckAt = ref<number>()
+  const lastHealthCheckOk = ref<boolean>()
   const disposeFns = ref<Array<() => void>>([])
   const initializing = ref(false)
   const leaseAcquired = ref(false)
   const recentMemoryRecalled = ref(false)
+  let healthCheckTimer: ReturnType<typeof setInterval> | undefined
+  const HEALTH_CHECK_INTERVAL_MSEC = 5 * 60 * 1000
 
   function reportTrace(event: string, detail?: Record<string, unknown>) {
     void reportChatBridgeTrace({ detail: { ownerId, ...detail }, event }).catch((error) => {
       console.warn('[plast-mem-chat-memory] failed to report trace:', error)
     })
+  }
+
+  async function performHealthCheck() {
+    try {
+      const result = await checkHealth({})
+      lastHealthCheckAt.value = Date.now()
+      lastHealthCheckOk.value = !result.error && result.databaseOk !== false
+      reportTrace('health:check', {
+        ok: lastHealthCheckOk.value,
+        databaseOk: result.databaseOk,
+      })
+    }
+    catch (error) {
+      lastHealthCheckAt.value = Date.now()
+      lastHealthCheckOk.value = false
+      reportTrace('health:error', { error: errorMessageFrom(error) ?? String(error) })
+    }
   }
 
   async function initialize() {
@@ -147,6 +170,11 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
 
     leaseAcquired.value = true
     reportTrace('initialize:registered')
+
+    void performHealthCheck()
+    healthCheckTimer = setInterval(() => {
+      void performHealthCheck()
+    }, HEALTH_CHECK_INTERVAL_MSEC)
 
     disposeFns.value.push(
       chatOrchestrator.onBeforeMessageComposed(async (message, context) => {
@@ -297,6 +325,10 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
       disposeFn()
 
     disposeFns.value = []
+    if (healthCheckTimer) {
+      clearInterval(healthCheckTimer)
+      healthCheckTimer = undefined
+    }
     if (leaseAcquired.value) {
       leaseAcquired.value = false
       void releaseChatBridge({ ownerId }).catch((error) => {
@@ -308,6 +340,8 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
   return {
     dispose,
     initialize,
+    lastHealthCheckAt,
+    lastHealthCheckOk,
     lastIngestAt,
     lastIngestError,
     lastIngestMessageCount,

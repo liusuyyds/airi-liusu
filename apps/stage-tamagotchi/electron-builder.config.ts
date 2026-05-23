@@ -15,6 +15,8 @@ const stageTamagotchiDir = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(stageTamagotchiDir, '../..')
 const plastMemDir = resolve(repoRoot, 'services', 'plast-mem')
 const plastMemReleaseDir = resolve(plastMemDir, 'target', 'release')
+const computerUseMcpDir = resolve(repoRoot, 'services', 'computer-use-mcp')
+const computerUseMcpDistDir = resolve(computerUseMcpDir, 'dist')
 
 function hasXcode26OrAbove() {
   if (!isMacOS)
@@ -56,6 +58,30 @@ function cargoCommand() {
 
 function plastMemBinaryName(electronPlatformName: string) {
   return electronPlatformName === 'win32' ? 'plastmem.exe' : 'plastmem'
+}
+
+function buildComputerUseMcpBundle() {
+  if ((process.env.AIRI_SKIP_COMPUTER_USE_MCP_BUILD ?? '').trim() === '1') {
+    console.warn('[electron-builder/config] Skipping computer-use MCP build because AIRI_SKIP_COMPUTER_USE_MCP_BUILD=1.')
+    return
+  }
+
+  const manifestPath = resolve(computerUseMcpDir, 'package.json')
+  if (!existsSync(manifestPath)) {
+    throw new Error(`computer-use MCP package.json not found at ${manifestPath}.`)
+  }
+
+  console.warn('[electron-builder/config] Building computer-use MCP bundle.')
+  execSync('pnpm -F @proj-airi/computer-use-mcp build', {
+    cwd: repoRoot,
+    env: process.env,
+    stdio: 'inherit',
+  })
+
+  const runnerPath = resolve(computerUseMcpDistDir, 'bin', 'run.mjs')
+  if (!existsSync(runnerPath)) {
+    throw new Error(`computer-use MCP runner was not produced at ${runnerPath}.`)
+  }
 }
 
 function buildPlastMemSidecarBinary(electronPlatformName: string) {
@@ -153,8 +179,14 @@ export default {
       to: 'plast-mem/bin',
       filter: ['plastmem.exe', 'plastmem', '*.dll'],
     },
+    {
+      from: computerUseMcpDistDir,
+      to: 'computer-use-mcp',
+      filter: ['**/*'],
+    },
   ],
   beforePack: async (context) => {
+    buildComputerUseMcpBundle()
     buildPlastMemSidecarBinary(context.electronPlatformName)
   },
   extraMetadata: {

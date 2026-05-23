@@ -760,9 +760,11 @@ pages:
             database: Database
             mcp:
               error: MCP error
-              missing: Not started
+              missing: Not configured
               running: MCP running
               stopped: MCP stopped
+            mcp-missing-title: computer_use MCP is not configured
+            mcp-missing: Packaged builds do not auto-inject the development computer_use MCP server. Add it in MCP settings or use a build that bundles the computer-use MCP runtime.
             mcp-server: computer_use MCP
             missing: Missing
             model: Model

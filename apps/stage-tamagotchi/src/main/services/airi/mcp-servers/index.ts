@@ -14,14 +14,16 @@ import type {
   ElectronMcpToolDescriptor,
 } from '../../../../shared/eventa'
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { env, platform } from 'node:process'
+import process, { env, platform } from 'node:process'
+
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 import { useLogg } from '@guiiai/logg'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { defineInvokeHandler } from '@moeru/eventa'
+import { errorMessageFrom } from '@moeru/std'
 import { app, shell } from 'electron'
 
 import {
@@ -79,11 +81,7 @@ const localDevPassthroughEnvKeys = new Set([
 ])
 
 function stringifyError(error: unknown) {
-  if (error instanceof Error) {
-    return error.message
-  }
-
-  return String(error)
+  return errorMessageFrom(error) ?? String(error)
 }
 
 function parseBoolean(value: string | undefined, fallback: boolean) {
@@ -105,6 +103,16 @@ function isLocalPlastMemDevEnabled() {
 
 function defaultPnpmCommand() {
   return platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+}
+
+async function pathExists(path: string) {
+  try {
+    await access(path)
+    return true
+  }
+  catch {
+    return false
+  }
 }
 
 function collectLocalDevComputerUseEnv() {
@@ -156,6 +164,58 @@ function withLocalDevComputerUseServer(config: ElectronMcpStdioConfigFile): Elec
       },
     },
   }
+}
+
+async function resolvePackagedComputerUseMcpRunner() {
+  const configured = env.AIRI_COMPUTER_USE_MCP_RUNNER?.trim()
+  const candidates = [
+    configured,
+    process.resourcesPath ? join(process.resourcesPath, 'computer-use-mcp', 'bin', 'run.mjs') : undefined,
+  ]
+
+  for (const candidate of candidates) {
+    if (candidate && await pathExists(candidate))
+      return candidate
+  }
+
+  return undefined
+}
+
+function createPackagedComputerUseEnv() {
+  return {
+    ...collectLocalDevComputerUseEnv(),
+    ELECTRON_RUN_AS_NODE: '1',
+  }
+}
+
+async function withPackagedComputerUseServer(config: ElectronMcpStdioConfigFile): Promise<ElectronMcpStdioConfigFile> {
+  if (config.mcpServers[localDevComputerUseServerName])
+    return config
+
+  const runner = await resolvePackagedComputerUseMcpRunner()
+  if (!runner)
+    return config
+
+  return {
+    ...config,
+    mcpServers: {
+      ...config.mcpServers,
+      [localDevComputerUseServerName]: {
+        command: process.execPath,
+        args: [runner],
+        cwd: dirname(dirname(runner)),
+        enabled: true,
+        env: createPackagedComputerUseEnv(),
+      },
+    },
+  }
+}
+
+async function withDefaultComputerUseServer(config: ElectronMcpStdioConfigFile): Promise<ElectronMcpStdioConfigFile> {
+  if (isLocalPlastMemDevEnabled())
+    return withLocalDevComputerUseServer(config)
+
+  return withPackagedComputerUseServer(config)
 }
 
 function getConfigPath() {
@@ -288,7 +348,7 @@ export function createMcpStdioManager(): McpStdioManager {
 
   const applyAndRestart = async (): Promise<ElectronMcpStdioApplyResult> => {
     const { path } = await ensureConfigFile()
-    const config = withLocalDevComputerUseServer(await readConfigFile(path))
+    const config = await withDefaultComputerUseServer(await readConfigFile(path))
 
     await stopAll()
     runtimeStatuses.clear()

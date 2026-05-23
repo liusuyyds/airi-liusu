@@ -18,7 +18,7 @@ import { errorMessageFrom } from '@moeru/std'
 import { useElectronEventaInvoke } from '@proj-airi/electron-vueuse'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
 import { Button, Callout, FieldCheckbox, FieldInput, Input } from '@proj-airi/ui'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import {
@@ -137,6 +137,9 @@ const isPreviewingRecall = ref(false)
 const selectedSourceMemoryIds = ref<string[]>([])
 const activeDetailPanel = ref<DetailPanelId>('config')
 let refreshTimer: ReturnType<typeof setInterval> | undefined
+let pendingConfigSave = false
+let pendingConfigRefreshAfterSave = false
+let suppressConfigAutoSave = false
 
 const statusKind = computed<BridgeStatusKind>(() => {
   if (!status.value)
@@ -408,6 +411,13 @@ function formatAttemptTime(value: number | undefined) {
   return new Date(value).toLocaleTimeString()
 }
 
+async function replaceConfigDraft(config: ElectronPlastMemConfig) {
+  suppressConfigAutoSave = true
+  configDraft.value = config
+  await nextTick()
+  suppressConfigAutoSave = false
+}
+
 async function refreshConfig() {
   if (isLoadingConfig.value)
     return
@@ -415,7 +425,7 @@ async function refreshConfig() {
   isLoadingConfig.value = true
   configError.value = ''
   try {
-    configDraft.value = await invokeGetPlastMemConfig()
+    await replaceConfigDraft(await invokeGetPlastMemConfig())
   }
   catch (error) {
     configError.value = errorMessageFrom(error) ?? 'Unknown error'
@@ -426,16 +436,30 @@ async function refreshConfig() {
 }
 
 async function saveConfig(refreshAfterSave: boolean) {
-  if (isSavingConfig.value)
+  if (isSavingConfig.value) {
+    pendingConfigSave = true
+    pendingConfigRefreshAfterSave ||= refreshAfterSave
     return false
+  }
 
   isSavingConfig.value = true
   configError.value = ''
   configSavedMessage.value = ''
+  let shouldRefreshAfterSave = refreshAfterSave
   try {
-    configDraft.value = await invokeApplyPlastMemConfig({ ...configDraft.value })
+    do {
+      pendingConfigSave = false
+      shouldRefreshAfterSave ||= pendingConfigRefreshAfterSave
+      pendingConfigRefreshAfterSave = false
+
+      const savedConfig = await invokeApplyPlastMemConfig({ ...configDraft.value })
+      if (!pendingConfigSave) {
+        await replaceConfigDraft(savedConfig)
+      }
+    } while (pendingConfigSave)
+
     configSavedMessage.value = tn('config.saved')
-    if (refreshAfterSave) {
+    if (shouldRefreshAfterSave) {
       await refreshStatus()
       await refreshSidecarStatus()
       await refreshHealth()
@@ -799,6 +823,29 @@ function semanticMemoryStatusBadgeClass(memory: ElectronPlastMemSemanticMemory) 
 
 watch(includeInvalidSemanticMemories, () => {
   void refreshSemanticMemories()
+})
+
+watch(activeDetailPanel, (panel) => {
+  if (panel === 'health')
+    void refreshHealth()
+  else if (panel === 'recent')
+    void refreshRecentMemories()
+  else if (panel === 'semantic')
+    void refreshSemanticMemories()
+  else if (panel === 'runtime')
+    void refreshStatus()
+})
+
+watch([
+  () => configDraft.value.enableChatIngest,
+  () => configDraft.value.enableChatRetrieve,
+  () => configDraft.value.enableContextPreRetrieve,
+  () => configDraft.value.enableRecentMemory,
+], () => {
+  if (suppressConfigAutoSave)
+    return
+
+  void saveConfig(false)
 })
 
 function contextSourceLabel(source: string) {
@@ -1253,11 +1300,6 @@ onBeforeUnmount(() => {
             @click="refreshConfig"
           />
           <Button
-            variant="secondary" size="sm" :loading="isSavingConfig"
-            icon="i-solar:diskette-bold-duotone" :label="tn('config.save')"
-            @click="saveConfig(false)"
-          />
-          <Button
             size="sm" :loading="isTestingConnection || isSavingConfig || isRefreshing"
             icon="i-solar:plug-circle-bold-duotone" :label="tn('config.save-and-check')"
             @click="testConnection(true)"
@@ -1387,6 +1429,9 @@ onBeforeUnmount(() => {
 
         <Callout v-if="statusError" theme="orange" :label="tn('runtime.status-error')">
           {{ statusError }}
+        </Callout>
+        <Callout v-else-if="status && !status.mcpServer" theme="orange" :label="tn('runtime.mcp-missing-title')">
+          {{ tn('runtime.mcp-missing') }}
         </Callout>
         <Callout v-else-if="status?.error" theme="orange" :label="tn('runtime.service-error')">
           {{ status.error }}

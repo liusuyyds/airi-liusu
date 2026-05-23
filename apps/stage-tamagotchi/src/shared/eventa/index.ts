@@ -293,7 +293,7 @@ export const defaultElectronPlastMemConfig: ElectronPlastMemConfig = {
   enableContextPreRetrieve: true,
   enableRecentMemory: true,
   episodicLimit: 4,
-  maxContextCharacters: 6000,
+  maxContextCharacters: 5000,
   openaiApiKey: '',
   openaiBaseUrl: 'https://api.siliconflow.cn/v1/',
   openaiChatMaxTokens: 2048,
@@ -301,7 +301,7 @@ export const defaultElectronPlastMemConfig: ElectronPlastMemConfig = {
   openaiEmbeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
   openaiRequestTimeoutSeconds: 120,
   requestTimeoutMsec: 10000,
-  semanticLimit: 8,
+  semanticLimit: 12,
   workspaceKey: 'airi-main',
 }
 
@@ -423,11 +423,12 @@ export interface ElectronPlastMemChatBridgeLeaseResult {
 }
 
 export interface ElectronPlastMemRetrieveChatContextPayload {
+  category?: string
+  detail?: ElectronPlastMemContextDetail
   ownerId?: string
   query: string
+  queryEmbedding?: number[]
   semanticLimit?: number
-  detail?: ElectronPlastMemContextDetail
-  category?: string
 }
 
 export interface ElectronPlastMemRetrieveChatContextResult {
@@ -458,11 +459,12 @@ export interface ElectronPlastMemIngestChatMessagesResult {
 }
 
 export interface ElectronPlastMemContextPreRetrievePayload {
+  category?: string
+  detail?: ElectronPlastMemContextDetail
   ownerId?: string
   query: string
+  queryEmbedding?: number[]
   semanticLimit?: number
-  detail?: ElectronPlastMemContextDetail
-  category?: string
 }
 
 export interface ElectronPlastMemContextPreRetrieveResult {
@@ -573,6 +575,7 @@ export interface ElectronPlastMemRetrieveMemoryRawPayload {
   episodicLimit?: number
   ownerId?: string
   query: string
+  queryEmbedding?: number[]
   semanticLimit?: number
 }
 
@@ -594,6 +597,21 @@ export const electronPlastMemRecentMemoryRaw = defineInvokeEventa<ElectronPlastM
 export const electronPlastMemSemanticMemoryRaw = defineInvokeEventa<ElectronPlastMemSemanticMemoryRawResult, ElectronPlastMemSemanticMemoryRawPayload>('eventa:invoke:electron:plast-mem:semantic-memory-raw')
 export const electronPlastMemSetSemanticMemoryInvalid = defineInvokeEventa<ElectronPlastMemSetSemanticMemoryInvalidResult, ElectronPlastMemSetSemanticMemoryInvalidPayload>('eventa:invoke:electron:plast-mem:semantic-memory:set-invalid')
 export const electronPlastMemIngestChatMessages = defineInvokeEventa<ElectronPlastMemIngestChatMessagesResult, ElectronPlastMemIngestChatMessagesPayload>('eventa:invoke:electron:plast-mem:ingest-chat-messages')
+export interface ElectronPlastMemAddMessagePayload {
+  content: string
+  ownerId?: string
+  role: 'assistant' | 'user'
+  timestamp?: number
+}
+
+export interface ElectronPlastMemAddMessageResult {
+  accepted: boolean
+  enabled: boolean
+  error?: string
+  statusCode?: number
+}
+
+export const electronPlastMemAddMessage = defineInvokeEventa<ElectronPlastMemAddMessageResult, ElectronPlastMemAddMessagePayload>('eventa:invoke:electron:plast-mem:add-message')
 export const electronPlastMemReportChatBridgeTrace = defineInvokeEventa<void, ElectronPlastMemChatBridgeTracePayload>('eventa:invoke:electron:plast-mem:report-chat-bridge-trace')
 export const electronPlastMemAcquireChatBridge = defineInvokeEventa<ElectronPlastMemChatBridgeLeaseResult, ElectronPlastMemChatBridgeLeasePayload>('eventa:invoke:electron:plast-mem:acquire-chat-bridge')
 export const electronPlastMemReleaseChatBridge = defineInvokeEventa<void, ElectronPlastMemChatBridgeLeasePayload>('eventa:invoke:electron:plast-mem:release-chat-bridge')
