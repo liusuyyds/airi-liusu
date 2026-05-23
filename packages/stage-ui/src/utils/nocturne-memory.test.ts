@@ -118,4 +118,53 @@ describe('cleanupNocturneMemoryContext', () => {
     expect(cleaned).toHaveLength(2)
     expect(cleaned.some(message => message.role === 'tool' && (message as { tool_call_id?: string }).tool_call_id === 'read-1')).toBe(true)
   })
+
+  it('prunes JSON-wrapped read_memory errors even when the MCP layer marked the call as successful', () => {
+    /**
+     * @example
+     * cleanupNocturneMemoryContext([
+     *   assistantWithMcpCall('read-missing', 'nocturne-memory::read_memory'),
+     *   {
+     *     role: 'tool',
+     *     tool_call_id: 'read-missing',
+     *     content: '{"content":[{"type":"text","text":"Error: URI not found."}],"isError":false}',
+     *   },
+     * ])
+     * // prunes the read because Nocturne encodes the domain failure in JSON content.
+     */
+    const messages = [
+      {
+        role: 'assistant',
+        content: '',
+        id: 'assistant-read-missing',
+        tool_calls: [{
+          id: 'read-missing',
+          type: 'function',
+          function: {
+            name: 'builtIn_mcpCallTool',
+            arguments: JSON.stringify({
+              name: 'nocturne-memory::read_memory',
+              arguments: JSON.stringify({ uri: 'core://missing' }),
+            }),
+          },
+        }],
+      } as ChatHistoryItem,
+      {
+        role: 'tool',
+        tool_call_id: 'read-missing',
+        content: JSON.stringify({
+          content: [{ type: 'text', text: 'Error: URI not found.' }],
+          isError: false,
+        }),
+        id: 'tool-read-missing',
+      } as ChatHistoryItem,
+    ]
+
+    const cleaned = cleanupNocturneMemoryContext(messages)
+    const cleanedAssistant = cleaned[0] as { tool_calls?: unknown[] }
+
+    expect(cleaned).toHaveLength(1)
+    expect(cleaned.some(message => message.role === 'tool' && (message as { tool_call_id?: string }).tool_call_id === 'read-missing')).toBe(false)
+    expect(cleanedAssistant.tool_calls).toBeUndefined()
+  })
 })

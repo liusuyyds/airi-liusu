@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { RunStateManager } from '../state'
 import { createPtySession, isPtyAvailable } from '../terminal/pty-runner'
 import { createTestConfig } from '../test-fixtures'
+import { getBrowserAgentLaunchContext } from './browser-agent'
 import { registerComputerUseTools } from './register-tools'
 
 vi.mock('../terminal/pty-runner', () => ({
@@ -19,6 +20,17 @@ vi.mock('../terminal/pty-runner', () => ({
   readPtyScreen: vi.fn(),
   resizePty: vi.fn(),
   writeToPty: vi.fn(),
+}))
+
+vi.mock('./browser-agent', () => ({
+  getBrowserAgentLaunchContext: vi.fn(() => ({
+    cdpUrl: 'http://localhost:9222',
+    cliCwd: '/tmp/computer_use',
+    cliModule: 'google_computer_use.cli',
+    pythonCommand: 'python3',
+    rootExists: true,
+  })),
+  runBrowserAgentTask: vi.fn(),
 }))
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<any>
@@ -39,6 +51,9 @@ function createMockServer() {
       }
 
       return await handler(args)
+    },
+    listRegisteredToolNames() {
+      return [...handlers.keys()]
     },
   }
 }
@@ -95,6 +110,13 @@ describe('registerComputerUseTools: PTY approval bridge', () => {
       taskMemory: {},
     } as unknown as ComputerUseServerRuntime
     vi.clearAllMocks()
+    vi.mocked(getBrowserAgentLaunchContext).mockReturnValue({
+      cdpUrl: 'http://localhost:9222',
+      cliCwd: '/tmp/computer_use',
+      cliModule: 'google_computer_use.cli',
+      pythonCommand: 'python3',
+      rootExists: true,
+    })
   })
 
   it('executes approved pending pty_create through desktop_approve_pending_action', async () => {
@@ -256,6 +278,28 @@ describe('registerComputerUseTools: PTY approval bridge', () => {
       field: 'optsJson',
     })
     expect((runtime.browserDomBridge.triggerEvent as any)).not.toHaveBeenCalled()
+  })
+
+  it('does not register browser agent tools when the embedded workspace is missing', () => {
+    vi.mocked(getBrowserAgentLaunchContext).mockReturnValue({
+      cdpUrl: 'http://localhost:9222',
+      cliCwd: '/tmp/missing-computer_use',
+      cliModule: 'google_computer_use.cli',
+      pythonCommand: 'python3',
+      rootExists: false,
+    })
+
+    const { server, listRegisteredToolNames } = createMockServer()
+    registerComputerUseTools({
+      server,
+      runtime,
+      executeAction: vi.fn(),
+      enableTestTools: false,
+    })
+
+    expect(listRegisteredToolNames()).not.toContain('browser_agent_get_status')
+    expect(listRegisteredToolNames()).not.toContain('browser_agent_run')
+    expect(listRegisteredToolNames()).toContain('browser_dom_get_bridge_status')
   })
 
   it('rejects browser_dom_click when the connected extension transport is read-only', async () => {

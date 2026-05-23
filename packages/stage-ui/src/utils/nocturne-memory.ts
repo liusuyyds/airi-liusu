@@ -182,6 +182,14 @@ function extractErrorFlagFromJsonResult(raw: string): boolean | undefined {
   }
 }
 
+function isJsonWrappedNocturneErrorResult(raw: string): boolean {
+  if (extractErrorFlagFromJsonResult(raw) === true)
+    return true
+
+  const extractedText = extractTextFromJsonResult(raw)
+  return extractedText ? /^Error:\s+\S+/u.test(extractedText.trimStart()) : false
+}
+
 /**
  * Detects whether a `read_memory` result represents an error.
  *
@@ -198,11 +206,8 @@ function isErrorResult(
     return false
   if (tr.isError)
     return true
-  if (typeof tr.result === 'string') {
-    const jsonErrorFlag = extractErrorFlagFromJsonResult(tr.result)
-    if (jsonErrorFlag !== undefined)
-      return jsonErrorFlag
-  }
+  if (typeof tr.result === 'string' && isJsonWrappedNocturneErrorResult(tr.result))
+    return true
   const content = getToolResultContent(toolResults, toolCallId)
   if (content && /^Error:\s+\S+/u.test(content.trimStart()))
     return true
@@ -339,7 +344,7 @@ export function cleanupNocturneMemoryContext(messages: ChatHistoryItem[]): ChatH
     const tm = msg as { tool_call_id?: string, content?: string }
     if (!tm.tool_call_id || !tm.content)
       continue
-    if (extractErrorFlagFromJsonResult(tm.content) === true) {
+    if (isJsonWrappedNocturneErrorResult(tm.content)) {
       errorCallIds.add(tm.tool_call_id)
     }
   }

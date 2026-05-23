@@ -389,94 +389,96 @@ export function registerComputerUseTools(params: RegisterComputerUseToolsOptions
     },
   )
 
-  server.tool(
-    'browser_agent_get_status',
-    {},
-    async () => {
-      const launchContext = getBrowserAgentLaunchContext()
-      return {
-        content: [
-          textContent(`Browser agent root ${launchContext.rootExists ? 'ready' : 'missing'} at ${launchContext.cliCwd}; python=${launchContext.pythonCommand}; cdp=${launchContext.cdpUrl}.`),
-        ],
-        structuredContent: {
-          status: launchContext.rootExists ? 'ok' : 'missing',
-          browserAgent: launchContext,
-        },
-      }
-    },
-  )
-
-  server.tool(
-    'browser_agent_run',
-    {
-      instruction: z.string().min(1).describe('Goal-driven browser instruction for the autonomous browser agent.'),
-      agent: z.enum(['google', 'kimi']).optional().describe('Browser agent backend to use (default: google).'),
-      cdpUrl: z.string().optional().describe('Optional Chrome CDP endpoint override, e.g. http://localhost:9222'),
-      maxTurns: z.number().int().min(1).max(80).optional().describe('Maximum browser-agent reasoning turns (default: 30).'),
-      timeoutMs: z.number().int().min(1_000).max(900_000).optional().describe('End-to-end timeout for the delegated browser task (default: 180000).'),
-    },
-    async ({ instruction, agent, cdpUrl, maxTurns, timeoutMs }) => {
-      const launchContext = getBrowserAgentLaunchContext({ cdpUrl })
-
-      if (!launchContext.rootExists) {
+  if (getBrowserAgentLaunchContext().rootExists) {
+    server.tool(
+      'browser_agent_get_status',
+      {},
+      async () => {
+        const launchContext = getBrowserAgentLaunchContext()
         return {
-          isError: true,
           content: [
-            textContent(`Browser agent root is missing: ${launchContext.cliCwd}.`),
+            textContent(`Browser agent root ${launchContext.rootExists ? 'ready' : 'missing'} at ${launchContext.cliCwd}; python=${launchContext.pythonCommand}; cdp=${launchContext.cdpUrl}.`),
           ],
           structuredContent: {
-            status: 'missing',
+            status: launchContext.rootExists ? 'ok' : 'missing',
             browserAgent: launchContext,
           },
         }
-      }
+      },
+    )
 
-      try {
-        const result = await runBrowserAgentTask({
-          instruction,
-          agent,
-          cdpUrl,
-          maxTurns,
-          timeoutMs,
-        })
+    server.tool(
+      'browser_agent_run',
+      {
+        instruction: z.string().min(1).describe('Goal-driven browser instruction for the autonomous browser agent.'),
+        agent: z.enum(['google', 'kimi']).optional().describe('Browser agent backend to use (default: google).'),
+        cdpUrl: z.string().optional().describe('Optional Chrome CDP endpoint override, e.g. http://localhost:9222'),
+        maxTurns: z.number().int().min(1).max(80).optional().describe('Maximum browser-agent reasoning turns (default: 30).'),
+        timeoutMs: z.number().int().min(1_000).max(900_000).optional().describe('End-to-end timeout for the delegated browser task (default: 180000).'),
+      },
+      async ({ instruction, agent, cdpUrl, maxTurns, timeoutMs }) => {
+        const launchContext = getBrowserAgentLaunchContext({ cdpUrl })
 
-        return {
-          content: [
-            textContent(`Browser agent ${result.success ? 'completed' : 'stopped'} on ${result.payload?.url || result.cdpUrl}.`),
-          ],
-          structuredContent: {
-            status: result.success ? 'completed' : 'failed',
-            browserAgent: {
-              instruction: result.instruction,
-              agent: result.agent,
-              cdpUrl: result.cdpUrl,
-              cliCwd: result.cliCwd,
-              cliModule: result.cliModule,
-              pythonCommand: result.pythonCommand,
-              exitCode: result.exitCode,
-              timedOut: result.timedOut,
-              stderrLines: result.stderrLines,
+        if (!launchContext.rootExists) {
+          return {
+            isError: true,
+            content: [
+              textContent(`Browser agent root is missing: ${launchContext.cliCwd}.`),
+            ],
+            structuredContent: {
+              status: 'missing',
+              browserAgent: launchContext,
             },
-            payload: result.payload,
-          },
+          }
         }
-      }
-      catch (error) {
-        const message = errorMessageFrom(error) ?? String(error)
-        return {
-          isError: true,
-          content: [
-            textContent(`Browser agent failed: ${message}`),
-          ],
-          structuredContent: {
-            status: 'error',
-            browserAgent: launchContext,
-            error: message,
-          },
+
+        try {
+          const result = await runBrowserAgentTask({
+            instruction,
+            agent,
+            cdpUrl,
+            maxTurns,
+            timeoutMs,
+          })
+
+          return {
+            content: [
+              textContent(`Browser agent ${result.success ? 'completed' : 'stopped'} on ${result.payload?.url || result.cdpUrl}.`),
+            ],
+            structuredContent: {
+              status: result.success ? 'completed' : 'failed',
+              browserAgent: {
+                instruction: result.instruction,
+                agent: result.agent,
+                cdpUrl: result.cdpUrl,
+                cliCwd: result.cliCwd,
+                cliModule: result.cliModule,
+                pythonCommand: result.pythonCommand,
+                exitCode: result.exitCode,
+                timedOut: result.timedOut,
+                stderrLines: result.stderrLines,
+              },
+              payload: result.payload,
+            },
+          }
         }
-      }
-    },
-  )
+        catch (error) {
+          const message = errorMessageFrom(error) ?? String(error)
+          return {
+            isError: true,
+            content: [
+              textContent(`Browser agent failed: ${message}`),
+            ],
+            structuredContent: {
+              status: 'error',
+              browserAgent: launchContext,
+              error: message,
+            },
+          }
+        }
+      },
+    )
+  }
 
   server.tool(
     'browser_dom_get_active_tab',
