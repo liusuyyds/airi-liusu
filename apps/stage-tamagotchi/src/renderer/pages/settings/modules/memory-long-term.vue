@@ -17,7 +17,8 @@ import type {
 import { errorMessageFrom } from '@moeru/std'
 import { useElectronEventaInvoke } from '@proj-airi/electron-vueuse'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
-import { Button, Callout, FieldCheckbox, FieldInput, Input } from '@proj-airi/ui'
+import { Button, Callout, Collapsible, FieldCheckbox, FieldInput, Input } from '@proj-airi/ui'
+import { useDebounceFn } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -40,7 +41,14 @@ import {
 
 type BridgeStatusKind = 'checking' | 'disabled' | 'offline' | 'online'
 type ConnectionCheckKind = 'error' | 'ok' | 'unknown'
+type ConfigSaveSyncMode = 'always' | 'ifStable' | 'never'
 type DetailPanelId = 'config' | 'runtime' | 'diagnostics' | 'semantic' | 'recent' | 'health' | 'about'
+
+interface ConfigSaveOptions {
+  refreshAfterSave: boolean
+  showSavedMessage: boolean
+  syncDraft: ConfigSaveSyncMode
+}
 
 const { t } = useI18n()
 const tn = (key: string, params?: Record<string, unknown>) => t(`settings.pages.modules.memory-long-term.sections.plast-mem-bridge.${key}`, params ?? {})
@@ -106,6 +114,7 @@ const isLoadingConfig = ref(false)
 const isSavingConfig = ref(false)
 const isTestingConnection = ref(false)
 const apiKeyVisible = ref(false)
+const advancedConfigVisible = ref(false)
 const status = ref<ElectronPlastMemRuntimeStatus>()
 const statusError = ref('')
 const isRefreshing = ref(false)
@@ -137,9 +146,13 @@ const isPreviewingRecall = ref(false)
 const selectedSourceMemoryIds = ref<string[]>([])
 const activeDetailPanel = ref<DetailPanelId>('config')
 let refreshTimer: ReturnType<typeof setInterval> | undefined
+let activeSavePromise: Promise<boolean> | undefined
 let pendingConfigSave = false
 let pendingConfigRefreshAfterSave = false
+let pendingConfigShowSavedMessage = false
+let pendingConfigSyncDraft: ConfigSaveSyncMode = 'never'
 let suppressConfigAutoSave = false
+let configDraftRevision = 0
 
 const statusKind = computed<BridgeStatusKind>(() => {
   if (!status.value)
@@ -195,6 +208,11 @@ const recallStatusLabel = computed(() => tn(`chat-diagnostics.recall.status.${re
 const ingestStatusLabel = computed(() => tn(`chat-diagnostics.ingest.status.${ingestDiagnostics.value.status}`))
 const recallContextPreview = computed(() => recallDiagnostics.value.contextBlock?.trim() ?? '')
 const hasRecallContextPreview = computed(() => recallContextPreview.value.length > 0)
+const advancedConfigSummary = computed(() => [
+  tn('config.fields.conversation-id.label'),
+  tn('config.fields.workspace-key.label'),
+  tn('config.fields.request-timeout-msec.label'),
+].join(' / '))
 const normalizedManualImportMessageLimit = computed(() => Math.max(1, Number(manualImportMessageLimit.value) || 20))
 const importableChatMessages = computed(() => chatSessionStore.messages
   .map(toPlastMemChatMessage)
@@ -411,6 +429,14 @@ function formatAttemptTime(value: number | undefined) {
   return new Date(value).toLocaleTimeString()
 }
 
+function mergeConfigSaveSyncMode(current: ConfigSaveSyncMode, next: ConfigSaveSyncMode): ConfigSaveSyncMode {
+  if (current === 'always' || next === 'always')
+    return 'always'
+  if (current === 'ifStable' || next === 'ifStable')
+    return 'ifStable'
+  return 'never'
+}
+
 async function replaceConfigDraft(config: ElectronPlastMemConfig) {
   suppressConfigAutoSave = true
   configDraft.value = config
@@ -435,44 +461,61 @@ async function refreshConfig() {
   }
 }
 
-async function saveConfig(refreshAfterSave: boolean) {
+async function saveConfig(options: ConfigSaveOptions) {
   if (isSavingConfig.value) {
     pendingConfigSave = true
-    pendingConfigRefreshAfterSave ||= refreshAfterSave
-    return false
+    pendingConfigRefreshAfterSave ||= options.refreshAfterSave
+    pendingConfigShowSavedMessage ||= options.showSavedMessage
+    pendingConfigSyncDraft = mergeConfigSaveSyncMode(pendingConfigSyncDraft, options.syncDraft)
+    return await (activeSavePromise ?? Promise.resolve(false))
   }
 
-  isSavingConfig.value = true
-  configError.value = ''
-  configSavedMessage.value = ''
-  let shouldRefreshAfterSave = refreshAfterSave
-  try {
-    do {
-      pendingConfigSave = false
-      shouldRefreshAfterSave ||= pendingConfigRefreshAfterSave
-      pendingConfigRefreshAfterSave = false
+  activeSavePromise = (async () => {
+    isSavingConfig.value = true
+    configError.value = ''
+    configSavedMessage.value = ''
+    let shouldRefreshAfterSave = options.refreshAfterSave
+    let shouldShowSavedMessage = options.showSavedMessage
+    let syncDraftMode = options.syncDraft
+    try {
+      do {
+        pendingConfigSave = false
+        shouldRefreshAfterSave ||= pendingConfigRefreshAfterSave
+        shouldShowSavedMessage ||= pendingConfigShowSavedMessage
+        syncDraftMode = mergeConfigSaveSyncMode(syncDraftMode, pendingConfigSyncDraft)
+        pendingConfigRefreshAfterSave = false
+        pendingConfigShowSavedMessage = false
+        pendingConfigSyncDraft = 'never'
 
-      const savedConfig = await invokeApplyPlastMemConfig({ ...configDraft.value })
-      if (!pendingConfigSave) {
-        await replaceConfigDraft(savedConfig)
+        const saveRevision = configDraftRevision
+        const savedConfig = await invokeApplyPlastMemConfig({ ...configDraft.value })
+        const shouldSyncDraft = syncDraftMode === 'always'
+          || (syncDraftMode === 'ifStable' && !pendingConfigSave && saveRevision === configDraftRevision)
+
+        if (shouldSyncDraft)
+          await replaceConfigDraft(savedConfig)
+      } while (pendingConfigSave)
+
+      if (shouldShowSavedMessage)
+        configSavedMessage.value = tn('config.saved')
+      if (shouldRefreshAfterSave) {
+        await refreshStatus()
+        await refreshSidecarStatus()
+        await refreshHealth()
       }
-    } while (pendingConfigSave)
-
-    configSavedMessage.value = tn('config.saved')
-    if (shouldRefreshAfterSave) {
-      await refreshStatus()
-      await refreshSidecarStatus()
-      await refreshHealth()
+      return true
     }
-    return true
-  }
-  catch (error) {
-    configError.value = errorMessageFrom(error) ?? 'Unknown error'
-    return false
-  }
-  finally {
-    isSavingConfig.value = false
-  }
+    catch (error) {
+      configError.value = errorMessageFrom(error) ?? 'Unknown error'
+      return false
+    }
+    finally {
+      isSavingConfig.value = false
+      activeSavePromise = undefined
+    }
+  })()
+
+  return await activeSavePromise
 }
 
 async function testConnection(saveBeforeTest: boolean) {
@@ -484,7 +527,11 @@ async function testConnection(saveBeforeTest: boolean) {
   configSavedMessage.value = ''
   try {
     if (saveBeforeTest) {
-      const saved = await saveConfig(false)
+      const saved = await saveConfig({
+        refreshAfterSave: false,
+        showSavedMessage: false,
+        syncDraft: 'always',
+      })
       if (!saved)
         return
     }
@@ -565,7 +612,11 @@ async function startSidecar() {
   isStartingSidecar.value = true
   sidecarError.value = ''
   try {
-    const saved = await saveConfig(false)
+    const saved = await saveConfig({
+      refreshAfterSave: false,
+      showSavedMessage: false,
+      syncDraft: 'always',
+    })
     if (!saved)
       return
 
@@ -609,7 +660,11 @@ async function restartSidecar() {
   isRestartingSidecar.value = true
   sidecarError.value = ''
   try {
-    const saved = await saveConfig(false)
+    const saved = await saveConfig({
+      refreshAfterSave: false,
+      showSavedMessage: false,
+      syncDraft: 'always',
+    })
     if (!saved)
       return
 
@@ -836,17 +891,21 @@ watch(activeDetailPanel, (panel) => {
     void refreshStatus()
 })
 
-watch([
-  () => configDraft.value.enableChatIngest,
-  () => configDraft.value.enableChatRetrieve,
-  () => configDraft.value.enableContextPreRetrieve,
-  () => configDraft.value.enableRecentMemory,
-], () => {
+const debouncedAutoSaveConfig = useDebounceFn(() => {
+  void saveConfig({
+    refreshAfterSave: false,
+    showSavedMessage: true,
+    syncDraft: 'ifStable',
+  })
+}, 600, { maxWait: 1500 })
+
+watch(() => configDraft.value, () => {
   if (suppressConfigAutoSave)
     return
 
-  void saveConfig(false)
-})
+  configDraftRevision += 1
+  debouncedAutoSaveConfig()
+}, { deep: true })
 
 function contextSourceLabel(source: string) {
   return tn(`chat-diagnostics.contexts.source.${source}`)
@@ -1099,25 +1158,6 @@ onBeforeUnmount(() => {
                   :description="tn('config.fields.database-url.description')"
                   placeholder="postgres://postgres:postgres@localhost:5433/nocturne"
                 />
-                <FieldInput
-                  v-model="configDraft.conversationId"
-                  :label="tn('config.fields.conversation-id.label')"
-                  :description="tn('config.fields.conversation-id.description')"
-                  placeholder="c2cb0334-d2ed-4989-8659-7ead6b5f4d3c"
-                />
-                <FieldInput
-                  v-model="configDraft.workspaceKey"
-                  :label="tn('config.fields.workspace-key.label')"
-                  :description="tn('config.fields.workspace-key.description')"
-                  placeholder="airi-main"
-                />
-                <FieldInput
-                  v-model="configDraft.requestTimeoutMsec"
-                  type="number"
-                  :label="tn('config.fields.request-timeout-msec.label')"
-                  :description="tn('config.fields.request-timeout-msec.description')"
-                  placeholder="10000"
-                />
               </div>
             </section>
 
@@ -1183,20 +1223,6 @@ onBeforeUnmount(() => {
                   :label="tn('config.fields.openai-embedding-model.label')"
                   :description="tn('config.fields.openai-embedding-model.description')"
                   placeholder="Qwen/Qwen3-Embedding-0.6B"
-                />
-                <FieldInput
-                  v-model="configDraft.openaiChatMaxTokens"
-                  type="number"
-                  :label="tn('config.fields.openai-chat-max-tokens.label')"
-                  :description="tn('config.fields.openai-chat-max-tokens.description')"
-                  placeholder="2048"
-                />
-                <FieldInput
-                  v-model="configDraft.openaiRequestTimeoutSeconds"
-                  type="number"
-                  :label="tn('config.fields.openai-request-timeout.label')"
-                  :description="tn('config.fields.openai-request-timeout.description')"
-                  placeholder="120"
                 />
               </div>
             </section>
@@ -1282,6 +1308,88 @@ onBeforeUnmount(() => {
                   placeholder="6000"
                 />
               </div>
+            </section>
+
+            <section :class="['rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
+              <Collapsible v-model="advancedConfigVisible">
+                <template #trigger="slotProps">
+                  <button
+                    type="button"
+                    :class="[
+                      'w-full',
+                      'flex',
+                      'items-center',
+                      'justify-between',
+                      'gap-3',
+                      'text-left',
+                      'outline-none',
+                      'transition-all',
+                      'duration-250',
+                      'ease-in-out',
+                    ]"
+                    @click="slotProps.setVisible(!slotProps.visible)"
+                  >
+                    <div :class="['min-w-0', 'flex', 'items-start', 'gap-2']">
+                      <div :class="['i-solar:tuning-square-bold-duotone', 'mt-0.5', 'text-lg', 'text-primary-500', 'dark:text-primary-300']" />
+                      <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                        <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                          {{ t('settings.pages.providers.common.section.advanced.title') }}
+                        </h4>
+                        <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
+                          {{ advancedConfigSummary }}
+                        </p>
+                      </div>
+                    </div>
+                    <div
+                      :class="[
+                        'shrink-0',
+                        'text-neutral-400',
+                        'transition-transform',
+                        'duration-250',
+                        'dark:text-neutral-500',
+                        'i-solar:alt-arrow-down-linear',
+                        slotProps.visible ? 'rotate-180' : 'rotate-0',
+                      ]"
+                    />
+                  </button>
+                </template>
+
+                <div :class="['mt-3', 'grid', 'grid-cols-1', 'gap-4', 'sm:grid-cols-2']">
+                  <FieldInput
+                    v-model="configDraft.conversationId"
+                    :label="tn('config.fields.conversation-id.label')"
+                    :description="tn('config.fields.conversation-id.description')"
+                    placeholder="c2cb0334-d2ed-4989-8659-7ead6b5f4d3c"
+                  />
+                  <FieldInput
+                    v-model="configDraft.workspaceKey"
+                    :label="tn('config.fields.workspace-key.label')"
+                    :description="tn('config.fields.workspace-key.description')"
+                    placeholder="airi-main"
+                  />
+                  <FieldInput
+                    v-model="configDraft.requestTimeoutMsec"
+                    type="number"
+                    :label="tn('config.fields.request-timeout-msec.label')"
+                    :description="tn('config.fields.request-timeout-msec.description')"
+                    placeholder="10000"
+                  />
+                  <FieldInput
+                    v-model="configDraft.openaiChatMaxTokens"
+                    type="number"
+                    :label="tn('config.fields.openai-chat-max-tokens.label')"
+                    :description="tn('config.fields.openai-chat-max-tokens.description')"
+                    placeholder="2048"
+                  />
+                  <FieldInput
+                    v-model="configDraft.openaiRequestTimeoutSeconds"
+                    type="number"
+                    :label="tn('config.fields.openai-request-timeout.label')"
+                    :description="tn('config.fields.openai-request-timeout.description')"
+                    placeholder="120"
+                  />
+                </div>
+              </Collapsible>
             </section>
           </div>
         </div>

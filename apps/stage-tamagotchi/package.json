@@ -143,6 +143,7 @@
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@electron-toolkit/utils": "^4.0.0",
     "@electron/notarize": "catalog:",
+    "@electron/rebuild": "catalog:",
     "@iconify-json/carbon": "^1.2.20",
     "@iconify-json/eos-icons": "^1.2.4",
     "@iconify-json/lucide": "^1.2.102",

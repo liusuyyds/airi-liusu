@@ -17,7 +17,6 @@ import {
   electronPlastMemIngestChatMessages,
   electronPlastMemRecentMemory,
   electronPlastMemReleaseChatBridge,
-  electronPlastMemReportChatBridgeTrace,
   electronPlastMemRetrieveChatContext,
 } from '../../shared/eventa'
 
@@ -98,7 +97,6 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
   const contextPreRetrieve = useElectronEventaInvoke(electronPlastMemContextPreRetrieve)
   const recentMemory = useElectronEventaInvoke(electronPlastMemRecentMemory)
   const ingestChatMessages = useElectronEventaInvoke(electronPlastMemIngestChatMessages)
-  const reportChatBridgeTrace = useElectronEventaInvoke(electronPlastMemReportChatBridgeTrace)
   const releaseChatBridge = useElectronEventaInvoke(electronPlastMemReleaseChatBridge)
   const checkHealth = useElectronEventaInvoke(electronPlastMemHealth)
   const lastRecallError = ref<string>()
@@ -119,34 +117,22 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
   let healthCheckTimer: ReturnType<typeof setInterval> | undefined
   const HEALTH_CHECK_INTERVAL_MSEC = 5 * 60 * 1000
 
-  function reportTrace(event: string, detail?: Record<string, unknown>) {
-    void reportChatBridgeTrace({ detail: { ownerId, ...detail }, event }).catch((error) => {
-      console.warn('[plast-mem-chat-memory] failed to report trace:', error)
-    })
-  }
-
   async function performHealthCheck() {
     try {
       const result = await checkHealth({})
       lastHealthCheckAt.value = Date.now()
       lastHealthCheckOk.value = !result.error && result.databaseOk !== false
-      reportTrace('health:check', {
-        ok: lastHealthCheckOk.value,
-        databaseOk: result.databaseOk,
-      })
     }
     catch (error) {
       lastHealthCheckAt.value = Date.now()
       lastHealthCheckOk.value = false
-      reportTrace('health:error', { error: errorMessageFrom(error) ?? String(error) })
+      console.warn('[plast-mem-chat-memory] health check failed:', errorMessageFrom(error) ?? String(error))
     }
   }
 
   async function initialize() {
-    if (initializing.value || disposeFns.value.length > 0) {
-      reportTrace('initialize:already-registered')
+    if (initializing.value || disposeFns.value.length > 0)
       return
-    }
 
     initializing.value = true
     let lease: Awaited<ReturnType<typeof acquireChatBridge>>
@@ -155,21 +141,15 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
     }
     catch (error) {
       initializing.value = false
-      reportTrace('initialize:lease-error', {
-        error: errorMessageFrom(error) ?? String(error),
-        ownerId,
-      })
+      console.warn('[plast-mem-chat-memory] failed to acquire chat bridge lease:', errorMessageFrom(error) ?? String(error))
       return
     }
 
     initializing.value = false
-    if (!lease.acquired) {
-      reportTrace('initialize:lease-denied', { activeOwnerId: lease.activeOwnerId, ownerId })
+    if (!lease.acquired)
       return
-    }
 
     leaseAcquired.value = true
-    reportTrace('initialize:registered')
 
     void performHealthCheck()
     healthCheckTimer = setInterval(() => {
@@ -182,8 +162,6 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
         const recallSignature = `recall:${turnKeyFromContext(context, query)}:${query}`
         if (!claimRecentHookSignature(recallSignature))
           return
-
-        reportTrace('recall:hook', { queryCharacters: query.length })
 
         const preRetrieveSignature = `pre-retrieve:${turnKeyFromContext(context, query)}:${query}`
         const shouldPreRetrieve = claimRecentHookSignature(preRetrieveSignature)
@@ -209,7 +187,6 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
           lastRecallContextCharacters.value = 0
           lastRecallError.value = recallResult.error
           lastRecallStatus.value = 'error'
-          reportTrace('recall:error', { error: recallResult.error })
           console.warn('[plast-mem-chat-memory] failed to recall chat memory:', recallResult.error)
         }
         else {
@@ -219,15 +196,11 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
             lastRecallContextBlock.value = ''
             lastRecallContextCharacters.value = 0
             lastRecallStatus.value = 'empty'
-            reportTrace('recall:empty')
           }
           else {
             lastRecallContextBlock.value = recallResult.contextBlock
             lastRecallContextCharacters.value = recallResult.contextBlock.length
             lastRecallStatus.value = 'recalled'
-            reportTrace('recall:context-ingested', {
-              contextCharacters: recallResult.contextBlock.length,
-            })
             chatContext.ingestContextMessage(createChatMemoryContext(
               PLAST_MEM_CHAT_CONTEXT_ID,
               recallResult.contextBlock,
@@ -236,9 +209,6 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
         }
 
         if (preRetrieveResult?.contextBlock) {
-          reportTrace('pre-retrieve:context-ingested', {
-            contextCharacters: preRetrieveResult.contextBlock.length,
-          })
           chatContext.ingestContextMessage(createChatMemoryContext(
             PLAST_MEM_PRE_RETRIEVE_CONTEXT_ID,
             preRetrieveResult.contextBlock,
@@ -247,22 +217,15 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
 
         if (!recentMemoryRecalled.value) {
           recentMemoryRecalled.value = true
-          reportTrace('recent:hook')
           void recentMemory({ ownerId, limit: 10 }).then((recentResult) => {
             if (recentResult.contextBlock) {
-              reportTrace('recent:context-ingested', {
-                contextCharacters: recentResult.contextBlock.length,
-              })
               chatContext.ingestContextMessage(createChatMemoryContext(
                 PLAST_MEM_RECENT_MEMORY_CONTEXT_ID,
                 recentResult.contextBlock,
               ))
             }
-            else if (recentResult.error) {
-              reportTrace('recent:error', { error: recentResult.error })
-            }
           }).catch((error) => {
-            reportTrace('recent:error', { error: errorMessageFrom(error) ?? String(error) })
+            console.warn('[plast-mem-chat-memory] failed to retrieve recent memory:', errorMessageFrom(error) ?? String(error))
           })
         }
       }),
@@ -287,10 +250,8 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
           })
         }
 
-        if (messages.length === 0) {
-          reportTrace('ingest:skip-empty')
+        if (messages.length === 0)
           return
-        }
 
         const ingestSignature = JSON.stringify({
           messages,
@@ -299,23 +260,18 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
         if (!claimRecentHookSignature(`ingest:${ingestSignature}`))
           return
 
-        reportTrace('ingest:hook', { messageCount: messages.length })
         const result = await ingestChatMessages({ messages, ownerId })
         lastIngestAt.value = Date.now()
         lastIngestMessageCount.value = messages.length
         if (result.error) {
           lastIngestError.value = result.error
           lastIngestStatus.value = 'error'
-          reportTrace('ingest:error', { error: result.error, messageCount: messages.length })
           console.warn('[plast-mem-chat-memory] failed to ingest chat messages:', result.error)
           return
         }
 
         lastIngestError.value = undefined
         lastIngestStatus.value = result.accepted ? 'accepted' : 'rejected'
-        reportTrace(result.accepted ? 'ingest:accepted' : 'ingest:rejected', {
-          messageCount: messages.length,
-        })
       }),
     )
   }

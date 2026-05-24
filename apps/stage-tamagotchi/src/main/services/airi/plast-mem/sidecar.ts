@@ -203,7 +203,12 @@ function createSidecarEnv(config: ElectronPlastMemConfig | undefined): NodeJS.Pr
   childEnv.OPENAI_CHAT_SEED = trimOptional(process.env.OPENAI_CHAT_SEED) ?? '1145141919810721'
   childEnv.ENABLE_FSRS_REVIEW = trimOptional(process.env.ENABLE_FSRS_REVIEW) ?? 'true'
   childEnv.SQLX_OFFLINE = trimOptional(process.env.SQLX_OFFLINE) ?? 'true'
-  childEnv.RUST_LOG = trimOptional(process.env.RUST_LOG) ?? 'plastmem=debug,plastmem_worker=debug,plastmem_ai=debug'
+  // NOTICE:
+  // Keep packaged Plast Mem sidecar logs readable in normal desktop runs.
+  // The embedded worker emits frequent debug/info traces during recall and
+  // consolidation, and Electron forwards stdout/stderr directly to the app log.
+  // Users can still override RUST_LOG explicitly when deeper diagnosis is needed.
+  childEnv.RUST_LOG = trimOptional(process.env.RUST_LOG) ?? 'plastmem=info,plastmem_worker=warn,plastmem_ai=warn'
 
   return childEnv
 }
@@ -270,16 +275,26 @@ function sleep(msec: number) {
   return new Promise<void>(resolve => setTimeout(resolve, msec))
 }
 
-async function killProcessTree(pid: number) {
+function signalProcess(pid: number, signal: NodeJS.Signals) {
+  try {
+    process.kill(pid, signal)
+    return true
+  }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH')
+      return false
+
+    throw error
+  }
+}
+
+async function killProcessTree(pid: number, signal: NodeJS.Signals) {
   if (process.platform !== 'win32') {
-    try {
-      process.kill(-pid, 'SIGTERM')
+    if (signalProcess(-pid, signal))
       return
-    }
-    catch {
-      process.kill(pid, 'SIGTERM')
-      return
-    }
+
+    signalProcess(pid, signal)
+    return
   }
 
   await new Promise<void>((resolvePromise) => {
@@ -394,14 +409,14 @@ export function createPlastMemSidecarManager(): PlastMemSidecarManager {
     }
   }
 
-  async function stopActiveProcess(processHandle: PlastMemSidecarProcess) {
+  async function stopActiveProcess(processHandle: PlastMemSidecarProcess, signal: NodeJS.Signals = 'SIGTERM') {
     const pid = processHandle.pid
     if (pid) {
-      await killProcessTree(pid)
+      await killProcessTree(pid, signal)
       return
     }
 
-    processHandle.kill()
+    processHandle.kill(signal)
   }
 
   function attachProcessListeners(processHandle: PlastMemSidecarProcess) {
@@ -585,7 +600,7 @@ export function createPlastMemSidecarManager(): PlastMemSidecarManager {
         ]).catch(() => {})
 
         if (currentProcess === activeProcess) {
-          activeProcess.kill()
+          await stopActiveProcess(activeProcess, 'SIGKILL')
           await Promise.race([
             exitPromise,
             sleep(2_000),

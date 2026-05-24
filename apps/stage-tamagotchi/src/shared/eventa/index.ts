@@ -408,11 +408,6 @@ export interface ElectronPlastMemChatDiagnostics {
   recall: ElectronPlastMemRecallDiagnostics
 }
 
-export interface ElectronPlastMemChatBridgeTracePayload {
-  detail?: Record<string, unknown>
-  event: string
-}
-
 export interface ElectronPlastMemChatBridgeLeasePayload {
   ownerId: string
 }
@@ -612,7 +607,6 @@ export interface ElectronPlastMemAddMessageResult {
 }
 
 export const electronPlastMemAddMessage = defineInvokeEventa<ElectronPlastMemAddMessageResult, ElectronPlastMemAddMessagePayload>('eventa:invoke:electron:plast-mem:add-message')
-export const electronPlastMemReportChatBridgeTrace = defineInvokeEventa<void, ElectronPlastMemChatBridgeTracePayload>('eventa:invoke:electron:plast-mem:report-chat-bridge-trace')
 export const electronPlastMemAcquireChatBridge = defineInvokeEventa<ElectronPlastMemChatBridgeLeaseResult, ElectronPlastMemChatBridgeLeasePayload>('eventa:invoke:electron:plast-mem:acquire-chat-bridge')
 export const electronPlastMemReleaseChatBridge = defineInvokeEventa<void, ElectronPlastMemChatBridgeLeasePayload>('eventa:invoke:electron:plast-mem:release-chat-bridge')
 

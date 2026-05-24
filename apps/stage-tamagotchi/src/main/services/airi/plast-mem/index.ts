@@ -48,7 +48,6 @@ import {
   electronPlastMemRecentMemory,
   electronPlastMemRecentMemoryRaw,
   electronPlastMemReleaseChatBridge,
-  electronPlastMemReportChatBridgeTrace,
   electronPlastMemRestartSidecar,
   electronPlastMemRetrieveChatContext,
   electronPlastMemRetrieveMemoryRaw,
@@ -85,7 +84,6 @@ const importBatchMessagesPath = 'api/v0/import_batch_messages'
 const plastMemBridgeVersion = 'chat-memory-2026-05-22-0249'
 const recentIngestSignatureTtlMsec = 30_000
 const recentRecallSignatureTtlMsec = 10_000
-const recentTraceSignatureTtlMsec = 5_000
 
 const chatDiagnostics: ElectronPlastMemChatDiagnostics = {
   contexts: [],
@@ -100,7 +98,6 @@ let chatBridgeOwnerId: string | undefined
 let generatedConversationId: string | undefined
 const recentIngestSignatures = new Map<string, number>()
 const recentRecallSignatures = new Map<string, number>()
-const recentTraceSignatures = new Map<string, number>()
 
 interface NormalizedPlastMemChatMessage {
   content: string
@@ -187,10 +184,6 @@ function claimRecentRecallSignature(signature: string, now: number) {
   return claimRecentSignature(recentRecallSignatures, signature, now, recentRecallSignatureTtlMsec)
 }
 
-function claimRecentTraceSignature(signature: string, now: number) {
-  return claimRecentSignature(recentTraceSignatures, signature, now, recentTraceSignatureTtlMsec)
-}
-
 function makeIngestSignature(conversationId: string, messages: NormalizedPlastMemChatMessage[]) {
   return JSON.stringify({
     conversationId,
@@ -212,17 +205,6 @@ function makeRecallSignature(
     query,
     semanticLimit: payload.semanticLimit ?? config.semanticLimit,
   })
-}
-
-function makeTraceSignature(event: string, detail: Record<string, unknown> | undefined) {
-  return JSON.stringify({
-    detail,
-    event,
-  })
-}
-
-function ownerIdFromTraceDetail(detail: Record<string, unknown> | undefined) {
-  return typeof detail?.ownerId === 'string' ? detail.ownerId : undefined
 }
 
 function snapshotChatDiagnostics(): ElectronPlastMemChatDiagnostics {
@@ -538,10 +520,6 @@ export async function checkPlastMemHealth(payload: ElectronPlastMemHealthPayload
   const conversationId = config.enabled ? resolveConversationId(config) : config.conversationId
 
   if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
-    logPlastMemInfo('health:skip-stale-owner', {
-      activeOwnerId: chatBridgeOwnerId,
-      requestedOwnerId: payload.ownerId,
-    })
     return {
       baseUrl: config.baseUrl,
       databaseOk: false,
@@ -555,11 +533,12 @@ export async function checkPlastMemHealth(payload: ElectronPlastMemHealthPayload
       conversation_id: conversationId || undefined,
     }, config.requestTimeoutMsec)
     const health = parseJsonResponse<PlastMemHealthApiResponse>(response.text, {}, 'health')
-
-    logPlastMemInfo(health.database_ok ? 'health:ok' : 'health:database-error', {
-      counts: health.counts,
-      statusCode: response.statusCode,
-    })
+    if (health.database_ok !== true) {
+      logPlastMemWarn('health:database-error', {
+        counts: health.counts,
+        statusCode: response.statusCode,
+      })
+    }
 
     return {
       baseUrl,
@@ -589,7 +568,6 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
   const config = resolvePlastMemRuntimeConfig()
 
   if (!config.enabled) {
-    logPlastMemInfo('recall:disabled')
     return {
       baseUrl: config.baseUrl,
       contextBlock: '',
@@ -599,7 +577,6 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
   }
 
   if (!config.enableChatRetrieve) {
-    logPlastMemInfo('recall:disabled-by-config')
     return {
       baseUrl: config.baseUrl,
       contextBlock: '',
@@ -609,10 +586,6 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
   }
 
   if (isStaleChatBridgeOwner(payload.ownerId)) {
-    logPlastMemInfo('recall:skip-stale-owner', {
-      activeOwnerId: chatBridgeOwnerId,
-      requestedOwnerId: payload.ownerId,
-    })
     return {
       baseUrl: config.baseUrl,
       contextBlock: '',
@@ -625,7 +598,6 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
     const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
     const query = payload.query.trim()
     if (!query) {
-      logPlastMemInfo('recall:skip-empty', { baseUrl })
       recordContextAttempt({
         at: Date.now(),
         baseUrl,
@@ -653,12 +625,6 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
       }
     }
 
-    logPlastMemInfo('recall:start', {
-      baseUrl,
-      episodicLimit: config.episodicLimit,
-      queryCharacters: query.length,
-      semanticLimit: payload.semanticLimit ?? config.semanticLimit,
-    })
     const requestBody: Record<string, unknown> = {
       conversation_id: conversationId,
       query,
@@ -672,10 +638,6 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
 
     const response = await postJsonText(baseUrl, retrieveMemoryPath, requestBody, config.requestTimeoutMsec)
     const contextBlock = buildChatMemoryContextBlock(response.text, config.maxContextCharacters)
-    logPlastMemInfo(contextBlock ? 'recall:ok' : 'recall:empty', {
-      contextCharacters: contextBlock.length,
-      statusCode: response.statusCode,
-    })
     recordContextAttempt({
       at: Date.now(),
       baseUrl,
@@ -737,7 +699,6 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
   const config = resolvePlastMemRuntimeConfig()
 
   if (!config.enabled) {
-    logPlastMemInfo('ingest:disabled')
     return {
       accepted: false,
       enabled: false,
@@ -745,7 +706,6 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
   }
 
   if (!config.enableChatIngest) {
-    logPlastMemInfo('ingest:disabled-by-config')
     recordIngestAttempt({
       at: Date.now(),
       baseUrl: config.baseUrl,
@@ -759,11 +719,6 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
   }
 
   if (isStaleChatBridgeOwner(payload.ownerId)) {
-    logPlastMemInfo('ingest:skip-stale-owner', {
-      activeOwnerId: chatBridgeOwnerId,
-      messageCount: payload.messages.length,
-      requestedOwnerId: payload.ownerId,
-    })
     return {
       accepted: true,
       enabled: true,
@@ -787,7 +742,6 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
       .filter(message => message.role && message.content)
 
     if (messages.length === 0) {
-      logPlastMemInfo('ingest:skip-empty', { baseUrl })
       recordIngestAttempt({
         at: Date.now(),
         baseUrl,
@@ -816,10 +770,6 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
     }
     claimedIngestSignature = ingestSignature
 
-    logPlastMemInfo('ingest:start', {
-      baseUrl,
-      messageCount: messages.length,
-    })
     const response = await postJsonText(baseUrl, importBatchMessagesPath, {
       conversation_id: conversationId,
       messages,
@@ -829,10 +779,12 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
       recentIngestSignatures.delete(claimedIngestSignature)
       claimedIngestSignature = undefined
     }
-    logPlastMemInfo(accepted ? 'ingest:ok' : 'ingest:rejected', {
-      messageCount: messages.length,
-      statusCode: response.statusCode,
-    })
+    if (!accepted) {
+      logPlastMemWarn('ingest:rejected', {
+        messageCount: messages.length,
+        statusCode: response.statusCode,
+      })
+    }
     recordIngestAttempt({
       at: Date.now(),
       baseUrl,
@@ -874,7 +826,6 @@ export async function addPlastMemMessage(payload: ElectronPlastMemAddMessagePayl
   const config = resolvePlastMemRuntimeConfig()
 
   if (!config.enabled) {
-    logPlastMemInfo('add-message:disabled')
     return {
       accepted: false,
       enabled: false,
@@ -882,7 +833,6 @@ export async function addPlastMemMessage(payload: ElectronPlastMemAddMessagePayl
   }
 
   if (!config.enableChatIngest) {
-    logPlastMemInfo('add-message:disabled-by-config')
     return {
       accepted: false,
       enabled: false,
@@ -890,10 +840,6 @@ export async function addPlastMemMessage(payload: ElectronPlastMemAddMessagePayl
   }
 
   if (isStaleChatBridgeOwner(payload.ownerId)) {
-    logPlastMemInfo('add-message:skip-stale-owner', {
-      activeOwnerId: chatBridgeOwnerId,
-      requestedOwnerId: payload.ownerId,
-    })
     return {
       accepted: false,
       enabled: true,
@@ -906,7 +852,6 @@ export async function addPlastMemMessage(payload: ElectronPlastMemAddMessagePayl
     const role = payload.role.trim()
 
     if (!content || !role) {
-      logPlastMemInfo('add-message:skip-empty', { baseUrl })
       return {
         accepted: false,
         enabled: true,
@@ -915,10 +860,6 @@ export async function addPlastMemMessage(payload: ElectronPlastMemAddMessagePayl
 
     const timestamp = normalizeTimestamp(payload.timestamp)
 
-    logPlastMemInfo('add-message:start', {
-      baseUrl,
-      role,
-    })
     const response = await postJsonText(baseUrl, addMessagePath, {
       conversation_id: conversationId,
       message: {
@@ -929,10 +870,12 @@ export async function addPlastMemMessage(payload: ElectronPlastMemAddMessagePayl
     }, config.requestTimeoutMsec)
     const accepted = parseAcceptedResponse(response.text)
 
-    logPlastMemInfo(accepted ? 'add-message:ok' : 'add-message:rejected', {
-      role,
-      statusCode: response.statusCode,
-    })
+    if (!accepted) {
+      logPlastMemWarn('add-message:rejected', {
+        role,
+        statusCode: response.statusCode,
+      })
+    }
 
     return {
       accepted,
@@ -956,7 +899,6 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
   const config = resolvePlastMemRuntimeConfig()
 
   if (!config.enabled) {
-    logPlastMemInfo('pre-retrieve:disabled')
     return {
       baseUrl: config.baseUrl,
       contextBlock: '',
@@ -966,7 +908,6 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
   }
 
   if (!config.enableContextPreRetrieve) {
-    logPlastMemInfo('pre-retrieve:disabled-by-config')
     return {
       baseUrl: config.baseUrl,
       contextBlock: '',
@@ -976,10 +917,6 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
   }
 
   if (isStaleChatBridgeOwner(payload.ownerId)) {
-    logPlastMemInfo('pre-retrieve:skip-stale-owner', {
-      activeOwnerId: chatBridgeOwnerId,
-      requestedOwnerId: payload.ownerId,
-    })
     return {
       baseUrl: config.baseUrl,
       contextBlock: '',
@@ -992,7 +929,6 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
     const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
     const query = payload.query.trim()
     if (!query) {
-      logPlastMemInfo('pre-retrieve:skip-empty', { baseUrl })
       recordContextAttempt({
         at: Date.now(),
         baseUrl,
@@ -1010,11 +946,6 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
       }
     }
 
-    logPlastMemInfo('pre-retrieve:start', {
-      baseUrl,
-      queryCharacters: query.length,
-      semanticLimit: payload.semanticLimit ?? config.semanticLimit,
-    })
     const requestBody: Record<string, unknown> = {
       conversation_id: conversationId,
       query,
@@ -1027,10 +958,6 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
 
     const response = await postJsonText(baseUrl, contextPreRetrievePath, requestBody, config.requestTimeoutMsec)
     const contextBlock = buildChatMemoryContextBlock(response.text, config.maxContextCharacters)
-    logPlastMemInfo(contextBlock ? 'pre-retrieve:ok' : 'pre-retrieve:empty', {
-      contextCharacters: contextBlock.length,
-      statusCode: response.statusCode,
-    })
     recordContextAttempt({
       at: Date.now(),
       baseUrl,
@@ -1079,7 +1006,6 @@ export async function retrievePlastMemRecentMemory(payload: ElectronPlastMemRece
   const config = resolvePlastMemRuntimeConfig()
 
   if (!config.enabled) {
-    logPlastMemInfo('recent:disabled')
     return {
       baseUrl: config.baseUrl,
       contextBlock: '',
@@ -1089,7 +1015,6 @@ export async function retrievePlastMemRecentMemory(payload: ElectronPlastMemRece
   }
 
   if (!config.enableRecentMemory) {
-    logPlastMemInfo('recent:disabled-by-config')
     return {
       baseUrl: config.baseUrl,
       contextBlock: '',
@@ -1099,10 +1024,6 @@ export async function retrievePlastMemRecentMemory(payload: ElectronPlastMemRece
   }
 
   if (isStaleChatBridgeOwner(payload.ownerId)) {
-    logPlastMemInfo('recent:skip-stale-owner', {
-      activeOwnerId: chatBridgeOwnerId,
-      requestedOwnerId: payload.ownerId,
-    })
     return {
       baseUrl: config.baseUrl,
       contextBlock: '',
@@ -1114,21 +1035,12 @@ export async function retrievePlastMemRecentMemory(payload: ElectronPlastMemRece
   try {
     const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
 
-    logPlastMemInfo('recent:start', {
-      baseUrl,
-      daysLimit: payload.daysLimit,
-      limit: payload.limit ?? 10,
-    })
     const response = await postJsonText(baseUrl, recentMemoryPath, {
       conversation_id: conversationId,
       days_limit: payload.daysLimit,
       limit: payload.limit ?? 10,
     }, config.requestTimeoutMsec)
     const contextBlock = buildChatMemoryContextBlock(response.text, config.maxContextCharacters)
-    logPlastMemInfo(contextBlock ? 'recent:ok' : 'recent:empty', {
-      contextCharacters: contextBlock.length,
-      statusCode: response.statusCode,
-    })
     recordContextAttempt({
       at: Date.now(),
       baseUrl,
@@ -1174,7 +1086,6 @@ export async function retrievePlastMemRecentMemoryRaw(payload: ElectronPlastMemR
   const config = resolvePlastMemRuntimeConfig()
 
   if (!config.enabled) {
-    logPlastMemInfo('recent-raw:disabled')
     return {
       baseUrl: config.baseUrl,
       memories: [],
@@ -1183,10 +1094,6 @@ export async function retrievePlastMemRecentMemoryRaw(payload: ElectronPlastMemR
   }
 
   if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
-    logPlastMemInfo('recent-raw:skip-stale-owner', {
-      activeOwnerId: chatBridgeOwnerId,
-      requestedOwnerId: payload.ownerId,
-    })
     return {
       baseUrl: config.baseUrl,
       memories: [],
@@ -1197,11 +1104,6 @@ export async function retrievePlastMemRecentMemoryRaw(payload: ElectronPlastMemR
   try {
     const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
 
-    logPlastMemInfo('recent-raw:start', {
-      baseUrl,
-      daysLimit: payload.daysLimit,
-      limit: payload.limit ?? 10,
-    })
     const response = await postJsonText(baseUrl, recentMemoryRawPath, {
       conversation_id: conversationId,
       days_limit: payload.daysLimit,
@@ -1213,11 +1115,6 @@ export async function retrievePlastMemRecentMemoryRaw(payload: ElectronPlastMemR
       [],
       'recent-raw',
     )
-
-    logPlastMemInfo('recent-raw:ok', {
-      memoryCount: memories.length,
-      statusCode: response.statusCode,
-    })
 
     return {
       baseUrl,
@@ -1243,7 +1140,6 @@ export async function retrievePlastMemMemoryRaw(payload: ElectronPlastMemRetriev
   const config = resolvePlastMemRuntimeConfig()
 
   if (!config.enabled) {
-    logPlastMemInfo('retrieve-raw:disabled')
     return {
       baseUrl: config.baseUrl,
       enabled: false,
@@ -1253,10 +1149,6 @@ export async function retrievePlastMemMemoryRaw(payload: ElectronPlastMemRetriev
   }
 
   if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
-    logPlastMemInfo('retrieve-raw:skip-stale-owner', {
-      activeOwnerId: chatBridgeOwnerId,
-      requestedOwnerId: payload.ownerId,
-    })
     return {
       baseUrl: config.baseUrl,
       enabled: true,
@@ -1277,12 +1169,6 @@ export async function retrievePlastMemMemoryRaw(payload: ElectronPlastMemRetriev
       }
     }
 
-    logPlastMemInfo('retrieve-raw:start', {
-      baseUrl,
-      episodicLimit: payload.episodicLimit ?? config.episodicLimit,
-      queryCharacters: query.length,
-      semanticLimit: payload.semanticLimit ?? config.semanticLimit,
-    })
     const requestBody: Record<string, unknown> = {
       conversation_id: conversationId,
       query,
@@ -1300,12 +1186,6 @@ export async function retrievePlastMemMemoryRaw(payload: ElectronPlastMemRetriev
       { episodic: [], semantic: [] },
       'retrieve-raw',
     )
-
-    logPlastMemInfo('retrieve-raw:ok', {
-      episodicCount: result.episodic.length,
-      semanticCount: result.semantic.length,
-      statusCode: response.statusCode,
-    })
 
     return {
       baseUrl,
@@ -1334,7 +1214,6 @@ export async function retrievePlastMemSemanticMemoryRaw(payload: ElectronPlastMe
   const config = resolvePlastMemRuntimeConfig()
 
   if (!config.enabled) {
-    logPlastMemInfo('semantic-raw:disabled')
     return {
       baseUrl: config.baseUrl,
       enabled: false,
@@ -1343,10 +1222,6 @@ export async function retrievePlastMemSemanticMemoryRaw(payload: ElectronPlastMe
   }
 
   if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
-    logPlastMemInfo('semantic-raw:skip-stale-owner', {
-      activeOwnerId: chatBridgeOwnerId,
-      requestedOwnerId: payload.ownerId,
-    })
     return {
       baseUrl: config.baseUrl,
       enabled: config.enabled,
@@ -1358,12 +1233,6 @@ export async function retrievePlastMemSemanticMemoryRaw(payload: ElectronPlastMe
     const baseUrl = requirePlastMemServiceBaseUrl(config)
     const conversationId = requirePlastMemConversationId(config)
 
-    logPlastMemInfo('semantic-raw:start', {
-      baseUrl,
-      category: payload.category || config.category || undefined,
-      includeInvalid: payload.includeInvalid === true,
-      limit: payload.limit ?? 50,
-    })
     const response = await postJsonText(baseUrl, semanticMemoryRawPath, {
       conversation_id: conversationId,
       category: payload.category || config.category || undefined,
@@ -1375,11 +1244,6 @@ export async function retrievePlastMemSemanticMemoryRaw(payload: ElectronPlastMe
       [],
       'semantic-raw',
     )
-
-    logPlastMemInfo('semantic-raw:ok', {
-      memoryCount: memories.length,
-      statusCode: response.statusCode,
-    })
 
     return {
       baseUrl,
@@ -1405,7 +1269,6 @@ export async function setPlastMemSemanticMemoryInvalid(payload: ElectronPlastMem
   const config = resolvePlastMemRuntimeConfig()
 
   if (!config.enabled) {
-    logPlastMemInfo('semantic-set-invalid:disabled')
     return {
       baseUrl: config.baseUrl,
       enabled: false,
@@ -1413,10 +1276,6 @@ export async function setPlastMemSemanticMemoryInvalid(payload: ElectronPlastMem
   }
 
   if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
-    logPlastMemInfo('semantic-set-invalid:skip-stale-owner', {
-      activeOwnerId: chatBridgeOwnerId,
-      requestedOwnerId: payload.ownerId,
-    })
     return {
       baseUrl: config.baseUrl,
       enabled: true,
@@ -1426,11 +1285,6 @@ export async function setPlastMemSemanticMemoryInvalid(payload: ElectronPlastMem
   try {
     const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
 
-    logPlastMemInfo('semantic-set-invalid:start', {
-      baseUrl,
-      invalid: payload.invalid,
-      memoryId: payload.memoryId,
-    })
     const response = await postJsonText(baseUrl, semanticMemorySetInvalidPath, {
       conversation_id: conversationId,
       memory_id: payload.memoryId,
@@ -1441,12 +1295,6 @@ export async function setPlastMemSemanticMemoryInvalid(payload: ElectronPlastMem
       undefined,
       'semantic-set-invalid',
     )
-
-    logPlastMemInfo('semantic-set-invalid:ok', {
-      invalid: payload.invalid,
-      memoryId: payload.memoryId,
-      statusCode: response.statusCode,
-    })
 
     const result: ElectronPlastMemSetSemanticMemoryInvalidResult = {
       baseUrl,
@@ -1508,18 +1356,9 @@ export function createPlastMemService(params: {
   defineInvokeHandler(params.context, electronPlastMemSetSemanticMemoryInvalid, payload => setPlastMemSemanticMemoryInvalid(payload))
   defineInvokeHandler(params.context, electronPlastMemIngestChatMessages, payload => ingestPlastMemChatMessages(payload))
   defineInvokeHandler(params.context, electronPlastMemAddMessage, payload => addPlastMemMessage(payload))
-  defineInvokeHandler(params.context, electronPlastMemReportChatBridgeTrace, (payload) => {
-    if (isStaleChatBridgeOwner(ownerIdFromTraceDetail(payload.detail)))
-      return
-
-    if (!claimRecentTraceSignature(makeTraceSignature(payload.event, payload.detail), Date.now()))
-      return
-
-    logPlastMemInfo(`renderer:${payload.event}`, payload.detail)
-  })
   defineInvokeHandler(params.context, electronPlastMemAcquireChatBridge, (payload) => {
     if (chatBridgeOwnerId && chatBridgeOwnerId !== payload.ownerId) {
-      logPlastMemInfo('renderer:lease-denied', {
+      logPlastMemWarn('renderer:lease-denied', {
         activeOwnerId: chatBridgeOwnerId,
         requestedOwnerId: payload.ownerId,
       })
@@ -1530,7 +1369,6 @@ export function createPlastMemService(params: {
     }
 
     chatBridgeOwnerId = payload.ownerId
-    logPlastMemInfo('renderer:lease-acquired', { ownerId: payload.ownerId })
     return {
       acquired: true,
       activeOwnerId: chatBridgeOwnerId,
@@ -1540,7 +1378,6 @@ export function createPlastMemService(params: {
     if (chatBridgeOwnerId !== payload.ownerId)
       return
 
-    logPlastMemInfo('renderer:lease-released', { ownerId: payload.ownerId })
     chatBridgeOwnerId = undefined
   })
 }

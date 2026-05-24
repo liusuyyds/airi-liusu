@@ -5,11 +5,12 @@ import type { Configuration } from 'electron-builder'
 import process from 'node:process'
 
 import { execFileSync, execSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { rebuild } from '@electron/rebuild'
 import { isMacOS } from 'std-env'
 
 const stageTamagotchiDir = dirname(fileURLToPath(import.meta.url))
@@ -90,7 +91,44 @@ function prepareComputerUseRuntimeDependencies() {
   copyComputerUseRuntimePackage('node-pty')
 }
 
-function buildComputerUseMcpBundle() {
+function writeComputerUseRuntimeManifest() {
+  // NOTICE: @electron/rebuild discovers rebuild targets from the app package.json.
+  // The MCP dist folder is a bundled runtime without its own manifest, so stage a
+  // minimal manifest that names only native runtime packages copied into dist/.
+  writeFileSync(resolve(computerUseMcpDistDir, 'package.json'), `${JSON.stringify({
+    dependencies: {
+      'node-pty': '*',
+    },
+    private: true,
+  }, null, 2)}\n`)
+}
+
+async function rebuildComputerUseRuntimeDependencies() {
+  const electronPackage = requireFromConfig('electron/package.json') as { version?: string }
+  if (!electronPackage.version)
+    throw new Error('Unable to resolve Electron version for computer-use MCP native rebuild.')
+
+  const rebuildResult = rebuild({
+    buildPath: computerUseMcpDistDir,
+    electronVersion: electronPackage.version,
+    force: true,
+    onlyModules: ['node-pty'],
+  })
+
+  rebuildResult.lifecycle.on('module-found', (moduleName) => {
+    console.warn(`[electron-builder/config] Rebuilding computer-use MCP native dependency: ${moduleName}.`)
+  })
+
+  await rebuildResult
+}
+
+async function prepareComputerUsePackagedRuntime() {
+  prepareComputerUseRuntimeDependencies()
+  writeComputerUseRuntimeManifest()
+  await rebuildComputerUseRuntimeDependencies()
+}
+
+async function buildComputerUseMcpBundle() {
   if ((process.env.AIRI_SKIP_COMPUTER_USE_MCP_BUILD ?? '').trim() === '1') {
     console.warn('[electron-builder/config] Skipping computer-use MCP build because AIRI_SKIP_COMPUTER_USE_MCP_BUILD=1.')
     return
@@ -113,7 +151,7 @@ function buildComputerUseMcpBundle() {
     throw new Error(`computer-use MCP runner was not produced at ${runnerPath}.`)
   }
 
-  prepareComputerUseRuntimeDependencies()
+  await prepareComputerUsePackagedRuntime()
 }
 
 function buildPlastMemSidecarBinary(electronPlatformName: string) {
@@ -218,7 +256,7 @@ export default {
     },
   ],
   beforePack: async (context) => {
-    buildComputerUseMcpBundle()
+    await buildComputerUseMcpBundle()
     buildPlastMemSidecarBinary(context.electronPlatformName)
   },
   extraMetadata: {
