@@ -1,3 +1,5 @@
+import type { BrowserWindow } from 'electron'
+
 import type { FileLoggerHandle } from './app/file-logger'
 
 import process, { env, platform } from 'node:process'
@@ -21,6 +23,7 @@ import icon from '../../resources/icon.png?asset'
 
 import { openDebugger, setupDebugger } from './app/debugger'
 import { nullFileLoggerHandle, setupFileLogger } from './app/file-logger'
+import { installSingleInstanceGuard } from './app/single-instance'
 import { createArtistryConfig } from './configs/artistry'
 import { createGlobalAppConfig } from './configs/global'
 import { emitAppBeforeQuit, emitAppReady, emitAppWindowAllClosed } from './libs/bootkit/lifecycle'
@@ -109,12 +112,23 @@ if (isLinux) {
 app.dock?.setIcon(icon)
 electronApp.setAppUserModelId('ai.moeru.airi')
 
-initScreenCaptureForMain()
+// Track the real user-facing AIRI window because the process also owns hidden utility windows.
+// The second-instance handler should restore the main UI instead of accidentally surfacing internals.
+let userFacingMainWindow: BrowserWindow | undefined
+const shouldStartMainProcess = installSingleInstanceGuard({ app, getWindow: () => userFacingMainWindow })
+
+if (shouldStartMainProcess) {
+  initScreenCaptureForMain()
+}
 
 let fileLogger: FileLoggerHandle = nullFileLoggerHandle
 let skipFileLogging = false
 
 app.whenReady().then(async () => {
+  if (!shouldStartMainProcess) {
+    return
+  }
+
   // Initialize file logger and register the hook
   fileLogger = await setupFileLogger()
 
@@ -216,7 +230,12 @@ app.whenReady().then(async () => {
 
   const mainWindow = injeca.provide('windows:main', {
     dependsOn: { settingsWindow, chatWindow, widgetsManager, noticeWindow, beatSync, autoUpdater, serverChannel, godotStageManager, mcpStdioManager, plastMemSidecarManager, i18n, onboardingWindowManager, windowAuthManager },
-    build: async ({ dependsOn }) => setupMainWindow(dependsOn),
+    build: async ({ dependsOn }) => setupMainWindow({
+      ...dependsOn,
+      onWindowCreated: (window) => {
+        userFacingMainWindow = window
+      },
+    }),
   })
 
   const captionWindow = injeca.provide('windows:caption', {

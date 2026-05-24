@@ -32,7 +32,6 @@ import { useTranscriptions } from '../../composables/use-transcriptions'
 import { BackgroundDialogPicker } from '../Backgrounds'
 
 const { isDark, toggleDark } = useTheme()
-const hearingDialogOpen = ref(false)
 const chatOrchestrator = useChatOrchestratorStore()
 const chatSession = useChatSessionStore()
 const chatStream = useChatStreamStore()
@@ -60,24 +59,25 @@ const { themeColorsHueDynamic } = storeToRefs(useSettings())
 const { viewControlsEnabled: l2dViewCtrlEnabled } = useL2dViewControl()
 const { viewControlsEnabled: threeViewCtrlEnabled } = useThreeViewControl()
 const settingsAudioDevice = useSettingsAudioDevice()
-const { enabled, selectedAudioInput, stream, audioInputs } = storeToRefs(settingsAudioDevice)
+const { enabled, stream } = storeToRefs(settingsAudioDevice)
 const { ingest, onAfterMessageComposed } = chatOrchestrator
 const { t } = useI18n()
 const { audioContext } = useAudioContext()
-const { startAnalyzer, stopAnalyzer, volumeLevel } = useAudioAnalyzer()
+const { startAnalyzer, stopAnalyzer } = useAudioAnalyzer()
 let analyzerSource: MediaStreamAudioSourceNode | undefined
 
 function isMobileDevice() {
   return /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
 }
 
-const { isListening } = useTranscriptions(
+const { isListening, startStreamingTranscription, stopStreamingTranscription } = useTranscriptions(
   {
     messageInputRef: messageInput,
     sendMessage: handleSend,
     isStageTamagotchi,
   },
 )
+const toggleTranscription = () => isListening.value ? stopStreamingTranscription() : startStreamingTranscription()
 
 async function handleSubmit() {
   if (!isMobileDevice()) {
@@ -116,14 +116,14 @@ function teardownAnalyzer() {
   try {
     analyzerSource?.disconnect()
   }
-  catch {}
+  catch { }
   analyzerSource = undefined
   stopAnalyzer()
 }
 
 async function setupAnalyzer() {
   teardownAnalyzer()
-  if (!hearingDialogOpen.value || !enabled.value || !stream.value)
+  if (!enabled.value || !stream.value)
     return
   if (audioContext.state === 'suspended')
     await audioContext.resume()
@@ -137,12 +137,6 @@ async function setupAnalyzer() {
 watch([enabled, stream], () => {
   setupAnalyzer()
 }, { immediate: true })
-
-watch(hearingDialogOpen, (value) => {
-  if (value) {
-    settingsAudioDevice.askPermission()
-  }
-})
 
 onAfterMessageComposed(async () => {
 })
@@ -197,11 +191,9 @@ onMounted(() => {
           </button>
           <ChatSessionsDrawer v-model="sessionsDrawerOpen" />
           <HearingConfigDialog
-            v-model:show="hearingDialogOpen"
             v-model:enabled="enabled"
-            v-model:selected-audio-input="selectedAudioInput"
-            :audio-inputs="audioInputs"
-            :volume-level="volumeLevel"
+            :transcription="isListening"
+            :toggle-transcription="toggleTranscription"
             :granted="true"
           >
             <button

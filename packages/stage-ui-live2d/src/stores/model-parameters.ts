@@ -37,7 +37,7 @@ export const defaultModelParameters = {
   breath: 0,
 }
 
-export const useLive2d = defineStore('live2d', () => {
+export const useLive2dParams = defineStore('live2d', () => {
   const { post, data } = useBroadcastChannel<BroadcastChannelEvents, BroadcastChannelEvents>({ name: 'airi-stores-stage-ui-live2d' })
   const shouldUpdateViewHooks = ref(new Set<() => void>())
 
@@ -62,13 +62,13 @@ export const useLive2d = defineStore('live2d', () => {
   const currentMotion = useLocalStorageManualReset<{ group: string, index?: number }>('settings/live2d/current-motion', () => ({ group: 'Idle', index: 0 }))
   const availableMotions = useLocalStorageManualReset<{ motionName: string, motionIndex: number, fileName: string }[]>('settings/live2d/available-motions', () => [])
   const motionMap = useLocalStorageManualReset<Record<string, string>>('settings/live2d/motion-map', {})
-  const { position, scale, reset: resetViewControl } = useL2dViewControl()
+  const { position, scale, set: setViewControl } = useL2dViewControl()
 
   // Live2D model parameters
   const modelParameters = useLocalStorageManualReset<Record<string, number>>('settings/live2d/parameters', defaultModelParameters)
 
   function resetState() {
-    supportedControl.forEach(c => resetViewControl(c))
+    supportedControl.forEach(c => setViewControl(c))
     currentMotion.reset()
     availableMotions.reset()
     motionMap.reset()

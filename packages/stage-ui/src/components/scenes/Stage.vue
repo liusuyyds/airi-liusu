@@ -11,7 +11,8 @@ import { sleep } from '@moeru/std'
 import { createLive2DLipSync } from '@proj-airi/model-driver-lipsync'
 import { wlipsyncProfile } from '@proj-airi/model-driver-lipsync/shared/wlipsync'
 import { createPlaybackManager, createSpeechPipeline, normalizeActPayload } from '@proj-airi/pipelines-audio'
-import { Live2DScene, useLive2d } from '@proj-airi/stage-ui-live2d'
+import { Live2DScene, useLive2dParams } from '@proj-airi/stage-ui-live2d'
+import { SpineScene } from '@proj-airi/stage-ui-spine'
 import { ThreeScene } from '@proj-airi/stage-ui-three'
 import { animations } from '@proj-airi/stage-ui-three/assets/vrm'
 import { createQueue } from '@proj-airi/stream-kit'
@@ -24,6 +25,7 @@ import { generateSpeech } from '@xsai/generate-speech'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
+import { useSettingsLive2d } from '../../../../stage-ui-live2d/src/composables/live2d/live2d'
 import { useAuthProviderSync } from '../../composables/use-auth-provider-sync'
 import { useDuckDb } from '../../composables/use-duck-db'
 import { useIOTraceBridge } from '../../composables/use-io-trace-bridge'
@@ -43,9 +45,13 @@ import { useSettings } from '../../stores/settings'
 import { useSpeechRuntimeStore } from '../../stores/speech-runtime'
 
 const props = withDefaults(defineProps<{
+  cursorPosition?: { x: number, y: number }
+  enableOrbitControls?: boolean
   paused?: boolean
-  focusAt: { x: number, y: number }
-}>(), { paused: false, scale: 1 })
+}>(), {
+  enableOrbitControls: true,
+  paused: false,
+})
 
 const componentState = defineModel<'pending' | 'loading' | 'mounted'>('state', { default: 'pending' })
 
@@ -54,23 +60,29 @@ const { getDb } = useDuckDb()
 
 const vrmViewerRef = ref<InstanceType<typeof ThreeScene>>()
 const live2dSceneRef = ref<InstanceType<typeof Live2DScene>>()
+const spineSceneRef = ref<InstanceType<typeof SpineScene>>()
 
 const settingsStore = useSettings()
 const {
   stageModelRenderer,
   stageViewControlsEnabled,
-  live2dDisableFocus,
   stageModelSelectedUrl,
   stageModelSelected,
   themeColorsHue,
   themeColorsHueDynamic,
-  live2dIdleAnimationEnabled,
-  live2dAutoBlinkEnabled,
-  live2dForceAutoBlinkEnabled,
-  live2dExpressionEnabled,
+
+} = storeToRefs(settingsStore)
+const {
   live2dShadowEnabled,
   live2dMaxFps,
   live2dRenderScale,
+} = storeToRefs(useSettingsLive2d())
+const {
+  spinePremultipliedAlpha,
+  spineDefaultMixDuration,
+  spineIdleAnimationEnabled,
+  spineMaxFps,
+  spineRenderScale,
 } = storeToRefs(settingsStore)
 const { mouthOpenSize, nowSpeaking } = storeToRefs(useSpeakingStore())
 const { audioContext } = useAudioContext()
@@ -84,7 +96,7 @@ const chatHookCleanups: Array<() => void> = []
 
 const providersStore = useProvidersStore()
 useAuthProviderSync()
-const live2dStore = useLive2d()
+const live2dStore = useLive2dParams()
 const showStage = ref(true)
 const viewUpdateCleanups: Array<() => void> = []
 
@@ -122,7 +134,7 @@ const speechRuntimeStore = useSpeechRuntimeStore()
 const backgroundStore = useBackgroundStore()
 const { activeBackgroundUrl } = storeToRefs(backgroundStore)
 
-const { currentMotion } = storeToRefs(useLive2d())
+const { currentMotion } = storeToRefs(useLive2dParams())
 
 const emotionsQueue = createQueue<EmotionPayload>({
   handlers: [
@@ -137,6 +149,9 @@ const emotionsQueue = createQueue<EmotionPayload>({
       }
       else if (stageModelRenderer.value === 'live2d') {
         currentMotion.value = { group: EMOTION_EmotionMotionName_value[ctx.data.name] }
+      }
+      else if (stageModelRenderer.value === 'spine') {
+        spineSceneRef.value?.setEmotion(ctx.data.name, ctx.data.intensity)
       }
     },
   ],
@@ -746,6 +761,9 @@ function canvasElement() {
 
   else if (stageModelRenderer.value === 'vrm')
     return vrmViewerRef.value?.canvasElement()
+
+  else if (stageModelRenderer.value === 'spine')
+    return spineSceneRef.value?.canvasElement()
 }
 
 function readRenderTargetRegionAtClientPoint(clientX: number, clientY: number, radius: number) {
@@ -758,7 +776,9 @@ function readRenderTargetRegionAtClientPoint(clientX: number, clientY: number, r
 async function captureFrame() {
   const charBlob = await (stageModelRenderer.value === 'live2d'
     ? live2dSceneRef.value?.captureFrame()
-    : vrmViewerRef.value?.captureFrame())
+    : stageModelRenderer.value === 'vrm'
+      ? vrmViewerRef.value?.captureFrame()
+      : spineSceneRef.value?.captureFrame())
 
   if (!activeBackgroundUrl.value || !charBlob)
     return charBlob
@@ -852,17 +872,12 @@ defineExpose({
         h-full w-full flex-1
         :model-src="stageModelSelectedUrl"
         :model-id="stageModelSelected"
-        :focus-at="focusAt"
+        :cursor-position="cursorPosition"
         :mouth-open-size="mouthOpenSize"
         :now-speaking="nowSpeaking"
         :paused="paused"
-        :disable-focus-at="live2dDisableFocus"
         :theme-colors-hue="themeColorsHue"
         :theme-colors-hue-dynamic="themeColorsHueDynamic"
-        :live2d-idle-animation-enabled="live2dIdleAnimationEnabled"
-        :live2d-auto-blink-enabled="live2dAutoBlinkEnabled"
-        :live2d-force-auto-blink-enabled="live2dForceAutoBlinkEnabled"
-        :live2d-expression-enabled="live2dExpressionEnabled"
         :live2d-shadow-enabled="live2dShadowEnabled"
         :live2d-max-fps="live2dMaxFps"
         :live2d-render-scale="live2dRenderScale"
@@ -873,11 +888,28 @@ defineExpose({
         v-model:state="componentState"
         min-w="50% <lg:full" min-h="100 sm:100" h-full w-full flex-1
         :model-src="stageModelSelectedUrl"
+        :cursor-position="cursorPosition"
         :idle-animation="animations.idleLoop.toString()"
         :paused="paused"
         :show-axes="stageViewControlsEnabled"
+        :enable-orbit-controls="props.enableOrbitControls"
         :current-audio-source="currentAudioSource"
         @error="console.error"
+      />
+      <SpineScene
+        v-if="stageModelRenderer === 'spine' && showStage"
+        ref="spineSceneRef"
+        v-model:state="componentState"
+        min-w="50% <lg:full" min-h="100 sm:100"
+        h-full w-full flex-1
+        :model-src="stageModelSelectedUrl"
+        :model-id="stageModelSelected"
+        :paused="paused"
+        :premultiplied-alpha="spinePremultipliedAlpha"
+        :default-mix-duration="spineDefaultMixDuration"
+        :idle-animation-enabled="spineIdleAnimationEnabled"
+        :max-fps="spineMaxFps"
+        :render-scale="spineRenderScale"
       />
       <div
         v-if="stageModelRenderer === 'godot'"
