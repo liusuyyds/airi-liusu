@@ -13,6 +13,7 @@ meta:
   subtitleKey: settings.title
   descriptionKey: settings.pages.memory.description
   icon: i-solar:leaf-bold-duotone
+  settingsEntry: true
   order: 5
   stageTransition:
     name: slide
