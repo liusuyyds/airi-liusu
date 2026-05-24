@@ -122,7 +122,11 @@ interface PlastMemRuntimeConfig {
   maxContextCharacters: number
   openaiApiKey?: string
   openaiBaseUrl?: string
+  openaiChatApiKey?: string
+  openaiChatBaseUrl?: string
   openaiChatModel?: string
+  openaiEmbeddingApiKey?: string
+  openaiEmbeddingBaseUrl?: string
   openaiEmbeddingModel?: string
   requestTimeoutMsec: number
   semanticLimit: number
@@ -158,6 +162,28 @@ function resolveConversationId(config: Pick<PlastMemRuntimeConfig, 'conversation
 
 function isStaleChatBridgeOwner(ownerId: string | undefined) {
   return Boolean(chatBridgeOwnerId && ownerId !== chatBridgeOwnerId)
+}
+
+function acquirePlastMemChatBridgeLease(ownerId: string) {
+  if (chatBridgeOwnerId && chatBridgeOwnerId !== ownerId) {
+    logPlastMemInfo('renderer:lease-replaced', {
+      previousOwnerId: chatBridgeOwnerId,
+      requestedOwnerId: ownerId,
+    })
+  }
+
+  chatBridgeOwnerId = ownerId
+  return {
+    acquired: true,
+    activeOwnerId: chatBridgeOwnerId,
+  }
+}
+
+function releasePlastMemChatBridgeLease(ownerId: string) {
+  if (chatBridgeOwnerId !== ownerId)
+    return
+
+  chatBridgeOwnerId = undefined
 }
 
 function pruneRecentSignatures(signatures: Map<string, number>, now: number, ttlMsec: number) {
@@ -275,7 +301,11 @@ function resolveEnvPlastMemRuntimeConfig(): PlastMemRuntimeConfig {
     maxContextCharacters: parsePositiveInteger(env.COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS, defaultMaxContextCharacters),
     openaiApiKey: trimOptional(env.OPENAI_API_KEY),
     openaiBaseUrl: trimOptional(env.OPENAI_BASE_URL),
+    openaiChatApiKey: trimOptional(env.OPENAI_CHAT_API_KEY),
+    openaiChatBaseUrl: trimOptional(env.OPENAI_CHAT_BASE_URL),
     openaiChatModel: trimOptional(env.OPENAI_CHAT_MODEL),
+    openaiEmbeddingApiKey: trimOptional(env.OPENAI_EMBEDDING_API_KEY),
+    openaiEmbeddingBaseUrl: trimOptional(env.OPENAI_EMBEDDING_BASE_URL),
     openaiEmbeddingModel: trimOptional(env.OPENAI_EMBEDDING_MODEL),
     requestTimeoutMsec: parsePositiveInteger(env.COMPUTER_USE_PLAST_MEM_TIMEOUT_MS, chatRetrieveTimeoutMsec),
     semanticLimit: parsePositiveInteger(env.COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT, defaultSemanticLimit),
@@ -307,11 +337,28 @@ function resolvePlastMemRuntimeConfig(): PlastMemRuntimeConfig {
     maxContextCharacters: config.maxContextCharacters,
     openaiApiKey: trimOptional(config.openaiApiKey) ?? envConfig.openaiApiKey,
     openaiBaseUrl: trimOptional(config.openaiBaseUrl) ?? envConfig.openaiBaseUrl,
+    openaiChatApiKey: trimOptional(config.openaiChatApiKey) ?? envConfig.openaiChatApiKey,
+    openaiChatBaseUrl: trimOptional(config.openaiChatBaseUrl) ?? envConfig.openaiChatBaseUrl,
     openaiChatModel: trimOptional(config.openaiChatModel) ?? envConfig.openaiChatModel,
+    openaiEmbeddingApiKey: trimOptional(config.openaiEmbeddingApiKey) ?? envConfig.openaiEmbeddingApiKey,
+    openaiEmbeddingBaseUrl: trimOptional(config.openaiEmbeddingBaseUrl) ?? envConfig.openaiEmbeddingBaseUrl,
     openaiEmbeddingModel: trimOptional(config.openaiEmbeddingModel) ?? envConfig.openaiEmbeddingModel,
     requestTimeoutMsec: config.requestTimeoutMsec,
     semanticLimit: config.semanticLimit,
     workspaceKey: trimOptional(config.workspaceKey) ?? envConfig.workspaceKey,
+  }
+}
+
+function modelProviderStatusFields(config: PlastMemRuntimeConfig) {
+  return {
+    openaiApiKeyConfigured: Boolean(config.openaiApiKey),
+    openaiBaseUrlConfigured: Boolean(config.openaiBaseUrl),
+    openaiChatApiKeyConfigured: Boolean(config.openaiChatApiKey),
+    openaiChatBaseUrlConfigured: Boolean(config.openaiChatBaseUrl),
+    openaiChatModel: config.openaiChatModel,
+    openaiEmbeddingApiKeyConfigured: Boolean(config.openaiEmbeddingApiKey),
+    openaiEmbeddingBaseUrlConfigured: Boolean(config.openaiEmbeddingBaseUrl),
+    openaiEmbeddingModel: config.openaiEmbeddingModel,
   }
 }
 
@@ -453,10 +500,7 @@ export async function getPlastMemRuntimeStatus(manager: McpStdioManager): Promis
       devMode: config.devMode,
       enabled: config.enabled,
       mcpServer,
-      openaiApiKeyConfigured: Boolean(config.openaiApiKey),
-      openaiBaseUrlConfigured: Boolean(config.openaiBaseUrl),
-      openaiChatModel: config.openaiChatModel,
-      openaiEmbeddingModel: config.openaiEmbeddingModel,
+      ...modelProviderStatusFields(config),
       reachable: false,
       workspaceKey: config.workspaceKey,
     }
@@ -474,10 +518,7 @@ export async function getPlastMemRuntimeStatus(manager: McpStdioManager): Promis
       enabled: config.enabled,
       error: 'COMPUTER_USE_PLAST_MEM_BASE_URL is not configured',
       mcpServer,
-      openaiApiKeyConfigured: Boolean(config.openaiApiKey),
-      openaiBaseUrlConfigured: Boolean(config.openaiBaseUrl),
-      openaiChatModel: config.openaiChatModel,
-      openaiEmbeddingModel: config.openaiEmbeddingModel,
+      ...modelProviderStatusFields(config),
       reachable: false,
       workspaceKey: config.workspaceKey,
     }
@@ -497,10 +538,7 @@ export async function getPlastMemRuntimeStatus(manager: McpStdioManager): Promis
     enabled: config.enabled,
     error: probe.error,
     mcpServer,
-    openaiApiKeyConfigured: Boolean(config.openaiApiKey),
-    openaiBaseUrlConfigured: Boolean(config.openaiBaseUrl),
-    openaiChatModel: config.openaiChatModel,
-    openaiEmbeddingModel: config.openaiEmbeddingModel,
+    ...modelProviderStatusFields(config),
     reachable: probe.reachable,
     statusCode: probe.statusCode,
     workspaceKey: config.workspaceKey,
@@ -1357,27 +1395,9 @@ export function createPlastMemService(params: {
   defineInvokeHandler(params.context, electronPlastMemIngestChatMessages, payload => ingestPlastMemChatMessages(payload))
   defineInvokeHandler(params.context, electronPlastMemAddMessage, payload => addPlastMemMessage(payload))
   defineInvokeHandler(params.context, electronPlastMemAcquireChatBridge, (payload) => {
-    if (chatBridgeOwnerId && chatBridgeOwnerId !== payload.ownerId) {
-      logPlastMemWarn('renderer:lease-denied', {
-        activeOwnerId: chatBridgeOwnerId,
-        requestedOwnerId: payload.ownerId,
-      })
-      return {
-        acquired: false,
-        activeOwnerId: chatBridgeOwnerId,
-      }
-    }
-
-    chatBridgeOwnerId = payload.ownerId
-    return {
-      acquired: true,
-      activeOwnerId: chatBridgeOwnerId,
-    }
+    return acquirePlastMemChatBridgeLease(payload.ownerId)
   })
   defineInvokeHandler(params.context, electronPlastMemReleaseChatBridge, (payload) => {
-    if (chatBridgeOwnerId !== payload.ownerId)
-      return
-
-    chatBridgeOwnerId = undefined
+    releasePlastMemChatBridgeLease(payload.ownerId)
   })
 }

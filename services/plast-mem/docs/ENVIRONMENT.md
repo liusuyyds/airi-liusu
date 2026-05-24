@@ -8,10 +8,12 @@ Runtime configuration is loaded from `dotenvy` through
 | Variable | Description |
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL connection string |
-| `OPENAI_BASE_URL` | OpenAI-compatible base URL; trailing slash is trimmed |
-| `OPENAI_API_KEY` | API key for chat and embedding calls |
 | `OPENAI_CHAT_MODEL` | model name used by text and structured generation |
 | `OPENAI_EMBEDDING_MODEL` | model name used by embeddings |
+| `OPENAI_CHAT_BASE_URL` | OpenAI-compatible base URL used by text and structured generation; trailing slash is trimmed |
+| `OPENAI_CHAT_API_KEY` | API key used by text and structured generation |
+| `OPENAI_EMBEDDING_BASE_URL` | OpenAI-compatible base URL used by embeddings; trailing slash is trimmed |
+| `OPENAI_EMBEDDING_API_KEY` | API key used by embeddings |
 
 ## Optional server variables
 
@@ -27,10 +29,12 @@ Runtime configuration is loaded from `dotenvy` through
 
 ```bash
 DATABASE_URL=postgres://user:password@localhost:5432/plastmem
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_API_KEY=sk-your-api-key
-OPENAI_CHAT_MODEL=gpt-5.2
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+OPENAI_CHAT_BASE_URL=https://chat-provider.example/v1
+OPENAI_CHAT_API_KEY=chat-api-key
+OPENAI_CHAT_MODEL=chat-model-name
+OPENAI_EMBEDDING_BASE_URL=https://embedding-provider.example/v1
+OPENAI_EMBEDDING_API_KEY=embedding-api-key
+OPENAI_EMBEDDING_MODEL=embedding-model-name
 OPENAI_CHAT_SEED=42
 OPENAI_CHAT_MAX_TOKENS=2048
 OPENAI_REQUEST_TIMEOUT_SECONDS=60

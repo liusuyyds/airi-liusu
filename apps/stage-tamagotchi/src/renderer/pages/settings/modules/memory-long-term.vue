@@ -99,9 +99,11 @@ const bridgeEnvVars = [
   'COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS',
   'COMPUTER_USE_PLAST_MEM_TIMEOUT_MS',
   'DATABASE_URL',
-  'OPENAI_BASE_URL',
-  'OPENAI_API_KEY',
+  'OPENAI_CHAT_BASE_URL',
+  'OPENAI_CHAT_API_KEY',
   'OPENAI_CHAT_MODEL',
+  'OPENAI_EMBEDDING_BASE_URL',
+  'OPENAI_EMBEDDING_API_KEY',
   'OPENAI_EMBEDDING_MODEL',
   'OPENAI_CHAT_MAX_TOKENS',
   'OPENAI_REQUEST_TIMEOUT_SECONDS',
@@ -248,6 +250,20 @@ const healthServiceBadgeClass = computed(() => healthStatusBadgeClass(healthServ
 const healthDatabaseBadgeClass = computed(() => healthStatusBadgeClass(health.value?.databaseOk))
 const healthCounts = computed(() => health.value?.counts)
 const pendingReviewCount = computed(() => healthCounts.value?.pending_reviews ?? 0)
+const modelProvidersConfigured = computed(() => {
+  const currentStatus = status.value
+  if (!currentStatus)
+    return false
+
+  const chatConfigured = (currentStatus.openaiChatBaseUrlConfigured ?? currentStatus.openaiBaseUrlConfigured)
+    && (currentStatus.openaiChatApiKeyConfigured ?? currentStatus.openaiApiKeyConfigured)
+    && Boolean(currentStatus.openaiChatModel)
+  const embeddingConfigured = (currentStatus.openaiEmbeddingBaseUrlConfigured ?? currentStatus.openaiBaseUrlConfigured)
+    && (currentStatus.openaiEmbeddingApiKeyConfigured ?? currentStatus.openaiApiKeyConfigured)
+    && Boolean(currentStatus.openaiEmbeddingModel)
+
+  return chatConfigured && embeddingConfigured
+})
 const connectionChecks = computed<Array<{ detail: string, icon: string, kind: ConnectionCheckKind, label: string }>>(() => [
   {
     detail: status.value?.error ?? status.value?.baseUrl ?? tn('config.test.details.service'),
@@ -271,7 +287,7 @@ const connectionChecks = computed<Array<{ detail: string, icon: string, kind: Co
     detail: status.value?.openaiChatModel ?? status.value?.openaiEmbeddingModel ?? tn('config.test.details.models'),
     icon: 'i-solar:cpu-bold-duotone',
     kind: status.value
-      ? (status.value.openaiBaseUrlConfigured && status.value.openaiApiKeyConfigured && Boolean(status.value.openaiChatModel) && Boolean(status.value.openaiEmbeddingModel) ? 'ok' : 'error')
+      ? (modelProvidersConfigured.value ? 'ok' : 'error')
       : 'unknown',
     label: tn('config.test.items.models'),
   },
@@ -1161,7 +1177,7 @@ onBeforeUnmount(() => {
                   v-model="configDraft.databaseUrl"
                   :label="tn('config.fields.database-url.label')"
                   :description="tn('config.fields.database-url.description')"
-                  placeholder="postgres://postgres:postgres@localhost:5433/nocturne"
+                  placeholder="postgres://plastmem:plastmem@localhost:5433/plastmem"
                 />
               </div>
             </section>
@@ -1179,56 +1195,118 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <div :class="['grid', 'grid-cols-1', 'gap-4', 'lg:grid-cols-2']">
-                <FieldInput
-                  v-model="configDraft.openaiBaseUrl"
-                  :label="tn('config.fields.openai-base-url.label')"
-                  :description="tn('config.fields.openai-base-url.description')"
-                  placeholder="https://api.siliconflow.cn/v1/"
-                />
+              <div :class="['grid', 'grid-cols-1', 'gap-4', '2xl:grid-cols-2']">
+                <div :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'border', 'border-neutral-200/70', 'p-3', 'dark:border-neutral-800/70']">
+                  <div :class="['flex', 'flex-col', 'gap-1']">
+                    <h5 :class="['text-xs', 'font-semibold', 'uppercase', 'text-neutral-500', 'dark:text-neutral-400']">
+                      {{ tn('config.groups.models.chat.title') }}
+                    </h5>
+                    <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
+                      {{ tn('config.groups.models.chat.description') }}
+                    </p>
+                  </div>
 
-                <div :class="['max-w-full']">
-                  <label :class="['flex', 'flex-col', 'gap-4']">
-                    <div>
-                      <div :class="['flex', 'items-center', 'gap-1', 'text-sm', 'font-medium']">
-                        {{ tn('config.fields.openai-api-key.label') }}
-                      </div>
-                      <div :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']" text-wrap>
-                        {{ tn('config.fields.openai-api-key.description') }}
-                      </div>
+                  <div :class="['grid', 'grid-cols-1', 'gap-4', 'lg:grid-cols-2']">
+                    <FieldInput
+                      v-model="configDraft.openaiChatModel"
+                      :label="tn('config.fields.openai-chat-model.label')"
+                      :description="tn('config.fields.openai-chat-model.description')"
+                      placeholder="Qwen/Qwen3.5-9B"
+                    />
+                    <FieldInput
+                      v-model="configDraft.openaiChatBaseUrl"
+                      :label="tn('config.fields.openai-chat-base-url.label')"
+                      :description="tn('config.fields.openai-chat-base-url.description')"
+                      placeholder="https://api.z.ai/api/paas/v4/"
+                    />
+
+                    <div :class="['max-w-full', 'lg:col-span-2', '2xl:col-span-1']">
+                      <label :class="['flex', 'flex-col', 'gap-4']">
+                        <div>
+                          <div :class="['flex', 'items-center', 'gap-1', 'text-sm', 'font-medium']">
+                            {{ tn('config.fields.openai-chat-api-key.label') }}
+                          </div>
+                          <div :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']" text-wrap>
+                            {{ tn('config.fields.openai-chat-api-key.description') }}
+                          </div>
+                        </div>
+                        <div :class="['flex', 'items-center', 'gap-2']">
+                          <Input
+                            v-model="configDraft.openaiChatApiKey"
+                            :type="apiKeyInputType"
+                            placeholder="sk-..."
+                          />
+                          <Button
+                            type="button"
+                            variant="secondary-muted"
+                            size="sm"
+                            shape="square"
+                            :icon="apiKeyVisible ? 'i-solar:eye-closed-bold-duotone' : 'i-solar:eye-bold-duotone'"
+                            :aria-label="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
+                            :title="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
+                            @click="apiKeyVisible = !apiKeyVisible"
+                          />
+                        </div>
+                      </label>
                     </div>
-                    <div :class="['flex', 'items-center', 'gap-2']">
-                      <Input
-                        v-model="configDraft.openaiApiKey"
-                        :type="apiKeyInputType"
-                        placeholder="sk-..."
-                      />
-                      <Button
-                        type="button"
-                        variant="secondary-muted"
-                        size="sm"
-                        shape="square"
-                        :icon="apiKeyVisible ? 'i-solar:eye-closed-bold-duotone' : 'i-solar:eye-bold-duotone'"
-                        :aria-label="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
-                        :title="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
-                        @click="apiKeyVisible = !apiKeyVisible"
-                      />
-                    </div>
-                  </label>
+                  </div>
                 </div>
 
-                <FieldInput
-                  v-model="configDraft.openaiChatModel"
-                  :label="tn('config.fields.openai-chat-model.label')"
-                  :description="tn('config.fields.openai-chat-model.description')"
-                  placeholder="Qwen/Qwen3.5-9B"
-                />
-                <FieldInput
-                  v-model="configDraft.openaiEmbeddingModel"
-                  :label="tn('config.fields.openai-embedding-model.label')"
-                  :description="tn('config.fields.openai-embedding-model.description')"
-                  placeholder="Qwen/Qwen3-Embedding-0.6B"
-                />
+                <div :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'border', 'border-neutral-200/70', 'p-3', 'dark:border-neutral-800/70']">
+                  <div :class="['flex', 'flex-col', 'gap-1']">
+                    <h5 :class="['text-xs', 'font-semibold', 'uppercase', 'text-neutral-500', 'dark:text-neutral-400']">
+                      {{ tn('config.groups.models.embedding.title') }}
+                    </h5>
+                    <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
+                      {{ tn('config.groups.models.embedding.description') }}
+                    </p>
+                  </div>
+
+                  <div :class="['grid', 'grid-cols-1', 'gap-4', 'lg:grid-cols-2']">
+                    <FieldInput
+                      v-model="configDraft.openaiEmbeddingModel"
+                      :label="tn('config.fields.openai-embedding-model.label')"
+                      :description="tn('config.fields.openai-embedding-model.description')"
+                      placeholder="Qwen/Qwen3-Embedding-0.6B"
+                    />
+                    <FieldInput
+                      v-model="configDraft.openaiEmbeddingBaseUrl"
+                      :label="tn('config.fields.openai-embedding-base-url.label')"
+                      :description="tn('config.fields.openai-embedding-base-url.description')"
+                      placeholder="https://api.siliconflow.cn/v1/"
+                    />
+
+                    <div :class="['max-w-full', 'lg:col-span-2', '2xl:col-span-1']">
+                      <label :class="['flex', 'flex-col', 'gap-4']">
+                        <div>
+                          <div :class="['flex', 'items-center', 'gap-1', 'text-sm', 'font-medium']">
+                            {{ tn('config.fields.openai-embedding-api-key.label') }}
+                          </div>
+                          <div :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']" text-wrap>
+                            {{ tn('config.fields.openai-embedding-api-key.description') }}
+                          </div>
+                        </div>
+                        <div :class="['flex', 'items-center', 'gap-2']">
+                          <Input
+                            v-model="configDraft.openaiEmbeddingApiKey"
+                            :type="apiKeyInputType"
+                            placeholder="sk-..."
+                          />
+                          <Button
+                            type="button"
+                            variant="secondary-muted"
+                            size="sm"
+                            shape="square"
+                            :icon="apiKeyVisible ? 'i-solar:eye-closed-bold-duotone' : 'i-solar:eye-bold-duotone'"
+                            :aria-label="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
+                            :title="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
+                            @click="apiKeyVisible = !apiKeyVisible"
+                          />
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
           </div>

@@ -191,11 +191,19 @@ function createSidecarEnv(config: ElectronPlastMemConfig | undefined): NodeJS.Pr
   }
 
   if (config) {
+    // NOTICE:
+    // UI-managed Plast Mem config uses separate chat and embedding providers.
+    // Clear inherited shared OpenAI variables so the Rust sidecar cannot fall
+    // back to hidden process-level defaults after the user selected split APIs.
+    delete childEnv.OPENAI_BASE_URL
+    delete childEnv.OPENAI_API_KEY
     setEnvValue(childEnv, 'DATABASE_URL', config.databaseUrl)
-    setEnvValue(childEnv, 'OPENAI_BASE_URL', config.openaiBaseUrl)
-    setEnvValue(childEnv, 'OPENAI_API_KEY', config.openaiApiKey)
+    setEnvValue(childEnv, 'OPENAI_CHAT_BASE_URL', config.openaiChatBaseUrl)
+    setEnvValue(childEnv, 'OPENAI_CHAT_API_KEY', config.openaiChatApiKey)
     setEnvValue(childEnv, 'OPENAI_CHAT_MODEL', config.openaiChatModel)
     setEnvValue(childEnv, 'OPENAI_CHAT_MAX_TOKENS', config.openaiChatMaxTokens)
+    setEnvValue(childEnv, 'OPENAI_EMBEDDING_BASE_URL', config.openaiEmbeddingBaseUrl)
+    setEnvValue(childEnv, 'OPENAI_EMBEDDING_API_KEY', config.openaiEmbeddingApiKey)
     setEnvValue(childEnv, 'OPENAI_EMBEDDING_MODEL', config.openaiEmbeddingModel)
     setEnvValue(childEnv, 'OPENAI_REQUEST_TIMEOUT_SECONDS', config.openaiRequestTimeoutSeconds)
   }
@@ -231,13 +239,16 @@ async function resolvePackagedPlastMemExecutable() {
 }
 
 async function createLaunchPlan(config: ElectronPlastMemConfig, configuredByUser: boolean): Promise<PlastMemSidecarLaunchPlan> {
-  const packagedExecutable = await resolvePackagedPlastMemExecutable()
-  if (packagedExecutable) {
-    return {
-      args: [],
-      command: packagedExecutable,
-      cwd: dirname(packagedExecutable),
-      env: createSidecarEnv(configuredByUser ? config : undefined),
+  const forceSourceSidecar = parseBoolean(process.env.AIRI_PLAST_MEM_FORCE_SOURCE, false)
+  if (!forceSourceSidecar) {
+    const packagedExecutable = await resolvePackagedPlastMemExecutable()
+    if (packagedExecutable) {
+      return {
+        args: [],
+        command: packagedExecutable,
+        cwd: dirname(packagedExecutable),
+        env: createSidecarEnv(configuredByUser ? config : undefined),
+      }
     }
   }
 

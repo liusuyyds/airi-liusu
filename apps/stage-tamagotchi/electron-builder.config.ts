@@ -103,7 +103,33 @@ function writeComputerUseRuntimeManifest() {
   }, null, 2)}\n`)
 }
 
+function resolveNodePtyWindowsPrebuildDir() {
+  return resolve(computerUseMcpDistNodeModulesDir, 'node-pty', 'prebuilds', `win32-${process.arch}`)
+}
+
+function hasNodePtyWindowsPrebuild() {
+  const prebuildDir = resolveNodePtyWindowsPrebuildDir()
+  return existsSync(resolve(prebuildDir, 'pty.node'))
+    && existsSync(resolve(prebuildDir, 'conpty.node'))
+}
+
 async function rebuildComputerUseRuntimeDependencies() {
+  // NOTICE:
+  // The staged node-pty package already ships Windows prebuilds for both x64 and
+  // arm64. Rebuilding them locally forces node-gyp/MSBuild and currently fails on
+  // machines without the Spectre-mitigated MSVC libraries installed. For local
+  // Windows packaging we can keep the packaged prebuilds and skip the rebuild
+  // entirely. Keep AIRI_FORCE_COMPUTER_USE_MCP_REBUILD=1 as an escape hatch when
+  // we intentionally need a source rebuild.
+  if (
+    process.platform === 'win32'
+    && (process.env.AIRI_FORCE_COMPUTER_USE_MCP_REBUILD ?? '').trim() !== '1'
+    && hasNodePtyWindowsPrebuild()
+  ) {
+    console.warn(`[electron-builder/config] Skipping node-pty rebuild on Windows and reusing staged prebuilds from ${resolveNodePtyWindowsPrebuildDir()}.`)
+    return
+  }
+
   const electronPackage = requireFromConfig('electron/package.json') as { version?: string }
   if (!electronPackage.version)
     throw new Error('Unable to resolve Electron version for computer-use MCP native rebuild.')

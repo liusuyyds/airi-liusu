@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use async_openai::{
   Client,
   config::OpenAIConfig,
-  types::chat::{ChatCompletionRequestMessage, CreateChatCompletionRequestArgs, ReasoningEffort},
+  types::chat::{ChatCompletionRequestMessage, CreateChatCompletionRequestArgs},
 };
 use plastmem_shared::{APP_ENV, AppError};
 
@@ -12,8 +12,8 @@ pub async fn generate_text(
   messages: Vec<ChatCompletionRequestMessage>,
 ) -> Result<String, AppError> {
   let config = OpenAIConfig::new()
-    .with_api_key(&APP_ENV.openai_api_key)
-    .with_api_base(&APP_ENV.openai_base_url);
+    .with_api_key(&APP_ENV.openai_chat_api_key)
+    .with_api_base(&APP_ENV.openai_chat_base_url);
 
   let client = Client::with_config(config);
 
@@ -22,8 +22,7 @@ pub async fn generate_text(
   request_builder
     .model(&APP_ENV.openai_chat_model)
     .messages(messages)
-    .max_tokens(APP_ENV.openai_chat_max_tokens)
-    .reasoning_effort(ReasoningEffort::None);
+    .max_tokens(APP_ENV.openai_chat_max_tokens);
 
   if let Some(seed) = APP_ENV.openai_chat_seed {
     request_builder.seed(seed);

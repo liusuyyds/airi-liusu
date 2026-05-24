@@ -1,9 +1,12 @@
+import type { McpStdioManager } from '../mcp-servers'
+
 import { env } from 'node:process'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   checkPlastMemHealth,
+  getPlastMemRuntimeStatus,
   ingestPlastMemChatMessages,
   retrievePlastMemChatContext,
   retrievePlastMemSemanticMemoryRaw,
@@ -23,6 +26,14 @@ const envKeys = [
   'COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT',
   'COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS',
   'COMPUTER_USE_PLAST_MEM_TIMEOUT_MS',
+  'OPENAI_API_KEY',
+  'OPENAI_BASE_URL',
+  'OPENAI_CHAT_API_KEY',
+  'OPENAI_CHAT_BASE_URL',
+  'OPENAI_CHAT_MODEL',
+  'OPENAI_EMBEDDING_API_KEY',
+  'OPENAI_EMBEDDING_BASE_URL',
+  'OPENAI_EMBEDDING_MODEL',
 ] as const
 
 const originalEnv = new Map<string, string | undefined>()
@@ -82,6 +93,50 @@ describe('plast mem Electron service', () => {
       semantic_limit: 12,
       detail: 'low',
     })
+  })
+
+  it('does not treat shared OpenAI env as split Plast Mem model providers', async () => {
+    // ROOT CAUSE:
+    //
+    // If only OPENAI_BASE_URL and OPENAI_API_KEY are configured, the split API
+    // status used to report the chat and embedding providers as configured.
+    // This happened because role-specific fields fell back to the shared pair.
+    //
+    // We fixed this by requiring OPENAI_CHAT_* and OPENAI_EMBEDDING_* for the
+    // Plast Mem runtime path while leaving the legacy shared fields observable.
+    env.OPENAI_BASE_URL = 'https://shared-provider.example/v1'
+    env.OPENAI_API_KEY = 'shared-api-key'
+    env.OPENAI_CHAT_MODEL = 'chat-model'
+    env.OPENAI_EMBEDDING_MODEL = 'embedding-model'
+
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('{}', { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const mcpManager: McpStdioManager = {
+      applyAndRestart: vi.fn(),
+      callTool: vi.fn(),
+      ensureConfigFile: vi.fn(),
+      getRuntimeStatus: () => ({ path: '', servers: [], updatedAt: 0 }),
+      listTools: vi.fn(),
+      openConfigFile: vi.fn(),
+      readConfigText: vi.fn(),
+      stopAll: vi.fn(),
+      testServer: vi.fn(),
+      writeConfigText: vi.fn(),
+    }
+
+    const result = await getPlastMemRuntimeStatus(mcpManager)
+
+    expect(result.openaiBaseUrlConfigured).toBe(true)
+    expect(result.openaiApiKeyConfigured).toBe(true)
+    expect(result.openaiChatBaseUrlConfigured).toBe(false)
+    expect(result.openaiChatApiKeyConfigured).toBe(false)
+    expect(result.openaiEmbeddingBaseUrlConfigured).toBe(false)
+    expect(result.openaiEmbeddingApiKeyConfigured).toBe(false)
+    expect(result.openaiChatModel).toBe('chat-model')
+    expect(result.openaiEmbeddingModel).toBe('embedding-model')
   })
 
   it('deduplicates repeated formal chat memory retrievals', async () => {

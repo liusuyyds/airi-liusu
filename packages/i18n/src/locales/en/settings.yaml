@@ -685,7 +685,13 @@ pages:
                 description: Tune what memory is retrieved and how much context can be injected.
                 title: Recall limits
               models:
-                description: Provider credentials, models, token budget, and provider timeout used by the sidecar.
+                description: Configure separate model services for chat extraction and embedding memory.
+                chat:
+                  description: Used for chat segmentation, consolidation, and structured extraction.
+                  title: Chat service
+                embedding:
+                  description: Used for vectorizing memories and semantic retrieval.
+                  title: Embedding service
                 title: Model provider
             fields:
               auto-start:
@@ -727,12 +733,24 @@ pages:
               openai-base-url:
                 description: OpenAI-compatible API base URL used by Plast Mem.
                 label: API base URL
+              openai-chat-api-key:
+                description: API key used for Plast Mem chat and structured extraction calls.
+                label: Chat API key
+              openai-chat-base-url:
+                description: OpenAI-compatible API base URL used for Plast Mem chat and structured extraction calls.
+                label: Chat API base URL
               openai-chat-max-tokens:
                 description: Maximum output tokens for Plast Mem background chat calls.
                 label: Chat max tokens
               openai-chat-model:
                 description: Chat model used by Plast Mem for segmentation and consolidation.
                 label: Chat model
+              openai-embedding-api-key:
+                description: API key used for Plast Mem embedding calls.
+                label: Embedding API key
+              openai-embedding-base-url:
+                description: OpenAI-compatible API base URL used for Plast Mem embedding calls.
+                label: Embedding API base URL
               openai-embedding-model:
                 description: Embedding model used by Plast Mem for memory vectors.
                 label: Embedding model

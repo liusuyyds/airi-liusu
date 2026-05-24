@@ -9,8 +9,8 @@ pub async fn embed(input: &str) -> Result<PgVector, AppError> {
   let embedding_dim =
     u32::try_from(EMBEDDING_DIM).map_err(|_| anyhow!("EMBEDDING_DIM must fit in u32"))?;
   let config = OpenAIConfig::new()
-    .with_api_key(&APP_ENV.openai_api_key)
-    .with_api_base(&APP_ENV.openai_base_url);
+    .with_api_key(&APP_ENV.openai_embedding_api_key)
+    .with_api_base(&APP_ENV.openai_embedding_base_url);
 
   let client = Client::with_config(config);
 

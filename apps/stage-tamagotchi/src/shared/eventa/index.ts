@@ -270,8 +270,12 @@ export interface ElectronPlastMemConfig {
   maxContextCharacters: number
   openaiApiKey: string
   openaiBaseUrl: string
+  openaiChatApiKey: string
+  openaiChatBaseUrl: string
   openaiChatMaxTokens: number
   openaiChatModel: string
+  openaiEmbeddingApiKey: string
+  openaiEmbeddingBaseUrl: string
   openaiEmbeddingModel: string
   openaiRequestTimeoutSeconds: number
   requestTimeoutMsec: number
@@ -295,9 +299,13 @@ export const defaultElectronPlastMemConfig: ElectronPlastMemConfig = {
   episodicLimit: 4,
   maxContextCharacters: 5000,
   openaiApiKey: '',
-  openaiBaseUrl: 'https://api.siliconflow.cn/v1/',
+  openaiBaseUrl: '',
+  openaiChatApiKey: '',
+  openaiChatBaseUrl: 'https://api.z.ai/api/paas/v4/',
   openaiChatMaxTokens: 2048,
   openaiChatModel: 'Qwen/Qwen3.5-9B',
+  openaiEmbeddingApiKey: '',
+  openaiEmbeddingBaseUrl: 'https://api.siliconflow.cn/v1/',
   openaiEmbeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
   openaiRequestTimeoutSeconds: 120,
   requestTimeoutMsec: 10000,
@@ -319,7 +327,11 @@ export interface ElectronPlastMemRuntimeStatus {
   mcpServer?: ElectronMcpStdioServerRuntimeStatus
   openaiApiKeyConfigured: boolean
   openaiBaseUrlConfigured: boolean
+  openaiChatApiKeyConfigured?: boolean
+  openaiChatBaseUrlConfigured?: boolean
   openaiChatModel?: string
+  openaiEmbeddingApiKeyConfigured?: boolean
+  openaiEmbeddingBaseUrlConfigured?: boolean
   openaiEmbeddingModel?: string
   reachable: boolean
   statusCode?: number

@@ -656,7 +656,13 @@ pages:
                 description: 调整召回哪些记忆，以及最多向聊天注入多少上下文。
                 title: 召回限制
               models:
-                description: Plast Mem sidecar 使用的服务凭据、模型、token 预算和模型请求超时。
+                description: 分别配置聊天抽取和 Embedding 记忆使用的模型服务。
+                chat:
+                  description: 用于聊天切分、整理和结构化抽取。
+                  title: 聊天服务
+                embedding:
+                  description: 用于记忆向量化和语义召回。
+                  title: Embedding 服务
                 title: 模型服务
             fields:
               auto-start:
@@ -698,12 +704,24 @@ pages:
               openai-base-url:
                 description: Plast Mem 使用的 OpenAI 兼容 API 地址。
                 label: API base URL
+              openai-chat-api-key:
+                description: Plast Mem 聊天和结构化抽取调用使用的 API key。
+                label: 聊天 API key
+              openai-chat-base-url:
+                description: Plast Mem 聊天和结构化抽取调用使用的 OpenAI 兼容 API 地址。
+                label: 聊天 API base URL
               openai-chat-max-tokens:
                 description: Plast Mem 后台聊天调用的最大输出 token。
                 label: 聊天最大 token
               openai-chat-model:
                 description: Plast Mem 做切分和整理时使用的聊天模型。
                 label: 聊天模型
+              openai-embedding-api-key:
+                description: Plast Mem Embedding 调用使用的 API key。
+                label: Embedding API key
+              openai-embedding-base-url:
+                description: Plast Mem Embedding 调用使用的 OpenAI 兼容 API 地址。
+                label: Embedding API base URL
               openai-embedding-model:
                 description: Plast Mem 写入和检索记忆向量时使用的 embedding 模型。
                 label: Embedding 模型

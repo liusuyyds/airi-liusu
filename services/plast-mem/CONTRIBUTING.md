@@ -36,10 +36,15 @@ Required variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `DATABASE_URL` | PostgreSQL connection string | `postgres://plastmem:plastmem@localhost/plastmem` |
-| `OPENAI_BASE_URL` | LLM API endpoint | `http://localhost:11434/v1/` |
-| `OPENAI_API_KEY` | API key | `plastmem` |
+| `OPENAI_CHAT_BASE_URL` | Chat API endpoint | `http://localhost:11434/v1/` |
+| `OPENAI_CHAT_API_KEY` | Chat API key | `plastmem` |
 | `OPENAI_CHAT_MODEL` | Chat model | `gpt-oss` |
+| `OPENAI_EMBEDDING_BASE_URL` | Embedding API endpoint | `http://localhost:11434/v1/` |
+| `OPENAI_EMBEDDING_API_KEY` | Embedding API key | `plastmem` |
 | `OPENAI_EMBEDDING_MODEL` | Embedding model | `qwen3-embedding:0.6b` |
+
+Chat and embedding requests are configured independently so each can use a
+provider with the right model family and credentials.
 
 ### Option 1: Nix (Recommended)
 

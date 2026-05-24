@@ -6,7 +6,7 @@ use async_openai::{
     ChatCompletionRequestMessage, ChatCompletionRequestMessageContentPartText,
     ChatCompletionRequestSystemMessage, ChatCompletionRequestSystemMessageContent,
     ChatCompletionRequestSystemMessageContentPart, CreateChatCompletionRequest,
-    CreateChatCompletionRequestArgs, ReasoningEffort, ResponseFormat, ResponseFormatJsonSchema,
+    CreateChatCompletionRequestArgs, ResponseFormat, ResponseFormatJsonSchema,
   },
 };
 use plastmem_shared::{APP_ENV, AppError};
@@ -155,7 +155,6 @@ fn build_request(
     .model(&APP_ENV.openai_chat_model)
     .messages(messages)
     .max_tokens(APP_ENV.openai_chat_max_tokens)
-    .reasoning_effort(ReasoningEffort::None)
     .response_format(response_format);
 
   if let Some(seed) = APP_ENV.openai_chat_seed {
@@ -294,8 +293,8 @@ where
   T: DeserializeOwned + JsonSchema,
 {
   let config = OpenAIConfig::new()
-    .with_api_key(&APP_ENV.openai_api_key)
-    .with_api_base(&APP_ENV.openai_base_url);
+    .with_api_key(&APP_ENV.openai_chat_api_key)
+    .with_api_base(&APP_ENV.openai_chat_base_url);
 
   let client = Client::with_config(config);
 

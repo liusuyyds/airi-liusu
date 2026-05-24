@@ -23,8 +23,12 @@ interface PlastMemUiConfig {
   maxContextCharacters?: number
   openaiApiKey?: string
   openaiBaseUrl?: string
+  openaiChatApiKey?: string
+  openaiChatBaseUrl?: string
   openaiChatMaxTokens?: number
   openaiChatModel?: string
+  openaiEmbeddingApiKey?: string
+  openaiEmbeddingBaseUrl?: string
   openaiEmbeddingModel?: string
   openaiRequestTimeoutSeconds?: number
   requestTimeoutMsec?: number
@@ -47,11 +51,13 @@ const children = new Set<ChildProcessWithoutNullStreams>()
 const plastMemServerDefaults = {
   DATABASE_URL: 'postgres://plastmem:plastmem@localhost:5433/plastmem',
   ENABLE_FSRS_REVIEW: 'true',
-  OPENAI_API_KEY: 'plastmem',
-  OPENAI_BASE_URL: 'http://localhost:11434/v1/',
+  OPENAI_CHAT_API_KEY: 'plastmem',
+  OPENAI_CHAT_BASE_URL: 'http://localhost:11434/v1/',
   OPENAI_CHAT_MAX_TOKENS: '2048',
   OPENAI_CHAT_MODEL: 'qwen3:8b',
   OPENAI_CHAT_SEED: '1145141919810721',
+  OPENAI_EMBEDDING_API_KEY: 'plastmem',
+  OPENAI_EMBEDDING_BASE_URL: 'http://localhost:11434/v1/',
   OPENAI_EMBEDDING_MODEL: 'qwen3-embedding:0.6b',
   OPENAI_REQUEST_TIMEOUT_SECONDS: '120',
 }
@@ -243,17 +249,20 @@ function childEnv(conversationId: string, plastMemEnv: Record<string, string>, u
     ...env,
     DATABASE_URL: getServerEnv('DATABASE_URL', stringFromUi(uiConfig?.databaseUrl)),
     ENABLE_FSRS_REVIEW: getServerEnv('ENABLE_FSRS_REVIEW'),
-    OPENAI_API_KEY: getServerEnv('OPENAI_API_KEY', stringFromUi(uiConfig?.openaiApiKey)),
-    OPENAI_BASE_URL: getServerEnv('OPENAI_BASE_URL', stringFromUi(uiConfig?.openaiBaseUrl)),
+    OPENAI_CHAT_API_KEY: getServerEnv('OPENAI_CHAT_API_KEY', stringFromUi(uiConfig?.openaiChatApiKey)),
+    OPENAI_CHAT_BASE_URL: getServerEnv('OPENAI_CHAT_BASE_URL', stringFromUi(uiConfig?.openaiChatBaseUrl)),
     OPENAI_CHAT_MAX_TOKENS: getServerEnv('OPENAI_CHAT_MAX_TOKENS', numberFromUi(uiConfig?.openaiChatMaxTokens)),
     OPENAI_CHAT_MODEL: getServerEnv('OPENAI_CHAT_MODEL', stringFromUi(uiConfig?.openaiChatModel)),
     OPENAI_CHAT_SEED: getServerEnv('OPENAI_CHAT_SEED'),
+    OPENAI_EMBEDDING_API_KEY: getServerEnv('OPENAI_EMBEDDING_API_KEY', stringFromUi(uiConfig?.openaiEmbeddingApiKey)),
+    OPENAI_EMBEDDING_BASE_URL: getServerEnv('OPENAI_EMBEDDING_BASE_URL', stringFromUi(uiConfig?.openaiEmbeddingBaseUrl)),
     OPENAI_EMBEDDING_MODEL: getServerEnv('OPENAI_EMBEDDING_MODEL', stringFromUi(uiConfig?.openaiEmbeddingModel)),
     OPENAI_REQUEST_TIMEOUT_SECONDS: getServerEnv('OPENAI_REQUEST_TIMEOUT_SECONDS', numberFromUi(uiConfig?.openaiRequestTimeoutSeconds)),
     SQLX_OFFLINE: env.SQLX_OFFLINE?.trim() || 'true',
     AIRI_LOCAL_PLAST_MEM_DEV: '1',
     AIRI_PLAST_MEM_AUTO_START: getBridgeEnv('AIRI_PLAST_MEM_AUTO_START', booleanFromUi(uiConfig?.autoStart), 'true'),
     AIRI_PLAST_MEM_DIR: plastMemDir,
+    AIRI_PLAST_MEM_FORCE_SOURCE: '1',
     AIRI_REPO_ROOT: repoRoot,
     COMPUTER_USE_PLAST_MEM_BASE_URL: getBridgeEnv('COMPUTER_USE_PLAST_MEM_BASE_URL', stringFromUi(uiConfig?.baseUrl), 'http://127.0.0.1:3000'),
     COMPUTER_USE_PLAST_MEM_CONVERSATION_ID: conversationId,
@@ -382,22 +391,23 @@ async function main() {
   console.info(`[dev] Plast Mem URL: ${processEnv.COMPUTER_USE_PLAST_MEM_BASE_URL}`)
   console.info(`[dev] Plast Mem env: ${await exists(plastMemEnvPath) ? plastMemEnvPath : 'not found; using defaults'}`)
   console.info(`[dev] Plast Mem DB: ${processEnv.DATABASE_URL}`)
-  console.info(`[dev] Plast Mem OpenAI base: ${processEnv.OPENAI_BASE_URL}`)
+  console.info(`[dev] Plast Mem chat base: ${processEnv.OPENAI_CHAT_BASE_URL}`)
   console.info(`[dev] Plast Mem chat model: ${processEnv.OPENAI_CHAT_MODEL}`)
   console.info(`[dev] Plast Mem chat max tokens: ${processEnv.OPENAI_CHAT_MAX_TOKENS}`)
+  console.info(`[dev] Plast Mem embedding base: ${processEnv.OPENAI_EMBEDDING_BASE_URL}`)
   console.info(`[dev] Plast Mem embedding model: ${processEnv.OPENAI_EMBEDDING_MODEL}`)
   console.info(`[dev] Plast Mem request timeout: ${processEnv.OPENAI_REQUEST_TIMEOUT_SECONDS}s`)
   console.info(`[dev] Plast Mem SQLx offline compile: ${processEnv.SQLX_OFFLINE}`)
-  console.info(`[dev] Plast Mem sidecar: managed by AIRI settings (auto-start=${parseBoolean(processEnv.AIRI_PLAST_MEM_AUTO_START, true)})`)
+  console.info(`[dev] Plast Mem sidecar: source cargo run with debug UI at ${processEnv.COMPUTER_USE_PLAST_MEM_BASE_URL}/board (auto-start=${parseBoolean(processEnv.AIRI_PLAST_MEM_AUTO_START, true)})`)
   console.info(`[dev] Plast Mem episodic recall limit: ${processEnv.COMPUTER_USE_PLAST_MEM_EPISODIC_LIMIT}`)
   console.info(`[dev] Plast Mem semantic recall limit: ${processEnv.COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT}`)
   console.info(`[dev] Plast Mem conversation: ${conversationId}`)
 
   if (
-    processEnv.OPENAI_BASE_URL.includes('siliconflow.cn')
-    && ['plastmem', 'your_siliconflow_api_key'].includes(processEnv.OPENAI_API_KEY)
+    processEnv.OPENAI_CHAT_BASE_URL.includes('siliconflow.cn')
+    && ['plastmem', 'your_siliconflow_api_key'].includes(processEnv.OPENAI_CHAT_API_KEY)
   ) {
-    console.warn('[dev] Plast Mem is configured for SiliconFlow, but OPENAI_API_KEY still looks like a placeholder. Update plast-mem/.env before testing memory creation.')
+    console.warn('[dev] Plast Mem chat is configured for SiliconFlow, but OPENAI_CHAT_API_KEY still looks like a placeholder. Update plast-mem/.env before testing memory creation.')
   }
 
   spawnChild(

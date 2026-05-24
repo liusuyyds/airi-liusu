@@ -23,12 +23,33 @@ import {
 const PLAST_MEM_CHAT_CONTEXT_ID = 'plast-mem:chat-recall'
 const PLAST_MEM_PRE_RETRIEVE_CONTEXT_ID = 'plast-mem:pre-retrieve'
 const PLAST_MEM_RECENT_MEMORY_CONTEXT_ID = 'plast-mem:recent-memory'
+const PLAST_MEM_OWNER_ID_STORAGE_KEY = 'plast-mem:chat-memory-owner-id'
 const RECENT_HOOK_SIGNATURE_TTL_MSEC = 30_000
-const ownerId = globalThis.crypto?.randomUUID?.() ?? `plast-mem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 type RecallStatus = 'idle' | 'recalled' | 'empty' | 'error'
 type IngestStatus = 'idle' | 'accepted' | 'rejected' | 'error'
 
 const recentHookSignatures = new Map<string, number>()
+
+function createOwnerId() {
+  return globalThis.crypto?.randomUUID?.() ?? `plast-mem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+function resolveOwnerId() {
+  try {
+    const cached = globalThis.sessionStorage?.getItem(PLAST_MEM_OWNER_ID_STORAGE_KEY)?.trim()
+    if (cached)
+      return cached
+
+    const nextOwnerId = createOwnerId()
+    globalThis.sessionStorage?.setItem(PLAST_MEM_OWNER_ID_STORAGE_KEY, nextOwnerId)
+    return nextOwnerId
+  }
+  catch {
+    return createOwnerId()
+  }
+}
+
+const ownerId = resolveOwnerId()
 
 function textFromContent(content: ChatHistoryItem['content'] | undefined) {
   if (typeof content === 'string')
