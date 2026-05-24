@@ -3713,6 +3713,7 @@ dependencies = [
  "plastmem_entities",
  "plastmem_shared",
  "plastmem_worker",
+ "schemars",
  "sea-orm",
  "serde",
  "tokio",

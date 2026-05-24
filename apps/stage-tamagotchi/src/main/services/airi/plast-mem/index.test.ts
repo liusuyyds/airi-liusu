@@ -330,8 +330,8 @@ describe('plast mem Electron service', () => {
   })
 
   it('checks Plast Mem sidecar and database health', async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
         database_ok: true,
         server_time: '2026-05-22T09:00:00Z',
         conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
@@ -343,8 +343,17 @@ describe('plast mem Electron service', () => {
           active_semantic_memories: 2,
           pending_reviews: 0,
         },
-      }), { status: 200 }),
-    )
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        chat: {
+          ok: true,
+          error: null,
+        },
+        embedding: {
+          ok: false,
+          error: 'code=20024 Json mode is not supported for this model.',
+        },
+      }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
 
     const result = await checkPlastMemHealth()
@@ -353,14 +362,20 @@ describe('plast mem Electron service', () => {
     expect(result.enabled).toBe(true)
     expect(result.serverTime).toBe('2026-05-22T09:00:00Z')
     expect(result.counts?.semantic_memories).toBe(3)
+    expect(result.modelHealth?.chat.ok).toBe(true)
+    expect(result.modelHealth?.embedding.ok).toBe(false)
+    expect(result.modelHealth?.embedding.error).toContain('20024')
 
-    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     const [input, init] = fetchMock.mock.calls[0]!
     expect(input).toBe('http://127.0.0.1:3000/api/v0/health')
     expect(init?.method).toBe('POST')
     expect(JSON.parse(String(init?.body))).toEqual({
       conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
     })
+    const [modelInput, modelInit] = fetchMock.mock.calls[1]!
+    expect(modelInput).toBe('http://127.0.0.1:3000/api/v0/model_health')
+    expect(modelInit?.method).toBe('POST')
   })
 
   it('lists semantic memories through semantic_memory raw endpoint', async () => {

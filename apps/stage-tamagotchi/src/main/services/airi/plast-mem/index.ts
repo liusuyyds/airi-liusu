@@ -75,6 +75,7 @@ const retrieveMemoryPath = 'api/v0/retrieve_memory'
 const retrieveMemoryRawPath = 'api/v0/retrieve_memory/raw'
 const contextPreRetrievePath = 'api/v0/context_pre_retrieve'
 const healthPath = 'api/v0/health'
+const modelHealthPath = 'api/v0/model_health'
 const recentMemoryPath = 'api/v0/recent_memory'
 const recentMemoryRawPath = 'api/v0/recent_memory/raw'
 const semanticMemoryRawPath = 'api/v0/semantic_memory/raw'
@@ -553,6 +554,32 @@ interface PlastMemHealthApiResponse {
   server_time?: string
 }
 
+interface PlastMemModelProviderHealthApiResponse {
+  error?: string | null
+  ok?: boolean
+}
+
+interface PlastMemModelHealthApiResponse {
+  chat?: PlastMemModelProviderHealthApiResponse
+  embedding?: PlastMemModelProviderHealthApiResponse
+}
+
+async function checkPlastMemModelHealth(baseUrl: string, timeoutMsec: number): Promise<ElectronPlastMemHealthResult['modelHealth']> {
+  const response = await postJsonText(baseUrl, modelHealthPath, {}, timeoutMsec)
+  const health = parseJsonResponse<PlastMemModelHealthApiResponse>(response.text, {}, 'model-health')
+
+  return {
+    chat: {
+      error: health.chat?.error ?? undefined,
+      ok: health.chat?.ok === true,
+    },
+    embedding: {
+      error: health.embedding?.error ?? undefined,
+      ok: health.embedding?.ok === true,
+    },
+  }
+}
+
 export async function checkPlastMemHealth(payload: ElectronPlastMemHealthPayload = {}): Promise<ElectronPlastMemHealthResult> {
   const config = resolvePlastMemRuntimeConfig()
   const conversationId = config.enabled ? resolveConversationId(config) : config.conversationId
@@ -577,6 +604,25 @@ export async function checkPlastMemHealth(payload: ElectronPlastMemHealthPayload
         statusCode: response.statusCode,
       })
     }
+    let modelHealth: ElectronPlastMemHealthResult['modelHealth']
+    try {
+      modelHealth = await checkPlastMemModelHealth(baseUrl, config.requestTimeoutMsec)
+    }
+    catch (error) {
+      modelHealth = {
+        chat: {
+          error: errorMessageFrom(error) ?? String(error),
+          ok: false,
+        },
+        embedding: {
+          error: errorMessageFrom(error) ?? String(error),
+          ok: false,
+        },
+      }
+      logPlastMemWarn('health:model-error', {
+        error: errorMessageFrom(error) ?? String(error),
+      })
+    }
 
     return {
       baseUrl,
@@ -585,6 +631,7 @@ export async function checkPlastMemHealth(payload: ElectronPlastMemHealthPayload
       databaseError: health.database_error ?? undefined,
       databaseOk: health.database_ok === true,
       enabled: config.enabled,
+      modelHealth,
       serverTime: health.server_time,
       statusCode: response.statusCode,
     }

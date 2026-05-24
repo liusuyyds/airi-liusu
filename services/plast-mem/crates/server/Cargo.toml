@@ -29,6 +29,7 @@ plastmem_entities.workspace = true
 plastmem_shared.workspace = true
 plastmem_worker.workspace = true
 sea-orm.workspace = true
+schemars.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing = "0.1"

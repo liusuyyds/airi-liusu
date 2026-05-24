@@ -365,6 +365,16 @@ export interface ElectronPlastMemHealthResult {
   databaseOk: boolean
   enabled: boolean
   error?: string
+  modelHealth?: {
+    chat: {
+      error?: string
+      ok: boolean
+    }
+    embedding: {
+      error?: string
+      ok: boolean
+    }
+  }
   serverTime?: string
   statusCode?: number
 }

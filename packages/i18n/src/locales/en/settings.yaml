@@ -890,16 +890,21 @@ pages:
             about: About
           tools:
             title: Manual memory tools
-          health:
-            title: Database and sidecar health
-            refresh: Check health
-            service: Sidecar API
-            database: Database
-            server-time: Server time
-            error: Health check failed
-            status:
-              ok: OK
-              error: Error
+            health:
+              title: Database and sidecar health
+              refresh: Check health
+              service: Sidecar API
+              database: Database
+              chat-model: Chat model
+              embedding-model: Embedding model
+              server-time: Server time
+              error: Health check failed
+              model-error: Model provider error
+              model-error-empty: Model provider returned an empty error.
+              error-code: 'code {code}:'
+              status:
+                ok: OK
+                error: Error
               unknown: Unknown
             counts:
               conversation-messages: Messages

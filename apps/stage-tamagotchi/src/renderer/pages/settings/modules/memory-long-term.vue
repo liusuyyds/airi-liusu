@@ -248,8 +248,22 @@ const healthServiceOk = computed(() => Boolean(health.value && !health.value.err
 const healthCheckedAt = computed(() => health.value?.serverTime ? new Date(health.value.serverTime).toLocaleTimeString() : '-')
 const healthServiceBadgeClass = computed(() => healthStatusBadgeClass(healthServiceOk.value ? true : health.value ? false : undefined))
 const healthDatabaseBadgeClass = computed(() => healthStatusBadgeClass(health.value?.databaseOk))
+const healthChatModelBadgeClass = computed(() => healthStatusBadgeClass(health.value?.modelHealth?.chat.ok))
+const healthEmbeddingModelBadgeClass = computed(() => healthStatusBadgeClass(health.value?.modelHealth?.embedding.ok))
 const healthCounts = computed(() => health.value?.counts)
 const pendingReviewCount = computed(() => healthCounts.value?.pending_reviews ?? 0)
+const modelHealthError = computed(() => {
+  const modelHealth = health.value?.modelHealth
+  if (!modelHealth)
+    return ''
+
+  const errors = [
+    modelHealth.chat.ok ? '' : formatProviderError(tn('health.chat-model'), modelHealth.chat.error),
+    modelHealth.embedding.ok ? '' : formatProviderError(tn('health.embedding-model'), modelHealth.embedding.error),
+  ].filter(Boolean)
+
+  return errors.join('\n')
+})
 const modelProvidersConfigured = computed(() => {
   const currentStatus = status.value
   if (!currentStatus)
@@ -284,11 +298,13 @@ const connectionChecks = computed<Array<{ detail: string, icon: string, kind: Co
     label: tn('config.test.items.conversation'),
   },
   {
-    detail: status.value?.openaiChatModel ?? status.value?.openaiEmbeddingModel ?? tn('config.test.details.models'),
+    detail: modelHealthError.value || (status.value?.openaiChatModel ?? status.value?.openaiEmbeddingModel ?? tn('config.test.details.models')),
     icon: 'i-solar:cpu-bold-duotone',
-    kind: status.value
-      ? (modelProvidersConfigured.value ? 'ok' : 'error')
-      : 'unknown',
+    kind: modelHealthError.value
+      ? 'error'
+      : status.value
+        ? (modelProvidersConfigured.value ? 'ok' : 'error')
+        : 'unknown',
     label: tn('config.test.items.models'),
   },
   {
@@ -400,6 +416,20 @@ function connectionCheckBadgeClass(kind: ConnectionCheckKind) {
 
 function connectionCheckStatusLabel(kind: ConnectionCheckKind) {
   return tn(`config.test.status.${kind}`)
+}
+
+function extractErrorCode(error: string) {
+  return error.match(/"code"\s*:\s*"?([^",}\s]+)/)?.[1]
+    ?? error.match(/\bcode[:=]\s*([A-Za-z0-9_.-]+)/i)?.[1]
+}
+
+function formatProviderError(label: string, error: string | undefined) {
+  const message = error?.trim() || tn('health.model-error-empty')
+  const code = extractErrorCode(message)
+
+  return code
+    ? `${label}: ${tn('health.error-code', { code })} ${message}`
+    : `${label}: ${message}`
 }
 
 function hasRecordShape(value: unknown): value is Record<string, unknown> {
@@ -1762,6 +1792,44 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <div :class="['grid', 'grid-cols-1', 'gap-2', 'md:grid-cols-2']">
+          <div :class="['min-w-0', 'flex', 'items-start', 'justify-between', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'dark:bg-neutral-950/30']">
+            <div :class="['min-w-0', 'flex', 'items-start', 'gap-2']">
+              <div :class="['i-solar:cpu-bold-duotone', 'mt-0.5', 'text-lg', 'text-neutral-500']" />
+              <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('health.chat-model') }}</span>
+                <span
+                  v-if="health?.modelHealth?.chat.error"
+                  :class="['whitespace-pre-wrap', 'break-words', 'font-mono', 'text-[11px]', 'text-red-600', 'leading-4', 'dark:text-red-300']"
+                >
+                  {{ formatProviderError(tn('health.chat-model'), health.modelHealth.chat.error) }}
+                </span>
+              </div>
+            </div>
+            <span :class="['shrink-0', 'rounded-full', 'px-2', 'py-0.5', 'text-xs', 'font-medium', healthChatModelBadgeClass]">
+              {{ health?.modelHealth?.chat.ok ? tn('health.status.ok') : health?.modelHealth ? tn('health.status.error') : tn('health.status.unknown') }}
+            </span>
+          </div>
+
+          <div :class="['min-w-0', 'flex', 'items-start', 'justify-between', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'dark:bg-neutral-950/30']">
+            <div :class="['min-w-0', 'flex', 'items-start', 'gap-2']">
+              <div :class="['i-solar:database-bold-duotone', 'mt-0.5', 'text-lg', 'text-neutral-500']" />
+              <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('health.embedding-model') }}</span>
+                <span
+                  v-if="health?.modelHealth?.embedding.error"
+                  :class="['whitespace-pre-wrap', 'break-words', 'font-mono', 'text-[11px]', 'text-red-600', 'leading-4', 'dark:text-red-300']"
+                >
+                  {{ formatProviderError(tn('health.embedding-model'), health.modelHealth.embedding.error) }}
+                </span>
+              </div>
+            </div>
+            <span :class="['shrink-0', 'rounded-full', 'px-2', 'py-0.5', 'text-xs', 'font-medium', healthEmbeddingModelBadgeClass]">
+              {{ health?.modelHealth?.embedding.ok ? tn('health.status.ok') : health?.modelHealth ? tn('health.status.error') : tn('health.status.unknown') }}
+            </span>
+          </div>
+        </div>
+
         <div :class="['grid', 'grid-cols-2', 'gap-2', 'lg:grid-cols-6']">
           <div
             v-for="item in [
@@ -1782,6 +1850,9 @@ onBeforeUnmount(() => {
 
         <Callout v-if="healthError" theme="orange" :label="tn('health.error')">
           {{ healthError }}
+        </Callout>
+        <Callout v-else-if="modelHealthError" theme="orange" :label="tn('health.model-error')">
+          <span :class="['whitespace-pre-wrap']">{{ modelHealthError }}</span>
         </Callout>
 
         <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">

@@ -9,6 +9,7 @@ mod add_message;
 #[cfg(debug_assertions)]
 mod benchmark;
 mod health;
+mod model_health;
 mod recent_memory;
 mod retrieve_memory;
 mod semantic_memory;
@@ -19,6 +20,7 @@ pub use add_message::{
 #[cfg(debug_assertions)]
 pub use benchmark::BenchmarkJobStatus;
 pub use health::{HealthCheck, HealthCheckResult, HealthCounts};
+pub use model_health::{ModelHealthResult, ModelProviderHealth};
 pub use recent_memory::RecentMemory;
 pub use retrieve_memory::{
   ContextPreRetrieve, EpisodicMemoryResult, RetrieveMemory, RetrieveMemoryRawResult,
@@ -31,6 +33,7 @@ pub fn app() -> Router<AppState> {
     .routes(routes!(add_message::add_message))
     .routes(routes!(add_message::import_batch_messages))
     .routes(routes!(health::health))
+    .routes(routes!(model_health::model_health))
     .routes(routes!(recent_memory::recent_memory))
     .routes(routes!(recent_memory::recent_memory_raw))
     .routes(routes!(retrieve_memory::retrieve_memory))
@@ -66,6 +69,8 @@ pub fn app() -> Router<AppState> {
     HealthCheck,
     HealthCheckResult,
     HealthCounts,
+    ModelHealthResult,
+    ModelProviderHealth,
     BenchmarkJobStatus,
     RecentMemory,
     SemanticMemoryList,
@@ -96,6 +101,8 @@ pub struct ApiDoc;
     HealthCheck,
     HealthCheckResult,
     HealthCounts,
+    ModelHealthResult,
+    ModelProviderHealth,
     RecentMemory,
     SemanticMemoryList,
     SemanticMemorySetInvalid,
