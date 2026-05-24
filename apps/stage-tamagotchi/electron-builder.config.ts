@@ -108,9 +108,19 @@ async function rebuildComputerUseRuntimeDependencies() {
   if (!electronPackage.version)
     throw new Error('Unable to resolve Electron version for computer-use MCP native rebuild.')
 
+  const electronMajorVersion = Number.parseInt(electronPackage.version.split('.')[0] ?? '', 10)
+  // NOTICE:
+  // Electron 41 uses NODE_MODULE_VERSION 145, but node-abi@4.24.0 only knows
+  // Electron up to 40 during the current CI build. Passing forceABI keeps
+  // @electron/rebuild from failing before it can compile node-pty from source.
+  // Remove this once @electron/rebuild's node-abi dependency recognizes
+  // Electron 41 in the workspace lockfile.
+  const forceABI = electronMajorVersion === 41 ? 145 : undefined
+
   const rebuildResult = rebuild({
     buildPath: computerUseMcpDistDir,
     electronVersion: electronPackage.version,
+    forceABI,
     force: true,
     onlyModules: ['node-pty'],
   })
