@@ -329,7 +329,41 @@ describe('plast mem Electron service', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('checks Plast Mem sidecar and database health', async () => {
+  it('checks Plast Mem sidecar and database health without probing models by default', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        database_ok: true,
+        server_time: '2026-05-22T09:00:00Z',
+        conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+        counts: {
+          conversation_messages: 4,
+          episode_spans: 2,
+          episodic_memories: 1,
+          semantic_memories: 3,
+          active_semantic_memories: 2,
+          pending_reviews: 0,
+        },
+      }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await checkPlastMemHealth()
+
+    expect(result.databaseOk).toBe(true)
+    expect(result.enabled).toBe(true)
+    expect(result.serverTime).toBe('2026-05-22T09:00:00Z')
+    expect(result.counts?.semantic_memories).toBe(3)
+    expect(result.modelHealth).toBeUndefined()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [input, init] = fetchMock.mock.calls[0]!
+    expect(input).toBe('http://127.0.0.1:3000/api/v0/health')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+    })
+  })
+
+  it('checks Plast Mem model providers when requested', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         database_ok: true,
@@ -356,7 +390,7 @@ describe('plast mem Electron service', () => {
       }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    const result = await checkPlastMemHealth()
+    const result = await checkPlastMemHealth({ includeModelHealth: true })
 
     expect(result.databaseOk).toBe(true)
     expect(result.enabled).toBe(true)

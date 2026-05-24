@@ -590,7 +590,7 @@ async function testConnection(saveBeforeTest: boolean) {
     await Promise.all([
       refreshStatus(),
       refreshSidecarStatus(),
-      refreshHealth(),
+      refreshHealth(true),
     ])
     if (saveBeforeTest)
       configSavedMessage.value = tn('config.test.complete')
@@ -634,14 +634,14 @@ async function refreshSidecarStatus() {
   }
 }
 
-async function refreshHealth() {
+async function refreshHealth(includeModelHealth = false) {
   if (isCheckingHealth.value)
     return
 
   isCheckingHealth.value = true
   healthError.value = ''
   try {
-    const result = await invokePlastMemHealth({})
+    const result = await invokePlastMemHealth({ includeModelHealth })
     health.value = result
     if (result.error)
       healthError.value = result.error
@@ -1758,7 +1758,7 @@ onBeforeUnmount(() => {
           <Button
             variant="secondary" size="sm" :loading="isCheckingHealth"
             icon="i-solar:refresh-bold-duotone" :label="tn('health.refresh')"
-            @click="refreshHealth"
+            @click="refreshHealth(true)"
           />
         </div>
 

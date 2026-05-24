@@ -605,23 +605,25 @@ export async function checkPlastMemHealth(payload: ElectronPlastMemHealthPayload
       })
     }
     let modelHealth: ElectronPlastMemHealthResult['modelHealth']
-    try {
-      modelHealth = await checkPlastMemModelHealth(baseUrl, config.requestTimeoutMsec)
-    }
-    catch (error) {
-      modelHealth = {
-        chat: {
-          error: errorMessageFrom(error) ?? String(error),
-          ok: false,
-        },
-        embedding: {
-          error: errorMessageFrom(error) ?? String(error),
-          ok: false,
-        },
+    if (payload.includeModelHealth) {
+      try {
+        modelHealth = await checkPlastMemModelHealth(baseUrl, config.requestTimeoutMsec)
       }
-      logPlastMemWarn('health:model-error', {
-        error: errorMessageFrom(error) ?? String(error),
-      })
+      catch (error) {
+        modelHealth = {
+          chat: {
+            error: errorMessageFrom(error) ?? String(error),
+            ok: false,
+          },
+          embedding: {
+            error: errorMessageFrom(error) ?? String(error),
+            ok: false,
+          },
+        }
+        logPlastMemWarn('health:model-error', {
+          error: errorMessageFrom(error) ?? String(error),
+        })
+      }
     }
 
     return {

@@ -354,6 +354,7 @@ export interface ElectronPlastMemHealthCounts {
 }
 
 export interface ElectronPlastMemHealthPayload {
+  includeModelHealth?: boolean
   ownerId?: string
 }
 

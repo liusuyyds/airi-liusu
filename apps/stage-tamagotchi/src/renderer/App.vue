@@ -104,6 +104,7 @@ const isChatWindowRoute = () => route.path === '/chat'
 const isChatMemoryRoute = () => route.path === '/' || route.path === '/chat'
 const isGodotStageRoute = () => route.path === '/' || route.path.startsWith('/settings')
 const isWidgetsWindowRoute = () => route.path === '/widgets'
+let plastMemChatMemoryLifecycleReady = false
 
 function syncGodotStageRenderer(state: { state: 'stopped' | 'starting' | 'running' | 'stopping' | 'error' }) {
   if (state.state === 'running') {
@@ -113,6 +114,18 @@ function syncGodotStageRenderer(state: { state: 'stopped' | 'starting' | 'runnin
 
   if ((state.state === 'stopped' || state.state === 'error') && settingsStore.stageModelRenderer === 'godot')
     settingsStore.restoreBuiltInStageModelRenderer()
+}
+
+function syncPlastMemChatMemoryLifecycle() {
+  if (!plastMemChatMemoryLifecycleReady)
+    return
+
+  if (isChatMemoryRoute()) {
+    void plastMemChatMemoryStore.initialize()
+    return
+  }
+
+  plastMemChatMemoryStore.dispose()
 }
 
 async function refreshPluginRuntimeTools() {
@@ -238,8 +251,8 @@ onMounted(async () => {
     token: serverChannelConfig.authToken || undefined,
     possibleEvents: ['ui:configure'],
   }).catch(err => console.error('Failed to initialize Mods Server Channel in App.vue:', err))
-  if (isChatMemoryRoute())
-    void plastMemChatMemoryStore.initialize()
+  plastMemChatMemoryLifecycleReady = true
+  syncPlastMemChatMemoryLifecycle()
 
   if (!isChatWindowRoute()) {
     contextBridgeStore.initialize()
@@ -278,9 +291,13 @@ watch(themeColorsHueDynamic, () => {
   document.documentElement.classList.toggle('dynamic-hue', themeColorsHueDynamic.value)
 }, { immediate: true })
 
+watch(() => route.path, () => {
+  syncPlastMemChatMemoryLifecycle()
+})
+
 onUnmounted(() => {
-  if (isChatMemoryRoute())
-    plastMemChatMemoryStore.dispose()
+  plastMemChatMemoryLifecycleReady = false
+  plastMemChatMemoryStore.dispose()
 
   if (!isChatWindowRoute()) {
     contextBridgeStore.dispose()
