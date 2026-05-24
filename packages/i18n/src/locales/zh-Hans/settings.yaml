@@ -773,10 +773,13 @@ pages:
             config: 配置
             runtime: 运行
             diagnostics: 聊天诊断
+            tools: 工具
             semantic: 语义事实
             recent: 最近记忆
             health: 健康检查
             about: 说明
+          tools:
+            title: 手动记忆工具
           health:
             title: 数据库与 sidecar 健康检查
             refresh: 检查健康状态

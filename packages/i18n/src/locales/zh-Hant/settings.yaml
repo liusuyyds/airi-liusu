@@ -634,10 +634,13 @@ pages:
             config: 設定
             runtime: 執行
             diagnostics: 聊天診斷
+            tools: 工具
             semantic: 語義事實
             recent: 最近記憶
             health: 健康檢查
             about: 說明
+          tools:
+            title: 手動記憶工具
           health:
             title: 資料庫與 sidecar 健康檢查
             refresh: 檢查健康狀態

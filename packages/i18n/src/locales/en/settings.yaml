@@ -802,10 +802,13 @@ pages:
             config: Config
             runtime: Runtime
             diagnostics: Diagnostics
+            tools: Tools
             semantic: Semantic facts
             recent: Recent
             health: Health
             about: About
+          tools:
+            title: Manual memory tools
           health:
             title: Database and sidecar health
             refresh: Check health

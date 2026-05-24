@@ -42,7 +42,7 @@ import {
 type BridgeStatusKind = 'checking' | 'disabled' | 'offline' | 'online'
 type ConnectionCheckKind = 'error' | 'ok' | 'unknown'
 type ConfigSaveSyncMode = 'always' | 'ifStable' | 'never'
-type DetailPanelId = 'config' | 'runtime' | 'diagnostics' | 'semantic' | 'recent' | 'health' | 'about'
+type DetailPanelId = 'config' | 'runtime' | 'diagnostics' | 'tools' | 'semantic' | 'recent' | 'health' | 'about'
 
 interface ConfigSaveOptions {
   refreshAfterSave: boolean
@@ -297,6 +297,11 @@ const detailPanelOptions = computed<Array<{ icon: string, label: string, value: 
     icon: 'i-solar:chat-round-dots-bold-duotone',
     label: tn('panels.diagnostics'),
     value: 'diagnostics',
+  },
+  {
+    icon: 'i-solar:toolbox-bold-duotone',
+    label: tn('panels.tools'),
+    value: 'tools',
   },
   {
     icon: 'i-solar:document-add-bold-duotone',
@@ -1408,6 +1413,11 @@ onBeforeUnmount(() => {
             @click="refreshConfig"
           />
           <Button
+            variant="secondary" size="sm" :loading="isSavingConfig"
+            icon="i-solar:diskette-bold-duotone" :label="tn('config.save')"
+            @click="saveConfig({ refreshAfterSave: true, showSavedMessage: true, syncDraft: 'always' })"
+          />
+          <Button
             size="sm" :loading="isTestingConnection || isSavingConfig || isRefreshing"
             icon="i-solar:plug-circle-bold-duotone" :label="tn('config.save-and-check')"
             @click="testConnection(true)"
@@ -1842,6 +1852,29 @@ onBeforeUnmount(() => {
               >{{ context.contextBlock.trim() }}</pre>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section
+        v-else-if="activeDetailPanel === 'tools'"
+        :class="[
+          'flex',
+          'flex-col',
+          'gap-4',
+          'rounded-lg',
+          'border',
+          'border-neutral-200/70',
+          'bg-white/70',
+          'p-3',
+          'dark:border-neutral-800/70',
+          'dark:bg-neutral-900/30',
+        ]"
+      >
+        <div :class="['flex', 'items-center', 'gap-2']">
+          <div :class="['i-solar:toolbox-bold-duotone', 'text-xl', 'text-primary-500', 'dark:text-primary-300']" />
+          <h3 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+            {{ tn('tools.title') }}
+          </h3>
         </div>
 
         <div :class="['grid', 'grid-cols-1', 'gap-3', 'xl:grid-cols-2']">
