@@ -30,12 +30,18 @@ impl fmt::Display for MessageRole {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct Message {
   pub role: MessageRole,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub name: Option<String>,
   pub content: String,
   pub timestamp: DateTime<Utc>,
 }
 
 impl fmt::Display for Message {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    writeln!(f, "{}: {}", self.role, self.content)
+    if let Some(name) = self.name.as_deref().filter(|name| !name.trim().is_empty()) {
+      writeln!(f, "{} ({name}): {}", self.role, self.content)
+    } else {
+      writeln!(f, "{}: {}", self.role, self.content)
+    }
   }
 }

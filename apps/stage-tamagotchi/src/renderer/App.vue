@@ -53,7 +53,7 @@ import { initializeStageThreeRuntimeTraceBridge } from './bridges/stage-three-ru
 import { useLanguage } from './composables/use-language'
 import { createChatSyncWindowLifecycle } from './stores/chat-sync-lifecycle'
 import { useTamagotchiMcpToolsStore } from './stores/mcp-tools'
-import { usePlastMemChatMemoryStore } from './stores/plast-mem-chat-memory'
+import { createPlastMemChatMemoryWindowLifecycle } from './stores/plast-mem-chat-memory-lifecycle'
 import { useTamagotchiPluginToolsStore } from './stores/plugin-tools'
 import { useServerChannelSettingsStore } from './stores/settings/server-channel'
 import { useStageWindowLifecycleStore } from './stores/stage-window-lifecycle'
@@ -74,7 +74,6 @@ const analyticsStore = useSharedAnalyticsStore()
 const inferencePreload = useInferencePreload()
 const pluginHostInspectorStore = usePluginHostInspectorStore()
 const mcpToolsStore = useTamagotchiMcpToolsStore()
-const plastMemChatMemoryStore = usePlastMemChatMemoryStore()
 const pluginToolsStore = useTamagotchiPluginToolsStore()
 const stageWindowLifecycleStore = useStageWindowLifecycleStore()
 const settingsAudioDeviceStore = useSettingsAudioDevice()
@@ -100,11 +99,10 @@ const setLocale = useElectronEventaInvoke(i18nSetLocale)
 const getGodotStageStatus = useElectronEventaInvoke(electronGodotStageGetStatus)
 const syncArtistryConfig = useElectronEventaInvoke(artistrySyncConfig)
 const chatSyncLifecycle = createChatSyncWindowLifecycle(route.path)
+const plastMemChatMemoryLifecycle = createPlastMemChatMemoryWindowLifecycle(chatSyncLifecycle.role)
 const isChatWindowRoute = () => route.path === '/chat'
-const isChatMemoryRoute = () => route.path === '/' || route.path === '/chat'
 const isGodotStageRoute = () => route.path === '/' || route.path.startsWith('/settings')
 const isWidgetsWindowRoute = () => route.path === '/widgets'
-let plastMemChatMemoryLifecycleReady = false
 
 function syncGodotStageRenderer(state: { state: 'stopped' | 'starting' | 'running' | 'stopping' | 'error' }) {
   if (state.state === 'running') {
@@ -114,18 +112,6 @@ function syncGodotStageRenderer(state: { state: 'stopped' | 'starting' | 'runnin
 
   if ((state.state === 'stopped' || state.state === 'error') && settingsStore.stageModelRenderer === 'godot')
     settingsStore.restoreBuiltInStageModelRenderer()
-}
-
-function syncPlastMemChatMemoryLifecycle() {
-  if (!plastMemChatMemoryLifecycleReady)
-    return
-
-  if (isChatMemoryRoute()) {
-    void plastMemChatMemoryStore.initialize()
-    return
-  }
-
-  plastMemChatMemoryStore.dispose()
 }
 
 async function refreshPluginRuntimeTools() {
@@ -214,6 +200,10 @@ context.value.on(electronGodotStageStatusChanged, (event) => {
 })
 
 onMounted(async () => {
+  // NOTICE: The chat-sync authority window executes forwarded `/chat` commands,
+  // so Plast Mem hooks must be registered before the BroadcastChannel can accept
+  // a follower ingest command.
+  await plastMemChatMemoryLifecycle.initialize()
   chatSyncLifecycle.initialize()
 
   // NOTICE: Issue #1658
@@ -251,8 +241,6 @@ onMounted(async () => {
     token: serverChannelConfig.authToken || undefined,
     possibleEvents: ['ui:configure'],
   }).catch(err => console.error('Failed to initialize Mods Server Channel in App.vue:', err))
-  plastMemChatMemoryLifecycleReady = true
-  syncPlastMemChatMemoryLifecycle()
 
   if (!isChatWindowRoute()) {
     contextBridgeStore.initialize()
@@ -291,13 +279,8 @@ watch(themeColorsHueDynamic, () => {
   document.documentElement.classList.toggle('dynamic-hue', themeColorsHueDynamic.value)
 }, { immediate: true })
 
-watch(() => route.path, () => {
-  syncPlastMemChatMemoryLifecycle()
-})
-
 onUnmounted(() => {
-  plastMemChatMemoryLifecycleReady = false
-  plastMemChatMemoryStore.dispose()
+  plastMemChatMemoryLifecycle.dispose()
 
   if (!isChatWindowRoute()) {
     contextBridgeStore.dispose()

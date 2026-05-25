@@ -16,6 +16,8 @@ use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::{speaker_label_for_prompt, speaker_role_guide};
+
 // --- LLM Review ---
 
 /// LLM output for memory review.
@@ -74,9 +76,15 @@ fn build_review_user_message(
 ) -> String {
   let mut out = String::new();
 
+  let _ = writeln!(out, "{}\n", speaker_role_guide());
   let _ = writeln!(out, "## Conversation Context\n");
   for msg in context_messages {
-    let _ = writeln!(out, "- {}: \"{}\"", msg.role, msg.content);
+    let _ = writeln!(
+      out,
+      "- {}: \"{}\"",
+      speaker_label_for_prompt(&msg.role.to_string(), msg.name.as_deref()),
+      msg.content
+    );
   }
 
   let _ = writeln!(out, "\n## Retrieved Memories\n");
@@ -216,4 +224,86 @@ pub async fn process_memory_review(
   }
 
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use chrono::TimeZone;
+
+  use plastmem_shared::MessageRole;
+
+  use super::*;
+
+  fn message(role: &str, name: Option<&str>, content: &str) -> Message {
+    Message {
+      role: MessageRole::from(role),
+      name: name.map(str::to_owned),
+      content: content.to_owned(),
+      timestamp: Utc.with_ymd_and_hms(2026, 5, 25, 12, 0, 0).unwrap(),
+    }
+  }
+
+  /**
+   * @example
+   * let aggregated = aggregate_pending_reviews(&pending_reviews);
+   * assert_eq!(aggregated.get(&memory_id).unwrap().len(), 2);
+   */
+  #[test]
+  fn aggregate_pending_reviews_keeps_all_queries_per_memory() {
+    let first_memory_id = Uuid::now_v7();
+    let second_memory_id = Uuid::now_v7();
+
+    let aggregated = aggregate_pending_reviews(&[
+      PendingReview {
+        query: "first query".to_owned(),
+        memory_ids: vec![first_memory_id, second_memory_id],
+      },
+      PendingReview {
+        query: "second query".to_owned(),
+        memory_ids: vec![first_memory_id],
+      },
+    ]);
+
+    assert_eq!(
+      aggregated.get(&first_memory_id),
+      Some(&vec!["first query".to_owned(), "second query".to_owned()]),
+    );
+    assert_eq!(
+      aggregated.get(&second_memory_id),
+      Some(&vec!["first query".to_owned()]),
+    );
+  }
+
+  /**
+   * @example
+   * let prompt = build_review_user_message(&messages, &memories);
+   * assert!(prompt.contains("assistant (AIRI assistant) named `CardNickname`"));
+   */
+  #[test]
+  fn review_prompt_marks_role_direction_and_speaker_name() {
+    let memory_id = Uuid::now_v7();
+    let prompt = build_review_user_message(
+      &[
+        message("user", None, "I worried you forgot me."),
+        message(
+          "assistant",
+          Some("CardNickname"),
+          "I remembered your preference.",
+        ),
+      ],
+      &[(
+        memory_id,
+        "The user prefers short answers.".to_owned(),
+        vec!["short answer preference".to_owned()],
+      )],
+    );
+
+    assert!(prompt.contains("`user`: the human user"));
+    assert!(prompt.contains("- user (human user): \"I worried you forgot me.\""));
+    assert!(prompt.contains(
+      "- assistant (AIRI assistant) named `CardNickname`: \"I remembered your preference.\""
+    ));
+    assert!(prompt.contains(&format!("### Memory {memory_id}")));
+    assert!(prompt.contains("**Matched queries:** \"short answer preference\""));
+  }
 }

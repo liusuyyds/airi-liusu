@@ -17,6 +17,8 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::{speaker_label_for_prompt, speaker_role_guide};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictCalibrateJob {
   pub conversation_id: Uuid,
@@ -257,14 +259,22 @@ fn format_messages(episode: &EpisodicMemory) -> String {
     .messages
     .iter()
     .enumerate()
-    .map(|(i, m)| format!("Message {} [{}]: {}", i + 1, m.role, m.content))
+    .map(|(i, m)| {
+      format!(
+        "Message {} [{}]: {}",
+        i + 1,
+        speaker_label_for_prompt(&m.role.to_string(), m.name.as_deref()),
+        m.content
+      )
+    })
     .collect::<Vec<_>>()
     .join("\n")
 }
 
 async fn cold_start_extraction(episode: &EpisodicMemory) -> Result<Vec<SemanticAction>, AppError> {
   let user_content = format!(
-    "Episode Title: {}\nEpisode Content: {}\n\nMessages:\n{}",
+    "{}\n\nEpisode Title: {}\nEpisode Content: {}\n\nMessages:\n{}",
+    speaker_role_guide(),
     episode.title,
     episode.content,
     format_messages(episode)
@@ -317,7 +327,8 @@ async fn predict_calibrate_extraction(
 
   let existing_facts_text = format_existing_facts_for_prompt(&action_candidates);
   let user_content = format!(
-    "## Episode Title\n{}\n\n## Existing Active Facts\n{}\n\n## PREDICTED Content\n{}\n\n## ACTUAL Messages\n{}",
+    "{}\n\n## Episode Title\n{}\n\n## Existing Active Facts\n{}\n\n## PREDICTED Content\n{}\n\n## ACTUAL Messages\n{}",
+    speaker_role_guide(),
     episode.title,
     existing_facts_text,
     prediction,
@@ -833,6 +844,10 @@ async fn mark_consolidated<C: ConnectionTrait>(episode_id: Uuid, db: &C) -> Resu
 
 #[cfg(test)]
 mod tests {
+  use chrono::TimeZone;
+  use plastmem_entities::EpisodeClassification;
+  use plastmem_shared::{Message, MessageRole};
+
   use super::*;
 
   fn action(
@@ -848,6 +863,36 @@ mod tests {
       target_fact_id: target_fact_id.to_owned(),
       justification: String::new(),
       confidence: 0.8,
+    }
+  }
+
+  fn test_episode(messages: Vec<Message>) -> EpisodicMemory {
+    let timestamp = Utc.with_ymd_and_hms(2026, 5, 25, 12, 0, 0).unwrap();
+    EpisodicMemory {
+      id: Uuid::nil(),
+      conversation_id: Uuid::nil(),
+      messages,
+      title: "Role direction check".to_owned(),
+      content: String::new(),
+      classification: Some(EpisodeClassification::Informative),
+      embedding: PgVector::from(vec![0.0; 1024]),
+      stability: 1.0,
+      difficulty: 1.0,
+      surprise: 0.0,
+      start_at: timestamp,
+      end_at: timestamp,
+      created_at: timestamp,
+      last_reviewed_at: timestamp,
+      consolidated_at: None,
+    }
+  }
+
+  fn message(role: &str, content: &str) -> Message {
+    Message {
+      role: MessageRole::from(role),
+      name: None,
+      content: content.to_owned(),
+      timestamp: Utc.with_ymd_and_hms(2026, 5, 25, 12, 0, 0).unwrap(),
     }
   }
 
@@ -892,5 +937,27 @@ mod tests {
   fn normalize_category_falls_back_to_identity() {
     assert_eq!(normalize_category("unknown"), "identity");
     assert_eq!(normalize_category("guideline"), "guideline");
+  }
+
+  #[test]
+  fn format_messages_marks_user_and_assistant_role_direction() {
+    let episode = test_episode(vec![
+      message("user", "I worried you were not sleeping."),
+      message("assistant", "I thought you were worried about me."),
+    ]);
+
+    let formatted = format_messages(&episode);
+
+    assert!(formatted.contains("Message 1 [user (human user)]:"));
+    assert!(formatted.contains("Message 2 [assistant (AIRI assistant)]:"));
+  }
+
+  #[test]
+  fn speaker_role_guide_explicitly_blocks_direction_inversion() {
+    let guide = speaker_role_guide();
+
+    assert!(guide.contains("`user`: the human user"));
+    assert!(guide.contains("`assistant`: AIRI"));
+    assert!(guide.contains("Never invert emotional direction"));
   }
 }

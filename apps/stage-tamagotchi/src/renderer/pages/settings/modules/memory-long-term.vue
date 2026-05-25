@@ -17,8 +17,10 @@ import type {
 import { errorMessageFrom } from '@moeru/std'
 import { useElectronEventaInvoke } from '@proj-airi/electron-vueuse'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
+import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
 import { Button, Callout, Collapsible, FieldCheckbox, FieldInput, Input } from '@proj-airi/ui'
 import { useDebounceFn } from '@vueuse/core'
+import { storeToRefs } from 'pinia'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -67,6 +69,7 @@ const invokeRetrieveMemoryRaw = useElectronEventaInvoke(electronPlastMemRetrieve
 const invokeSemanticMemoryRaw = useElectronEventaInvoke(electronPlastMemSemanticMemoryRaw)
 const invokeSetSemanticMemoryInvalid = useElectronEventaInvoke(electronPlastMemSetSemanticMemoryInvalid)
 const chatSessionStore = useChatSessionStore()
+const { activeCard } = storeToRefs(useAiriCardStore())
 
 const bridgeFacts = [
   {
@@ -203,6 +206,8 @@ const checkedAt = computed(() => {
 const recallDiagnostics = computed(() => status.value?.chatDiagnostics?.recall ?? { status: 'idle' as const })
 const ingestDiagnostics = computed(() => status.value?.chatDiagnostics?.ingest ?? { status: 'idle' as const })
 const contextDiagnostics = computed(() => status.value?.chatDiagnostics?.contexts ?? [])
+const capturedIngestMessages = computed(() => ingestDiagnostics.value.messages ?? [])
+const hasCapturedIngestMessages = computed(() => capturedIngestMessages.value.length > 0)
 const apiKeyInputType = computed(() => apiKeyVisible.value ? 'text' : 'password')
 const recallStatusBadgeClass = computed(() => chatAttemptBadgeClass(recallDiagnostics.value.status))
 const ingestStatusBadgeClass = computed(() => chatAttemptBadgeClass(ingestDiagnostics.value.status))
@@ -216,8 +221,9 @@ const advancedConfigSummary = computed(() => [
   tn('config.fields.request-timeout-msec.label'),
 ].join(' / '))
 const normalizedManualImportMessageLimit = computed(() => Math.max(1, Number(manualImportMessageLimit.value) || 20))
+const manualImportAssistantName = computed(() => assistantNameFromCard(activeCard.value))
 const importableChatMessages = computed(() => chatSessionStore.messages
-  .map(toPlastMemChatMessage)
+  .map(message => toPlastMemChatMessage(message, manualImportAssistantName.value))
   .filter((message): message is ElectronPlastMemChatMessage => Boolean(message))
   .slice(-normalizedManualImportMessageLimit.value))
 const selectedSourceMemories = computed(() => recentMemories.value.filter(memory => selectedSourceMemoryIds.value.includes(memory.id)))
@@ -420,7 +426,7 @@ function connectionCheckStatusLabel(kind: ConnectionCheckKind) {
 
 function extractErrorCode(error: string) {
   return error.match(/"code"\s*:\s*"?([^",}\s]+)/)?.[1]
-    ?? error.match(/\bcode[:=]\s*([A-Za-z0-9_.-]+)/i)?.[1]
+    ?? error.match(/\bcode[:=]\s*([\w.-]+)/i)?.[1]
 }
 
 function formatProviderError(label: string, error: string | undefined) {
@@ -454,7 +460,27 @@ function textFromUnknown(value: unknown): string {
   return ''
 }
 
-function toPlastMemChatMessage(message: ChatHistoryItem): ElectronPlastMemChatMessage | undefined {
+function trimOptional(value: string | undefined) {
+  const trimmed = value?.trim()
+  return trimmed || undefined
+}
+
+function assistantNameFromCard(card: { name?: string, nickname?: string } | undefined) {
+  return trimOptional(card?.nickname) ?? trimOptional(card?.name)
+}
+
+function speakerNameFromChatMessage(message: ChatHistoryItem, fallbackAssistantName?: string) {
+  if (message.role !== 'assistant')
+    return undefined
+
+  const messageName = hasRecordShape(message) && typeof message.name === 'string'
+    ? trimOptional(message.name)
+    : undefined
+
+  return messageName ?? fallbackAssistantName
+}
+
+function toPlastMemChatMessage(message: ChatHistoryItem, assistantName?: string): ElectronPlastMemChatMessage | undefined {
   if (message.role !== 'user' && message.role !== 'assistant')
     return undefined
 
@@ -465,10 +491,12 @@ function toPlastMemChatMessage(message: ChatHistoryItem): ElectronPlastMemChatMe
   const createdAt = hasRecordShape(message) && typeof message.createdAt === 'number'
     ? message.createdAt
     : undefined
+  const speakerName = speakerNameFromChatMessage(message, assistantName)
 
   return {
     content,
     role: message.role,
+    ...(speakerName ? { name: speakerName } : {}),
     ...(createdAt ? { timestamp: createdAt } : {}),
   }
 }
@@ -478,6 +506,28 @@ function formatAttemptTime(value: number | undefined) {
     return tn('chat-diagnostics.never')
 
   return new Date(value).toLocaleTimeString()
+}
+
+function formatCapturedMessageSpeaker(message: ElectronPlastMemChatMessage) {
+  const name = message.name?.trim()
+  if (name)
+    return tn('chat-diagnostics.ingest.capture.speaker-named', { name, role: message.role })
+  if (message.role === 'user')
+    return tn('chat-diagnostics.ingest.capture.role.user')
+  if (message.role === 'assistant')
+    return tn('chat-diagnostics.ingest.capture.role.assistant')
+  return message.role
+}
+
+function formatCapturedMessageTime(value: number | string | undefined) {
+  if (!value)
+    return ''
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime()))
+    return String(value)
+
+  return date.toLocaleTimeString()
 }
 
 function mergeConfigSaveSyncMode(current: ConfigSaveSyncMode, next: ConfigSaveSyncMode): ConfigSaveSyncMode {
@@ -1949,6 +1999,35 @@ onBeforeUnmount(() => {
               <p :class="['break-words', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
                 {{ ingestDetail }}
               </p>
+              <div v-if="hasCapturedIngestMessages" :class="['mt-2', 'flex', 'flex-col', 'gap-2']">
+                <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                  <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
+                    {{ tn('chat-diagnostics.ingest.capture.title') }}
+                  </span>
+                  <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                    {{ tn('chat-diagnostics.ingest.capture.count', { count: capturedIngestMessages.length }) }}
+                  </span>
+                </div>
+                <div :class="['flex', 'max-h-56', 'flex-col', 'gap-2', 'overflow-auto', 'rounded-md', 'bg-white/70', 'p-2', 'dark:bg-neutral-900/70']">
+                  <div
+                    v-for="(message, index) in capturedIngestMessages"
+                    :key="`${message.role}:${message.timestamp ?? index}:${index}`"
+                    :class="['min-w-0', 'flex', 'flex-col', 'gap-1', 'rounded-md', 'bg-neutral-100/70', 'p-2', 'dark:bg-neutral-950/50']"
+                  >
+                    <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-2']">
+                      <span :class="['text-[11px]', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                        {{ formatCapturedMessageSpeaker(message) }}
+                      </span>
+                      <span v-if="message.timestamp" :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                        {{ formatCapturedMessageTime(message.timestamp) }}
+                      </span>
+                    </div>
+                    <p :class="['whitespace-pre-wrap', 'break-words', 'text-[11px]', 'text-neutral-600', 'leading-4', 'dark:text-neutral-300']">
+                      {{ message.content }}
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

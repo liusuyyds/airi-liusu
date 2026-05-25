@@ -124,9 +124,10 @@ Current review path:
 ```text
 retrieve_memory
   -> add_pending_review_item
-  -> segmentation commit
-  -> take_pending_review_items
+  -> segmentation commit or periodic worker sweep
+  -> plan_pending_review_items_for_update
   -> MemoryReviewJob
+  -> apply_pending_review_queue_plan
   -> FSRS next_states update
 ```
 

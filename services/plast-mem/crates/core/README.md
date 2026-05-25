@@ -44,9 +44,15 @@ This module owns the `segmentation_state` and `episode_span` tables.
 ### `pending_review_queue.rs`
 
 - `add_pending_review_item`
-- `take_pending_review_items`
+- `list_pending_review_conversation_ids`
+- `plan_pending_review_items_for_update`
+- `apply_pending_review_queue_plan`
 
 This replaces the old queue-embedded pending-review storage.
+Review scheduling is at-least-once: items are planned first and only consumed or
+trimmed after the worker job has been enqueued successfully. The planner is used
+inside a row-locking transaction so segmentation commits and periodic sweeps
+cannot schedule the same pending rows concurrently.
 
 ### `memory/episodic.rs`
 

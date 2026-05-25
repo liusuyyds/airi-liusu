@@ -16,7 +16,7 @@ use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::PredictCalibrateJob;
+use super::{PredictCalibrateJob, speaker_label_for_prompt, speaker_role_guide};
 
 const DESIRED_RETENTION: f32 = 0.9;
 const EPISODE_CREATION_JOB_NAMESPACE: Uuid =
@@ -327,11 +327,8 @@ async fn generate_episode_artifacts(messages: &[Message]) -> Result<(String, Str
 
 async fn generate_episode_title(messages: &[Message], content: &str) -> Result<String, AppError> {
   let system = ChatCompletionRequestSystemMessage::from(EPISODE_TITLE_SYSTEM_PROMPT.trim());
-  let user = ChatCompletionRequestUserMessage::from(format!(
-    "Episode content:\n{}\n\nSource messages:\n{}",
-    content,
-    format_messages(messages)
-  ));
+  let user =
+    ChatCompletionRequestUserMessage::from(build_episode_title_user_content(messages, content));
 
   let output = generate_object::<EpisodeTitleOutput>(
     vec![
@@ -349,6 +346,15 @@ async fn generate_episode_title(messages: &[Message], content: &str) -> Result<S
   } else {
     title.to_owned()
   })
+}
+
+fn build_episode_title_user_content(messages: &[Message], content: &str) -> String {
+  format!(
+    "{}\n\nEpisode content:\n{}\n\nSource messages:\n{}",
+    speaker_role_guide(),
+    content,
+    format_messages(messages)
+  )
 }
 
 async fn try_anchor_episode_lines(lines: &mut [RenderedEpisodeLine]) {
@@ -416,7 +422,7 @@ fn render_episode_lines(messages: &[Message]) -> Vec<RenderedEpisodeLine> {
     .map(|(line_index, message)| RenderedEpisodeLine {
       line_index,
       timestamp: message.timestamp,
-      role: message.role.to_string(),
+      role: speaker_label_for_prompt(&message.role.to_string(), message.name.as_deref()),
       content: collapse_inline_whitespace(&message.content),
     })
     .collect()
@@ -490,7 +496,7 @@ fn format_messages(messages: &[Message]) -> String {
         "Message {} [{}] {}: {}",
         index + 1,
         message.timestamp.format("%Y-%m-%dT%H:%M:%SZ"),
-        message.role,
+        speaker_label_for_prompt(&message.role.to_string(), message.name.as_deref()),
         message.content
       )
     })
@@ -591,4 +597,78 @@ fn is_valid_time_anchor_insertion(
     return false;
   }
   true
+}
+
+#[cfg(test)]
+mod tests {
+  use chrono::TimeZone;
+  use plastmem_shared::{Message, MessageRole};
+
+  use super::*;
+
+  fn message(role: &str, content: &str) -> Message {
+    Message {
+      role: MessageRole::from(role),
+      name: None,
+      content: content.to_owned(),
+      timestamp: Utc.with_ymd_and_hms(2026, 5, 25, 12, 0, 0).unwrap(),
+    }
+  }
+
+  fn named_message(role: &str, name: &str, content: &str) -> Message {
+    Message {
+      role: MessageRole::from(role),
+      name: Some(name.to_owned()),
+      content: content.to_owned(),
+      timestamp: Utc.with_ymd_and_hms(2026, 5, 25, 12, 0, 0).unwrap(),
+    }
+  }
+
+  #[test]
+  fn render_episode_content_keeps_user_and_assistant_roles_distinct() {
+    let lines = render_episode_lines(&[
+      message("user", "I worried you were not sleeping."),
+      message("assistant", "I hear you, and I will rest."),
+    ]);
+
+    let content = render_episode_content(&lines);
+
+    assert!(content.contains("user (human user): I worried you were not sleeping."));
+    assert!(content.contains("assistant (AIRI assistant): I hear you, and I will rest."));
+  }
+
+  #[test]
+  fn format_messages_adds_role_meaning_for_title_prompt() {
+    let messages = [
+      message("user", "I called you the bad one."),
+      message("assistant", "I understood it backwards."),
+    ];
+
+    let formatted = format_messages(&messages);
+
+    assert!(formatted.contains("Message 1 [2026-05-25T12:00:00Z] user (human user):"));
+    assert!(formatted.contains("Message 2 [2026-05-25T12:00:00Z] assistant (AIRI assistant):"));
+  }
+
+  #[test]
+  fn title_prompt_includes_roleplay_name_warning() {
+    let messages = [message("user", "Talk about a private topic.")];
+    let prompt = build_episode_title_user_content(&messages, "user: Talk about a private topic.");
+
+    assert!(prompt.contains("Roleplay character names mentioned inside message content"));
+    assert!(prompt.contains("Attribute requests, blame, care, promises, and actions"));
+    assert!(prompt.contains("Message 1 [2026-05-25T12:00:00Z] user (human user):"));
+  }
+
+  #[test]
+  fn format_messages_includes_speaker_name_when_present() {
+    let messages = [named_message(
+      "assistant",
+      "CardNickname",
+      "I am worried you will invert us again.",
+    )];
+    let formatted = format_messages(&messages);
+
+    assert!(formatted.contains("assistant (AIRI assistant) named `CardNickname`"));
+  }
 }

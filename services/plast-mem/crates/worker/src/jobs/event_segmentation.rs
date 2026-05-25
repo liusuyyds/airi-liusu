@@ -5,8 +5,7 @@ use apalis_postgres::PostgresStorage;
 use chrono::Utc;
 use plastmem_core::{
   EpisodeSpan, SegmentJobState, SegmentationJobClaim, abort_segmentation_job,
-  commit_segmentation_job, get_claim_messages, get_segmentation_state, take_pending_review_items,
-  try_claim_segmentation_job,
+  commit_segmentation_job, get_claim_messages, get_segmentation_state, try_claim_segmentation_job,
 };
 use plastmem_entities::EpisodeClassification;
 use plastmem_event_segmentation::{
@@ -18,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 use uuid::Uuid;
 
-use super::{EpisodeCreationJob, MemoryReviewJob};
+use super::{EpisodeCreationJob, MemoryReviewJob, enqueue_pending_reviews};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventSegmentationJob {
@@ -375,29 +374,6 @@ fn map_classification(classification: SegmentClassification) -> EpisodeClassific
 // ──────────────────────────────────────────────────
 // Side effects
 // ──────────────────────────────────────────────────
-
-async fn enqueue_pending_reviews(
-  conversation_id: Uuid,
-  context_messages: &[Message],
-  db: &sea_orm::DatabaseConnection,
-  review_storage: &PostgresStorage<MemoryReviewJob>,
-) -> Result<(), AppError> {
-  if !APP_ENV.enable_fsrs_review {
-    return Ok(());
-  }
-
-  if let Some(pending_reviews) = take_pending_review_items(conversation_id, db).await? {
-    let review_job = MemoryReviewJob {
-      pending_reviews,
-      context_messages: context_messages.to_vec(),
-      reviewed_at: Utc::now(),
-    };
-    let mut storage = review_storage.clone();
-    storage.push(review_job).await?;
-  }
-
-  Ok(())
-}
 
 // When the current worker attempt is about to end, ask core to re-check
 // whether the conversation now exposes a fresh claimable segment range.

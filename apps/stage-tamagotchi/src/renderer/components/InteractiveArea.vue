@@ -12,7 +12,7 @@ import { useChatStreamStore } from '@proj-airi/stage-ui/stores/chat/stream-store
 import { useJournalPreviewStore } from '@proj-airi/stage-ui/stores/journal-preview'
 import { useLlmToolsStore } from '@proj-airi/stage-ui/stores/llm-tools'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
-import { cleanupNocturneMemoryContext, estimateTokens, formatTokenCount, formatTokenCountCN } from '@proj-airi/stage-ui/utils'
+import { cleanupNocturneMemoryContext, formatTokenCount, formatTokenCountCN } from '@proj-airi/stage-ui/utils'
 import { BasicTextarea } from '@proj-airi/ui'
 import { useDebounceFn, useLocalStorage } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
@@ -55,12 +55,14 @@ const { systemPrompt } = storeToRefs(characterStore)
  * false），全量重算延迟到 nextTick，避免阻塞流式消息移除时的 DOM 更新。
  */
 const contextTokensDisplay = ref(0)
+let contextTokenComputeTimer: ReturnType<typeof setTimeout> | undefined
 
 function buildContextArray(): unknown[] {
   const cleanMessages = cleanupNocturneMemoryContext(messages.value as ChatHistoryItem[])
   const context: unknown[] = []
 
-  if (systemPrompt.value) {
+  const hasSessionSystemPrompt = cleanMessages.some(msg => msg.role === 'system')
+  if (!hasSessionSystemPrompt && systemPrompt.value) {
     context.push({ role: 'system', content: systemPrompt.value })
   }
 
@@ -106,12 +108,64 @@ function buildContextArray(): unknown[] {
 
 function computeAndSetContextTokens() {
   const ctx = buildContextArray()
-  // NOTICE: 跳过 estimateMessageArrayTokens 的 JSON.parse(JSON.stringify(...))
-  // 回路——context 数组已是 toRaw() + 手动字段拷贝构建的纯对象。
-  contextTokensDisplay.value = estimateTokens(JSON.stringify(ctx))
+  contextTokensDisplay.value = estimateContextTokenCount(JSON.stringify(ctx))
 }
 
-const debouncedCompute = useDebounceFn(computeAndSetContextTokens, 250)
+function estimateContextTokenCount(text: string): number {
+  let count = 0
+
+  // NOTICE:
+  // This is intentionally a fast UI-only estimate. js-tiktoken can take several
+  // seconds on long continuous CJK role prompts, blocking the detached chat
+  // window before the user can type or send. The exact provider usage is still
+  // recorded after real streams; this counter only keeps the input area
+  // responsive while showing a rough context size.
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index)
+    if (
+      (code >= 0x4E00 && code <= 0x9FFF)
+      || (code >= 0x3400 && code <= 0x4DBF)
+      || (code >= 0x3040 && code <= 0x30FF)
+      || (code >= 0xAC00 && code <= 0xD7AF)
+    ) {
+      count += 1.2
+    }
+    else if (
+      (code >= 0x30 && code <= 0x39)
+      || (code >= 0x41 && code <= 0x5A)
+      || (code >= 0x61 && code <= 0x7A)
+    ) {
+      count += 0.3
+    }
+    else if (code === 0x20 || code === 0x0A || code === 0x0D || code === 0x09) {
+      count += 0.25
+    }
+    else {
+      count += 0.6
+    }
+  }
+
+  return Math.max(1, Math.ceil(count))
+}
+
+function scheduleContextTokenCompute(delayMs = 0) {
+  if (contextTokenComputeTimer)
+    clearTimeout(contextTokenComputeTimer)
+
+  contextTokenComputeTimer = setTimeout(() => {
+    contextTokenComputeTimer = undefined
+
+    const requestIdleCallback = globalThis.requestIdleCallback
+    if (requestIdleCallback) {
+      requestIdleCallback(() => computeAndSetContextTokens(), { timeout: 1000 })
+      return
+    }
+
+    computeAndSetContextTokens()
+  }, delayMs)
+}
+
+const debouncedCompute = useDebounceFn(() => scheduleContextTokenCompute(), 250)
 
 // NOTICE: 只监听 messages 长度和 streamingMessage，不监听 sending。
 // 将 sending 加入依赖会导致流式→空闲过渡期间，重量级 tiktoken 计算在
@@ -124,7 +178,7 @@ watch(
     }
     else {
       // 延迟到 nextTick，避免流式消息从列表移除时阻塞 DOM 更新
-      void nextTick(() => computeAndSetContextTokens())
+      void nextTick(() => scheduleContextTokenCompute())
     }
   },
   { immediate: true },
@@ -309,6 +363,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   isUnmounted = true
+
+  if (contextTokenComputeTimer)
+    clearTimeout(contextTokenComputeTimer)
 
   for (const reader of attachmentReaders)
     reader.abort()

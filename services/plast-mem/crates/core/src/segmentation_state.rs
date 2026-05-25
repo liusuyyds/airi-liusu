@@ -280,6 +280,28 @@ pub async fn get_messages_in_range(
   )
 }
 
+pub async fn get_recent_messages(
+  conversation_id: Uuid,
+  limit: u64,
+  db: &DatabaseConnection,
+) -> Result<Vec<ConversationMessage>, AppError> {
+  let mut models = conversation_message::Entity::find()
+    .filter(conversation_message::Column::ConversationId.eq(conversation_id))
+    .order_by_desc(conversation_message::Column::Seq)
+    .limit(limit)
+    .all(db)
+    .await?;
+
+  models.reverse();
+
+  Ok(
+    models
+      .into_iter()
+      .map(ConversationMessage::from_model)
+      .collect(),
+  )
+}
+
 pub async fn get_episode_span(
   conversation_id: Uuid,
   start_seq: i64,

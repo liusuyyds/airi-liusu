@@ -69,12 +69,14 @@ export type InputConversationMessages = {
 
 export type InputMessage = {
     content: string;
+    name?: string | null;
     role: MessageRole;
     timestamp?: string | null;
 };
 
 export type Message = {
     content: string;
+    name?: string | null;
     role: MessageRole;
     timestamp: string;
 };

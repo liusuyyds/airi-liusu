@@ -941,6 +941,13 @@ pages:
               title: Pre-reply recall
               preview: Injected context
             ingest:
+              capture:
+                count: '{count} message(s)'
+                role:
+                  assistant: Assistant
+                  user: User
+                speaker-named: '{name} ({role})'
+                title: Captured messages
               detail:
                 accepted: Wrote {count} message(s) to Plast Mem.
                 error: '{error}'

@@ -19,6 +19,7 @@ use crate::utils::AppState;
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct InputMessage {
   pub role: MessageRole,
+  pub name: Option<String>,
   pub content: String,
   #[serde(
     default,
@@ -79,6 +80,7 @@ pub async fn add_message(
 
   let message = Message {
     role: payload.message.role,
+    name: payload.message.name,
     content: payload.message.content,
     timestamp,
   };
@@ -124,6 +126,7 @@ pub async fn import_batch_messages(
     .into_iter()
     .map(|message| Message {
       role: message.role,
+      name: message.name,
       content: message.content,
       timestamp: message.timestamp.unwrap_or_else(Utc::now),
     })

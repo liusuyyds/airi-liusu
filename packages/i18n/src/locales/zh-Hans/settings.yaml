@@ -907,6 +907,13 @@ pages:
               title: 回复前召回
               preview: 注入内容
             ingest:
+              capture:
+                count: '{count} 条消息'
+                role:
+                  assistant: 助手
+                  user: 用户
+                speaker-named: '{name}（{role}）'
+                title: 捕获内容
               detail:
                 accepted: 已写入 {count} 条消息到 Plast Mem。
                 error: '{error}'

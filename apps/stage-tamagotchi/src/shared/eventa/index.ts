@@ -426,6 +426,7 @@ export interface ElectronPlastMemIngestDiagnostics {
   at?: number
   baseUrl?: string
   error?: string
+  messages?: ElectronPlastMemChatMessage[]
   messageCount?: number
   status: ElectronPlastMemIngestStatus
   statusCode?: number
@@ -466,6 +467,7 @@ export interface ElectronPlastMemRetrieveChatContextResult {
 
 export interface ElectronPlastMemChatMessage {
   role: string
+  name?: string
   content: string
   timestamp?: number | string
 }
@@ -623,6 +625,7 @@ export const electronPlastMemSetSemanticMemoryInvalid = defineInvokeEventa<Elect
 export const electronPlastMemIngestChatMessages = defineInvokeEventa<ElectronPlastMemIngestChatMessagesResult, ElectronPlastMemIngestChatMessagesPayload>('eventa:invoke:electron:plast-mem:ingest-chat-messages')
 export interface ElectronPlastMemAddMessagePayload {
   content: string
+  name?: string
   ownerId?: string
   role: 'assistant' | 'user'
   timestamp?: number

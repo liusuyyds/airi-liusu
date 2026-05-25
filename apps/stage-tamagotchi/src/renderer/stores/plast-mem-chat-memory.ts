@@ -7,7 +7,8 @@ import { useElectronEventaInvoke } from '@proj-airi/electron-vueuse'
 import { ContextUpdateStrategy } from '@proj-airi/server-sdk'
 import { useChatOrchestratorStore } from '@proj-airi/stage-ui/stores/chat'
 import { useChatContextStore } from '@proj-airi/stage-ui/stores/chat/context-store'
-import { defineStore } from 'pinia'
+import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
+import { defineStore, storeToRefs } from 'pinia'
 import { ref } from 'vue'
 
 import {
@@ -29,6 +30,7 @@ type RecallStatus = 'idle' | 'recalled' | 'empty' | 'error'
 type IngestStatus = 'idle' | 'accepted' | 'rejected' | 'error'
 
 const recentHookSignatures = new Map<string, number>()
+const assistantNameByTurnKey = new Map<string, string>()
 
 function createOwnerId() {
   return globalThis.crypto?.randomUUID?.() ?? `plast-mem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
@@ -110,9 +112,19 @@ function turnKeyFromContext(context: { message?: { createdAt?: number, id?: stri
   return context.message?.id ?? `${context.message?.createdAt ?? 0}:${fallback}`
 }
 
+function trimOptional(value: string | undefined) {
+  const trimmed = value?.trim()
+  return trimmed || undefined
+}
+
+function assistantNameFromCard(card: { name?: string, nickname?: string } | undefined) {
+  return trimOptional(card?.nickname) ?? trimOptional(card?.name)
+}
+
 export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-mem-chat-memory', () => {
   const chatOrchestrator = useChatOrchestratorStore()
   const chatContext = useChatContextStore()
+  const { activeCard } = storeToRefs(useAiriCardStore())
   const acquireChatBridge = useElectronEventaInvoke(electronPlastMemAcquireChatBridge)
   const retrieveChatContext = useElectronEventaInvoke(electronPlastMemRetrieveChatContext)
   const contextPreRetrieve = useElectronEventaInvoke(electronPlastMemContextPreRetrieve)
@@ -180,11 +192,16 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
     disposeFns.value.push(
       chatOrchestrator.onBeforeMessageComposed(async (message, context) => {
         const query = message.trim()
-        const recallSignature = `recall:${turnKeyFromContext(context, query)}:${query}`
+        const turnKey = turnKeyFromContext(context, query)
+        const assistantName = assistantNameFromCard(activeCard.value)
+        if (assistantName)
+          assistantNameByTurnKey.set(turnKey, assistantName)
+
+        const recallSignature = `recall:${turnKey}:${query}`
         if (!claimRecentHookSignature(recallSignature))
           return
 
-        const preRetrieveSignature = `pre-retrieve:${turnKeyFromContext(context, query)}:${query}`
+        const preRetrieveSignature = `pre-retrieve:${turnKey}:${query}`
         const shouldPreRetrieve = claimRecentHookSignature(preRetrieveSignature)
 
         const recallPromise = retrieveChatContext({
@@ -253,6 +270,9 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
       chatOrchestrator.onChatTurnComplete(async (chat, context) => {
         const userContent = textFromContent(context.message.content)
         const assistantContent = textFromContent(chat.output.content) || chat.outputText.trim()
+        const turnKey = turnKeyFromContext(context, userContent)
+        const assistantName = assistantNameByTurnKey.get(turnKey) ?? assistantNameFromCard(activeCard.value)
+        assistantNameByTurnKey.delete(turnKey)
         const messages: ElectronPlastMemChatMessage[] = []
 
         if (userContent) {
@@ -266,6 +286,7 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
         if (assistantContent) {
           messages.push({
             role: 'assistant',
+            ...(assistantName ? { name: assistantName } : {}),
             content: assistantContent,
             timestamp: chat.output.createdAt ?? Date.now(),
           })
@@ -276,7 +297,7 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
 
         const ingestSignature = JSON.stringify({
           messages,
-          turn: turnKeyFromContext(context, userContent),
+          turn: turnKey,
         })
         if (!claimRecentHookSignature(`ingest:${ingestSignature}`))
           return

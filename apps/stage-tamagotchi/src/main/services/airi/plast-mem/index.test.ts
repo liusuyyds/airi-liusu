@@ -2,10 +2,16 @@ import type { McpStdioManager } from '../mcp-servers'
 
 import { env } from 'node:process'
 
+import { createContext, defineInvoke } from '@moeru/eventa'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  electronPlastMemAcquireChatBridge,
+  electronPlastMemReleaseChatBridge,
+} from '../../../../shared/eventa'
+import {
   checkPlastMemHealth,
+  createPlastMemService,
   getPlastMemRuntimeStatus,
   ingestPlastMemChatMessages,
   retrievePlastMemChatContext,
@@ -42,6 +48,21 @@ function setBaseEnv() {
   env.COMPUTER_USE_PLAST_MEM_ENABLED = 'true'
   env.COMPUTER_USE_PLAST_MEM_BASE_URL = 'http://127.0.0.1:3000'
   env.COMPUTER_USE_PLAST_MEM_CONVERSATION_ID = 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c'
+}
+
+function createMcpManager(): McpStdioManager {
+  return {
+    applyAndRestart: vi.fn(),
+    callTool: vi.fn(),
+    ensureConfigFile: vi.fn(),
+    getRuntimeStatus: () => ({ path: '', servers: [], updatedAt: 0 }),
+    listTools: vi.fn(),
+    openConfigFile: vi.fn(),
+    readConfigText: vi.fn(),
+    stopAll: vi.fn(),
+    testServer: vi.fn(),
+    writeConfigText: vi.fn(),
+  }
 }
 
 describe('plast mem Electron service', () => {
@@ -114,20 +135,7 @@ describe('plast mem Electron service', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    const mcpManager: McpStdioManager = {
-      applyAndRestart: vi.fn(),
-      callTool: vi.fn(),
-      ensureConfigFile: vi.fn(),
-      getRuntimeStatus: () => ({ path: '', servers: [], updatedAt: 0 }),
-      listTools: vi.fn(),
-      openConfigFile: vi.fn(),
-      readConfigText: vi.fn(),
-      stopAll: vi.fn(),
-      testServer: vi.fn(),
-      writeConfigText: vi.fn(),
-    }
-
-    const result = await getPlastMemRuntimeStatus(mcpManager)
+    const result = await getPlastMemRuntimeStatus(createMcpManager())
 
     expect(result.openaiBaseUrlConfigured).toBe(true)
     expect(result.openaiApiKeyConfigured).toBe(true)
@@ -165,7 +173,7 @@ describe('plast mem Electron service', () => {
     const result = await ingestPlastMemChatMessages({
       messages: [
         { role: 'user', content: 'I prefer terse answers.', timestamp: 1760000000000 },
-        { role: 'assistant', content: 'Got it.', timestamp: 1760000001000 },
+        { role: 'assistant', name: 'CardNickname', content: 'Got it.', timestamp: 1760000001000 },
       ],
     })
 
@@ -180,7 +188,35 @@ describe('plast mem Electron service', () => {
       conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
       messages: [
         { role: 'user', content: 'I prefer terse answers.', timestamp: 1760000000000 },
-        { role: 'assistant', content: 'Got it.', timestamp: 1760000001000 },
+        { role: 'assistant', name: 'CardNickname', content: 'Got it.', timestamp: 1760000001000 },
+      ],
+    })
+
+    const status = await getPlastMemRuntimeStatus(createMcpManager())
+
+    expect(status.chatDiagnostics?.ingest.messages).toEqual([
+      { role: 'user', content: 'I prefer terse answers.', timestamp: 1760000000000 },
+      { role: 'assistant', name: 'CardNickname', content: 'Got it.', timestamp: 1760000001000 },
+    ])
+  })
+
+  it('trims speaker names before importing chat turns', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ accepted: true }), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await ingestPlastMemChatMessages({
+      messages: [
+        { role: 'assistant', name: '  CardNickname  ', content: 'I will keep roles straight.', timestamp: 1760000001000 },
+      ],
+    })
+
+    const [, init] = fetchMock.mock.calls[0]!
+    expect(JSON.parse(String(init?.body))).toEqual({
+      conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+      messages: [
+        { role: 'assistant', name: 'CardNickname', content: 'I will keep roles straight.', timestamp: 1760000001000 },
       ],
     })
   })
@@ -257,6 +293,54 @@ describe('plast mem Electron service', () => {
     expect(firstResult.accepted).toBe(true)
     expect(secondResult.accepted).toBe(true)
     expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  /**
+   * @example
+   * const stale = await retrievePlastMemChatContext({ ownerId: 'old-owner', query: 'hello' })
+   * expect(stale.error).toContain('stale Plast Mem chat bridge owner')
+   */
+  it('records stale owner recall attempts in runtime diagnostics', async () => {
+    const context = createContext()
+    createPlastMemService({
+      context: context as never,
+      manager: createMcpManager(),
+      sidecarManager: {
+        getStatus: vi.fn(),
+        restart: vi.fn(),
+        start: vi.fn(),
+        stop: vi.fn(),
+      } as never,
+    })
+    const acquireBridge = defineInvoke(context, electronPlastMemAcquireChatBridge)
+    const releaseBridge = defineInvoke(context, electronPlastMemReleaseChatBridge)
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('{}', { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await acquireBridge({ ownerId: 'authority-owner' })
+    await acquireBridge({ ownerId: 'follower-owner' })
+
+    try {
+      const result = await retrievePlastMemChatContext({
+        ownerId: 'authority-owner',
+        query: 'what memory should be recalled?',
+      })
+
+      expect(result.recalled).toBe(false)
+      expect(result.error).toContain('stale Plast Mem chat bridge owner')
+      expect(fetchMock).not.toHaveBeenCalled()
+
+      const status = await getPlastMemRuntimeStatus(createMcpManager())
+
+      expect(status.chatDiagnostics?.recall.status).toBe('error')
+      expect(status.chatDiagnostics?.recall.error).toContain('stale Plast Mem chat bridge owner')
+      expect(status.chatDiagnostics?.recall.queryCharacters).toBe('what memory should be recalled?'.length)
+    }
+    finally {
+      await releaseBridge({ ownerId: 'follower-owner' })
+    }
   })
 
   it('treats malformed ingest acceptance payloads as rejected', async () => {

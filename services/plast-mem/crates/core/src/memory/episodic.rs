@@ -88,17 +88,25 @@ impl EpisodicMemory {
     let retrieve_sql = r"
     WITH
     fulltext AS (
-      SELECT id, ROW_NUMBER() OVER (ORDER BY pdb.score(id) DESC) AS r
-      FROM episodic_memory
-      WHERE search_text ||| $1
-        AND conversation_id = $2
-      LIMIT $3
+      SELECT id, ROW_NUMBER() OVER (ORDER BY score DESC) AS r
+      FROM (
+        SELECT id, pdb.score(id) AS score
+        FROM episodic_memory
+        WHERE search_text ||| $1
+          AND conversation_id = $2
+        ORDER BY pdb.score(id) DESC
+        LIMIT $3
+      ) AS fulltext_score
     ),
     semantic AS (
-      SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <#> $4) AS r
-      FROM episodic_memory
-      WHERE conversation_id = $2
-      LIMIT $3
+      SELECT id, ROW_NUMBER() OVER (ORDER BY distance) AS r
+      FROM (
+        SELECT id, embedding <#> $4 AS distance
+        FROM episodic_memory
+        WHERE conversation_id = $2
+        ORDER BY embedding <#> $4
+        LIMIT $3
+      ) AS semantic_distance
     ),
     rrf AS (
       SELECT id, 1.0 / (30 + r) AS s FROM fulltext
@@ -125,6 +133,7 @@ impl EpisodicMemory {
       m.end_at,
       m.created_at,
       m.last_reviewed_at,
+      m.consolidated_at,
       r.score AS score
     FROM rrf_score r
     JOIN episodic_memory m USING (id)

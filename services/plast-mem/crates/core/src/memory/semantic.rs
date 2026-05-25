@@ -62,24 +62,30 @@ impl SemanticMemory {
     db: &DatabaseConnection,
     category: Option<&str>,
   ) -> Result<Vec<(Self, f64)>, AppError> {
-    let sql = r"
+    let sql_without_category = r"
     WITH
     fulltext AS (
-      SELECT id, ROW_NUMBER() OVER (ORDER BY pdb.score(id) DESC) AS r
-      FROM semantic_memory
-      WHERE fact ||| $1
-        AND conversation_id = $2
-        AND invalid_at IS NULL
-        AND ($6::text IS NULL OR category = $6)
-      LIMIT $3
+      SELECT id, ROW_NUMBER() OVER (ORDER BY score DESC) AS r
+      FROM (
+        SELECT id, pdb.score(id) AS score
+        FROM semantic_memory
+        WHERE fact ||| $1
+          AND conversation_id = $2
+          AND invalid_at IS NULL
+        ORDER BY pdb.score(id) DESC
+        LIMIT $3
+      ) AS fulltext_score
     ),
     semantic AS (
-      SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <#> $4) AS r
-      FROM semantic_memory
-      WHERE conversation_id = $2
-        AND invalid_at IS NULL
-        AND ($6::text IS NULL OR category = $6)
-      LIMIT $3
+      SELECT id, ROW_NUMBER() OVER (ORDER BY distance) AS r
+      FROM (
+        SELECT id, embedding <#> $4 AS distance
+        FROM semantic_memory
+        WHERE conversation_id = $2
+          AND invalid_at IS NULL
+        ORDER BY embedding <#> $4
+        LIMIT $3
+      ) AS semantic_distance
     ),
     rrf AS (
       SELECT id, 1.0 / (30 + r) AS s FROM fulltext
@@ -101,18 +107,69 @@ impl SemanticMemory {
     LIMIT $5;
     ";
 
-    let stmt = Statement::from_sql_and_values(
-      DbBackend::Postgres,
-      sql,
-      vec![
-        query.to_owned().into(),
-        conversation_id.into(),
-        RETRIEVAL_CANDIDATE_LIMIT.into(),
-        query_embedding.into(),
-        limit.into(),
-        category.map(std::borrow::ToOwned::to_owned).into(),
-      ],
-    );
+    let sql_with_category = r"
+    WITH
+    fulltext AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY score DESC) AS r
+      FROM (
+        SELECT id, pdb.score(id) AS score
+        FROM semantic_memory
+        WHERE fact ||| $1
+          AND conversation_id = $2
+          AND invalid_at IS NULL
+          AND category = $6
+        ORDER BY pdb.score(id) DESC
+        LIMIT $3
+      ) AS fulltext_score
+    ),
+    semantic AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY distance) AS r
+      FROM (
+        SELECT id, embedding <#> $4 AS distance
+        FROM semantic_memory
+        WHERE conversation_id = $2
+          AND invalid_at IS NULL
+          AND category = $6
+        ORDER BY embedding <#> $4
+        LIMIT $3
+      ) AS semantic_distance
+    ),
+    rrf AS (
+      SELECT id, 1.0 / (30 + r) AS s FROM fulltext
+      UNION ALL
+      SELECT id, 1.0 / (30 + r) AS s FROM semantic
+    ),
+    rrf_score AS (
+      SELECT id, SUM(s)::float8 AS score
+      FROM rrf
+      GROUP BY id
+    )
+    SELECT
+      m.id, m.conversation_id, m.category, m.fact, m.source_episodic_ids,
+      m.valid_at, m.invalid_at, m.embedding, m.created_at,
+      r.score AS score
+    FROM rrf_score r
+    JOIN semantic_memory m USING (id)
+    ORDER BY r.score DESC
+    LIMIT $5;
+    ";
+
+    let mut values = vec![
+      query.to_owned().into(),
+      conversation_id.into(),
+      RETRIEVAL_CANDIDATE_LIMIT.into(),
+      query_embedding.into(),
+      limit.into(),
+    ];
+
+    let sql = if let Some(category) = category {
+      values.push(category.to_owned().into());
+      sql_with_category
+    } else {
+      sql_without_category
+    };
+
+    let stmt = Statement::from_sql_and_values(DbBackend::Postgres, sql, values);
 
     let rows = db.query_all_raw(stmt).await?;
     let mut results = Vec::with_capacity(rows.len());

@@ -32,7 +32,9 @@ async fn check_chat_model() -> ModelProviderHealth {
   match generate_object::<ModelHealthChatProbe>(
     messages,
     "plast_mem_model_health".to_owned(),
-    Some("Check whether the configured chat model supports Plast Mem structured output.".to_owned()),
+    Some(
+      "Check whether the configured chat model supports Plast Mem structured output.".to_owned(),
+    ),
   )
   .await
   {

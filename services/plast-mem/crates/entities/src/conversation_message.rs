@@ -12,6 +12,8 @@ pub struct Model {
   pub seq: i64,
   #[sea_orm(column_type = "Text")]
   pub role: String,
+  #[sea_orm(column_type = "Text", nullable)]
+  pub speaker_name: Option<String>,
   #[sea_orm(column_type = "Text")]
   pub content: String,
   pub timestamp: DateTimeWithTimeZone,

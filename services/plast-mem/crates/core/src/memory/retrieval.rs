@@ -66,6 +66,7 @@ mod tests {
       conversation_id: Uuid::now_v7(),
       messages: vec![Message {
         role: MessageRole("Sam".to_owned()),
+        name: None,
         content: "raw".to_owned(),
         timestamp: Utc.timestamp_opt(0, 0).single().expect("valid timestamp"),
       }],

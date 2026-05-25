@@ -11,8 +11,19 @@ retrieve_memory / retrieve_memory_raw
   -> add_pending_review_item(conversation_id, memory_ids, query)
 
 Later, after segmentation commit:
-  -> take_pending_review_items(conversation_id)
+  -> begin DB transaction
+  -> plan_pending_review_items_for_update(conversation_id, reviewed_at)
   -> enqueue MemoryReviewJob
+  -> apply_pending_review_queue_plan(...)
+  -> commit DB transaction
+
+Or, if no new segmentation commit happens:
+  -> periodic worker sweep
+  -> begin DB transaction
+  -> plan_pending_review_items_for_update(conversation_id, reviewed_at)
+  -> enqueue MemoryReviewJob with recent conversation messages
+  -> apply_pending_review_queue_plan(...)
+  -> commit DB transaction
 
 MemoryReviewJob
   -> aggregate memory ids and matched queries
@@ -27,6 +38,16 @@ MemoryReviewJob
 Pending review items now live in the dedicated `pending_review_queue` table.
 
 They no longer live inside a `message_queue` row.
+
+The queue uses at-least-once scheduling semantics:
+
+- eligible memory IDs are planned first
+- the review job is pushed before queue rows are consumed or trimmed
+- planning uses row locks held until the queue update commits
+- memory IDs that are not old enough for review remain unconsumed
+- missing/deleted memory IDs are removed from the pending queue
+
+This means a failed job enqueue can retry later without losing the review item.
 
 ## Rating model
 
@@ -47,6 +68,10 @@ Before applying an update, the worker skips a memory when:
 - the record no longer exists
 - `job.reviewed_at <= last_reviewed_at`
 - fewer than 1 day has elapsed since `last_reviewed_at`
+
+The scheduler also avoids enqueueing same-day memory IDs. If a pending queue row
+contains both due and not-yet-due memories, the due IDs are enqueued and the
+remaining IDs stay pending for a later review pass.
 
 ## Code
 

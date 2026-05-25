@@ -1,6 +1,6 @@
 import { useChatSyncStore } from './chat-sync'
 
-type ChatSyncWindowRole = 'authority' | 'follower'
+export type ChatSyncWindowRole = 'authority' | 'follower'
 
 function normalizeRoutePath(routePath: string) {
   const [path = ''] = routePath.split(/[?#]/)

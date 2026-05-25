@@ -4,10 +4,12 @@ import type {
   ElectronPlastMemAddMessagePayload,
   ElectronPlastMemAddMessageResult,
   ElectronPlastMemChatDiagnostics,
+  ElectronPlastMemChatMessage,
   ElectronPlastMemContextDetail,
   ElectronPlastMemContextDiagnostics,
   ElectronPlastMemContextPreRetrievePayload,
   ElectronPlastMemContextPreRetrieveResult,
+  ElectronPlastMemContextSource,
   ElectronPlastMemHealthPayload,
   ElectronPlastMemHealthResult,
   ElectronPlastMemIngestChatMessagesPayload,
@@ -102,6 +104,7 @@ const recentRecallSignatures = new Map<string, number>()
 
 interface NormalizedPlastMemChatMessage {
   content: string
+  name?: string
   role: string
   timestamp?: number
 }
@@ -163,6 +166,10 @@ function resolveConversationId(config: Pick<PlastMemRuntimeConfig, 'conversation
 
 function isStaleChatBridgeOwner(ownerId: string | undefined) {
   return Boolean(chatBridgeOwnerId && ownerId !== chatBridgeOwnerId)
+}
+
+function staleChatBridgeOwnerError(ownerId: string | undefined) {
+  return `Ignored stale Plast Mem chat bridge owner${ownerId ? ` \`${ownerId}\`` : ''}.`
 }
 
 function acquirePlastMemChatBridgeLease(ownerId: string) {
@@ -258,6 +265,40 @@ function recordContextAttempt(attempt: ElectronPlastMemContextDiagnostics) {
 
 function recordIngestAttempt(attempt: ElectronPlastMemChatDiagnostics['ingest']) {
   chatDiagnostics.ingest = attempt
+}
+
+function recordStaleContextAttempt(params: {
+  baseUrl?: string
+  ownerId?: string
+  query?: string
+  source: ElectronPlastMemContextSource
+}) {
+  recordContextAttempt({
+    at: Date.now(),
+    baseUrl: params.baseUrl,
+    contextBlock: '',
+    contextCharacters: 0,
+    error: staleChatBridgeOwnerError(params.ownerId),
+    queryCharacters: params.query?.trim().length,
+    source: params.source,
+    status: 'error',
+  })
+}
+
+function recordStaleIngestAttempt(params: {
+  baseUrl?: string
+  messages?: ElectronPlastMemChatMessage[]
+  messageCount: number
+  ownerId?: string
+}) {
+  recordIngestAttempt({
+    at: Date.now(),
+    baseUrl: params.baseUrl,
+    error: staleChatBridgeOwnerError(params.ownerId),
+    messages: params.messages,
+    messageCount: params.messageCount,
+    status: 'error',
+  })
 }
 
 function makeUrl(baseUrl: string, path: string) {
@@ -673,10 +714,17 @@ export async function retrievePlastMemChatContext(payload: ElectronPlastMemRetri
   }
 
   if (isStaleChatBridgeOwner(payload.ownerId)) {
+    recordStaleContextAttempt({
+      baseUrl: config.baseUrl,
+      ownerId: payload.ownerId,
+      query: payload.query,
+      source: 'retrieve',
+    })
     return {
       baseUrl: config.baseUrl,
       contextBlock: '',
       enabled: true,
+      error: staleChatBridgeOwnerError(payload.ownerId),
       recalled: false,
     }
   }
@@ -806,9 +854,16 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
   }
 
   if (isStaleChatBridgeOwner(payload.ownerId)) {
+    recordStaleIngestAttempt({
+      baseUrl: config.baseUrl,
+      messages: payload.messages,
+      messageCount: payload.messages.length,
+      ownerId: payload.ownerId,
+    })
     return {
-      accepted: true,
+      accepted: false,
       enabled: true,
+      error: staleChatBridgeOwnerError(payload.ownerId),
     }
   }
 
@@ -819,9 +874,11 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
     const messages = payload.messages
       .map((message) => {
         const timestamp = normalizeTimestamp(message.timestamp)
+        const name = trimOptional(message.name)
 
         return {
           role: message.role.trim(),
+          ...(name ? { name } : {}),
           content: message.content.trim(),
           ...(timestamp ? { timestamp } : {}),
         }
@@ -832,6 +889,7 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
       recordIngestAttempt({
         at: Date.now(),
         baseUrl,
+        messages,
         messageCount: 0,
         status: 'rejected',
       })
@@ -847,6 +905,7 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
       recordIngestAttempt({
         at: claimedAt,
         baseUrl,
+        messages,
         messageCount: messages.length,
         status: 'accepted',
       })
@@ -875,6 +934,7 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
     recordIngestAttempt({
       at: Date.now(),
       baseUrl,
+      messages,
       messageCount: messages.length,
       status: accepted ? 'accepted' : 'rejected',
       statusCode: response.statusCode,
@@ -898,6 +958,7 @@ export async function ingestPlastMemChatMessages(payload: ElectronPlastMemIngest
       at: Date.now(),
       baseUrl: config.baseUrl,
       error: errorMessageFrom(error) ?? String(error),
+      messages: payload.messages,
       messageCount: payload.messages.length,
       status: 'error',
     })
@@ -946,11 +1007,13 @@ export async function addPlastMemMessage(payload: ElectronPlastMemAddMessagePayl
     }
 
     const timestamp = normalizeTimestamp(payload.timestamp)
+    const name = trimOptional(payload.name)
 
     const response = await postJsonText(baseUrl, addMessagePath, {
       conversation_id: conversationId,
       message: {
         content,
+        ...(name ? { name } : {}),
         role,
         ...(timestamp ? { timestamp } : {}),
       },
@@ -1004,10 +1067,17 @@ export async function contextPreRetrievePlastMemChatContext(payload: ElectronPla
   }
 
   if (isStaleChatBridgeOwner(payload.ownerId)) {
+    recordStaleContextAttempt({
+      baseUrl: config.baseUrl,
+      ownerId: payload.ownerId,
+      query: payload.query,
+      source: 'preRetrieve',
+    })
     return {
       baseUrl: config.baseUrl,
       contextBlock: '',
       enabled: true,
+      error: staleChatBridgeOwnerError(payload.ownerId),
       recalled: false,
     }
   }
@@ -1111,10 +1181,16 @@ export async function retrievePlastMemRecentMemory(payload: ElectronPlastMemRece
   }
 
   if (isStaleChatBridgeOwner(payload.ownerId)) {
+    recordStaleContextAttempt({
+      baseUrl: config.baseUrl,
+      ownerId: payload.ownerId,
+      source: 'recent',
+    })
     return {
       baseUrl: config.baseUrl,
       contextBlock: '',
       enabled: true,
+      error: staleChatBridgeOwnerError(payload.ownerId),
       recalled: false,
     }
   }

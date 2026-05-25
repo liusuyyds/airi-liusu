@@ -8,7 +8,9 @@ pub use memory::{DetailLevel, format_tool_result};
 
 mod pending_review_queue;
 pub use pending_review_queue::{
-  PendingReview, PendingReviewQueueItem, add_pending_review_item, take_pending_review_items,
+  PendingReview, PendingReviewQueueItem, PendingReviewQueuePlan, add_pending_review_item,
+  apply_pending_review_queue_plan, list_pending_review_conversation_ids,
+  plan_pending_review_items_for_update,
 };
 
 mod message_ingest;
@@ -18,6 +20,6 @@ pub(crate) mod segmentation_state;
 pub use segmentation_state::{
   EpisodeSpan, SegmentJobState, SegmentationJobClaim, SegmentationProcessingStatus,
   SegmentationState, abort_segmentation_job, commit_segmentation_job, get_claim_messages,
-  get_episode_span, get_messages_in_range, get_segmentation_processing_status,
+  get_episode_span, get_messages_in_range, get_recent_messages, get_segmentation_processing_status,
   get_segmentation_state, recover_stale_segmentation_job,
 };

@@ -9,6 +9,7 @@ pub struct ConversationMessage {
   pub conversation_id: Uuid,
   pub seq: i64,
   pub role: MessageRole,
+  pub name: Option<String>,
   pub content: String,
   pub timestamp: DateTime<Utc>,
 }
@@ -19,6 +20,7 @@ impl ConversationMessage {
       conversation_id: model.conversation_id,
       seq: model.seq,
       role: model.role.into(),
+      name: model.speaker_name,
       content: model.content,
       timestamp: model.timestamp.with_timezone(&Utc),
     }
@@ -29,6 +31,7 @@ impl ConversationMessage {
       conversation_id: self.conversation_id,
       seq: self.seq,
       role: self.role.0.clone(),
+      speaker_name: self.name.clone(),
       content: self.content.clone(),
       timestamp: self.timestamp.into(),
     }
@@ -37,6 +40,7 @@ impl ConversationMessage {
   pub fn to_message(&self) -> plastmem_shared::Message {
     plastmem_shared::Message {
       role: self.role.clone(),
+      name: self.name.clone(),
       content: self.content.clone(),
       timestamp: self.timestamp,
     }
@@ -51,6 +55,7 @@ impl ConversationMessage {
       conversation_id,
       seq,
       role: message.role.clone(),
+      name: message.name.clone(),
       content: message.content.clone(),
       timestamp: message.timestamp,
     })
