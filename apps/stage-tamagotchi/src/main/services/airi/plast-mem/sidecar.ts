@@ -206,6 +206,7 @@ function createSidecarEnv(config: ElectronPlastMemConfig | undefined): NodeJS.Pr
     setEnvValue(childEnv, 'OPENAI_EMBEDDING_API_KEY', config.openaiEmbeddingApiKey)
     setEnvValue(childEnv, 'OPENAI_EMBEDDING_MODEL', config.openaiEmbeddingModel)
     setEnvValue(childEnv, 'OPENAI_REQUEST_TIMEOUT_SECONDS', config.openaiRequestTimeoutSeconds)
+    setEnvValue(childEnv, 'PLAST_MEM_REVIEW_WINDOW_HOURS', config.reviewWindowHours)
   }
 
   childEnv.OPENAI_CHAT_SEED = trimOptional(process.env.OPENAI_CHAT_SEED) ?? '1145141919810721'

@@ -284,6 +284,7 @@ export interface ElectronPlastMemConfig {
   openaiEmbeddingBaseUrl: string
   openaiEmbeddingModel: string
   openaiRequestTimeoutSeconds: number
+  reviewWindowHours: number
   requestTimeoutMsec: number
   semanticLimit: number
   workspaceKey: string
@@ -314,6 +315,7 @@ export const defaultElectronPlastMemConfig: ElectronPlastMemConfig = {
   openaiEmbeddingBaseUrl: 'https://api.siliconflow.cn/v1/',
   openaiEmbeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
   openaiRequestTimeoutSeconds: 120,
+  reviewWindowHours: 24,
   requestTimeoutMsec: 10000,
   semanticLimit: 12,
   workspaceKey: 'airi-main',
@@ -347,6 +349,8 @@ export interface ElectronPlastMemRuntimeStatus {
 export interface ElectronPlastMemHealthCounts {
   active_semantic_memories: number
   conversation_messages: number
+  deferred_pending_reviews: number
+  due_pending_reviews: number
   episode_spans: number
   episodic_memories: number
   pending_reviews: number
@@ -377,6 +381,64 @@ export interface ElectronPlastMemHealthResult {
     }
   }
   serverTime?: string
+  statusCode?: number
+}
+
+export interface ElectronPlastMemConversationMessage {
+  content: string
+  role: string
+  seq: number
+  speaker_name?: string | null
+  timestamp: string
+}
+
+export interface ElectronPlastMemConversationMessagesPayload {
+  limit?: number
+  ownerId?: string
+}
+
+export interface ElectronPlastMemConversationMessagesResult {
+  baseUrl?: string
+  enabled: boolean
+  error?: string
+  messages: ElectronPlastMemConversationMessage[]
+  statusCode?: number
+}
+
+export interface ElectronPlastMemUpdateConversationMessagePayload {
+  content: string
+  ownerId?: string
+  role: string
+  seq: number
+  speakerName?: string
+  timestamp: string
+}
+
+export interface ElectronPlastMemUpdateConversationMessageResult {
+  baseUrl?: string
+  enabled: boolean
+  error?: string
+  message?: ElectronPlastMemConversationMessage
+  statusCode?: number
+}
+
+export interface ElectronPlastMemEpisodeSpan {
+  classification: string
+  created_at: string
+  end_seq: number
+  start_seq: number
+}
+
+export interface ElectronPlastMemEpisodeSpansPayload {
+  limit?: number
+  ownerId?: string
+}
+
+export interface ElectronPlastMemEpisodeSpansResult {
+  baseUrl?: string
+  enabled: boolean
+  error?: string
+  spans: ElectronPlastMemEpisodeSpan[]
   statusCode?: number
 }
 
@@ -547,6 +609,21 @@ export interface ElectronPlastMemRecentMemoryRawResult {
   statusCode?: number
 }
 
+export interface ElectronPlastMemUpdateEpisodicMemoryPayload {
+  content: string
+  memoryId: string
+  ownerId?: string
+  title: string
+}
+
+export interface ElectronPlastMemUpdateEpisodicMemoryResult {
+  baseUrl?: string
+  enabled: boolean
+  error?: string
+  memory?: ElectronPlastMemEpisodicMemory
+  statusCode?: number
+}
+
 export interface ElectronPlastMemSemanticMemory {
   id: string
   conversation_id: string
@@ -573,6 +650,100 @@ export interface ElectronPlastMemSemanticMemoryRawResult {
   statusCode?: number
 }
 
+export interface ElectronPlastMemPendingReviewQueueMemory {
+  id: string
+  title: string
+  content: string
+  created_at: string
+  last_reviewed_at: string
+}
+
+export type ElectronPlastMemPendingReviewQueueStatus = 'due' | 'deferred'
+
+export interface ElectronPlastMemPendingReviewQueueItem {
+  id: string
+  conversation_id: string
+  query: string
+  memory_ids: string[]
+  created_at: string
+  due_memory_count: number
+  deferred_memory_count: number
+  review_status: ElectronPlastMemPendingReviewQueueStatus
+  memories: ElectronPlastMemPendingReviewQueueMemory[]
+}
+
+export interface ElectronPlastMemPendingReviewQueuePayload {
+  limit?: number
+  ownerId?: string
+}
+
+export interface ElectronPlastMemPendingReviewQueueResult {
+  baseUrl?: string
+  enabled: boolean
+  error?: string
+  items: ElectronPlastMemPendingReviewQueueItem[]
+  statusCode?: number
+}
+
+export interface ElectronPlastMemRewritePendingReviewQueueItemPayload {
+  itemId: string
+  ownerId?: string
+  query: string
+}
+
+export interface ElectronPlastMemRewritePendingReviewQueueItemResult {
+  baseUrl?: string
+  enabled: boolean
+  error?: string
+  item?: ElectronPlastMemPendingReviewQueueItem
+  statusCode?: number
+}
+
+export interface ElectronPlastMemApprovePendingReviewQueueItemPayload {
+  itemId: string
+  ownerId?: string
+}
+
+export interface ElectronPlastMemApprovePendingReviewQueueItemResult {
+  baseUrl?: string
+  consumed: boolean
+  enabled: boolean
+  error?: string
+  itemId: string
+  statusCode?: number
+  updatedMemories: number
+}
+
+export interface ElectronPlastMemDismissPendingReviewQueueItemPayload {
+  itemId: string
+  ownerId?: string
+}
+
+export interface ElectronPlastMemDismissPendingReviewQueueItemResult {
+  baseUrl?: string
+  consumed: boolean
+  enabled: boolean
+  error?: string
+  itemId: string
+  statusCode?: number
+}
+
+export interface ElectronPlastMemUpdatePendingReviewQueueMemoryPayload {
+  content: string
+  itemId: string
+  memoryId: string
+  ownerId?: string
+  title: string
+}
+
+export interface ElectronPlastMemUpdatePendingReviewQueueMemoryResult {
+  baseUrl?: string
+  enabled: boolean
+  error?: string
+  item?: ElectronPlastMemPendingReviewQueueItem
+  statusCode?: number
+}
+
 export interface ElectronPlastMemSetSemanticMemoryInvalidPayload {
   invalid: boolean
   memoryId: string
@@ -584,6 +755,34 @@ export interface ElectronPlastMemSetSemanticMemoryInvalidResult {
   enabled: boolean
   error?: string
   memory?: ElectronPlastMemSemanticMemory
+  statusCode?: number
+}
+
+export interface ElectronPlastMemUpdateSemanticMemoryPayload {
+  category: string
+  fact: string
+  memoryId: string
+  ownerId?: string
+}
+
+export interface ElectronPlastMemUpdateSemanticMemoryResult {
+  baseUrl?: string
+  enabled: boolean
+  error?: string
+  memory?: ElectronPlastMemSemanticMemory
+  statusCode?: number
+}
+
+export interface ElectronPlastMemDeleteSemanticMemoryPayload {
+  memoryId: string
+  ownerId?: string
+}
+
+export interface ElectronPlastMemDeleteSemanticMemoryResult {
+  baseUrl?: string
+  deleted: boolean
+  enabled: boolean
+  error?: string
   statusCode?: number
 }
 
@@ -615,13 +814,24 @@ export interface ElectronPlastMemRetrieveMemoryRawResult {
 }
 
 export const electronPlastMemHealth = defineInvokeEventa<ElectronPlastMemHealthResult, ElectronPlastMemHealthPayload>('eventa:invoke:electron:plast-mem:health')
+export const electronPlastMemConversationMessages = defineInvokeEventa<ElectronPlastMemConversationMessagesResult, ElectronPlastMemConversationMessagesPayload>('eventa:invoke:electron:plast-mem:conversation-messages')
+export const electronPlastMemUpdateConversationMessage = defineInvokeEventa<ElectronPlastMemUpdateConversationMessageResult, ElectronPlastMemUpdateConversationMessagePayload>('eventa:invoke:electron:plast-mem:conversation-messages:update')
+export const electronPlastMemEpisodeSpans = defineInvokeEventa<ElectronPlastMemEpisodeSpansResult, ElectronPlastMemEpisodeSpansPayload>('eventa:invoke:electron:plast-mem:episode-spans')
 export const electronPlastMemRetrieveChatContext = defineInvokeEventa<ElectronPlastMemRetrieveChatContextResult, ElectronPlastMemRetrieveChatContextPayload>('eventa:invoke:electron:plast-mem:retrieve-chat-context')
 export const electronPlastMemRetrieveMemoryRaw = defineInvokeEventa<ElectronPlastMemRetrieveMemoryRawResult, ElectronPlastMemRetrieveMemoryRawPayload>('eventa:invoke:electron:plast-mem:retrieve-memory-raw')
 export const electronPlastMemContextPreRetrieve = defineInvokeEventa<ElectronPlastMemContextPreRetrieveResult, ElectronPlastMemContextPreRetrievePayload>('eventa:invoke:electron:plast-mem:context-pre-retrieve')
 export const electronPlastMemRecentMemory = defineInvokeEventa<ElectronPlastMemRecentMemoryResult, ElectronPlastMemRecentMemoryPayload>('eventa:invoke:electron:plast-mem:recent-memory')
 export const electronPlastMemRecentMemoryRaw = defineInvokeEventa<ElectronPlastMemRecentMemoryRawResult, ElectronPlastMemRecentMemoryRawPayload>('eventa:invoke:electron:plast-mem:recent-memory-raw')
+export const electronPlastMemUpdateEpisodicMemory = defineInvokeEventa<ElectronPlastMemUpdateEpisodicMemoryResult, ElectronPlastMemUpdateEpisodicMemoryPayload>('eventa:invoke:electron:plast-mem:episodic-memory:update')
 export const electronPlastMemSemanticMemoryRaw = defineInvokeEventa<ElectronPlastMemSemanticMemoryRawResult, ElectronPlastMemSemanticMemoryRawPayload>('eventa:invoke:electron:plast-mem:semantic-memory-raw')
+export const electronPlastMemPendingReviewQueue = defineInvokeEventa<ElectronPlastMemPendingReviewQueueResult, ElectronPlastMemPendingReviewQueuePayload>('eventa:invoke:electron:plast-mem:review-queue')
+export const electronPlastMemRewritePendingReviewQueueItem = defineInvokeEventa<ElectronPlastMemRewritePendingReviewQueueItemResult, ElectronPlastMemRewritePendingReviewQueueItemPayload>('eventa:invoke:electron:plast-mem:review-queue:rewrite')
+export const electronPlastMemApprovePendingReviewQueueItem = defineInvokeEventa<ElectronPlastMemApprovePendingReviewQueueItemResult, ElectronPlastMemApprovePendingReviewQueueItemPayload>('eventa:invoke:electron:plast-mem:review-queue:approve')
+export const electronPlastMemDismissPendingReviewQueueItem = defineInvokeEventa<ElectronPlastMemDismissPendingReviewQueueItemResult, ElectronPlastMemDismissPendingReviewQueueItemPayload>('eventa:invoke:electron:plast-mem:review-queue:dismiss')
+export const electronPlastMemUpdatePendingReviewQueueMemory = defineInvokeEventa<ElectronPlastMemUpdatePendingReviewQueueMemoryResult, ElectronPlastMemUpdatePendingReviewQueueMemoryPayload>('eventa:invoke:electron:plast-mem:review-queue:update-memory')
 export const electronPlastMemSetSemanticMemoryInvalid = defineInvokeEventa<ElectronPlastMemSetSemanticMemoryInvalidResult, ElectronPlastMemSetSemanticMemoryInvalidPayload>('eventa:invoke:electron:plast-mem:semantic-memory:set-invalid')
+export const electronPlastMemUpdateSemanticMemory = defineInvokeEventa<ElectronPlastMemUpdateSemanticMemoryResult, ElectronPlastMemUpdateSemanticMemoryPayload>('eventa:invoke:electron:plast-mem:semantic-memory:update')
+export const electronPlastMemDeleteSemanticMemory = defineInvokeEventa<ElectronPlastMemDeleteSemanticMemoryResult, ElectronPlastMemDeleteSemanticMemoryPayload>('eventa:invoke:electron:plast-mem:semantic-memory:delete')
 export const electronPlastMemIngestChatMessages = defineInvokeEventa<ElectronPlastMemIngestChatMessagesResult, ElectronPlastMemIngestChatMessagesPayload>('eventa:invoke:electron:plast-mem:ingest-chat-messages')
 export interface ElectronPlastMemAddMessagePayload {
   content: string

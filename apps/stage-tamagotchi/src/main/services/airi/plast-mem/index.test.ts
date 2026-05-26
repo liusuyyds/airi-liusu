@@ -10,13 +10,22 @@ import {
   electronPlastMemReleaseChatBridge,
 } from '../../../../shared/eventa'
 import {
+  approvePlastMemPendingReviewQueueItem,
   checkPlastMemHealth,
   createPlastMemService,
+  deletePlastMemSemanticMemory,
+  dismissPlastMemPendingReviewQueueItem,
   getPlastMemRuntimeStatus,
   ingestPlastMemChatMessages,
   retrievePlastMemChatContext,
+  retrievePlastMemPendingReviewQueue,
   retrievePlastMemSemanticMemoryRaw,
+  rewritePlastMemPendingReviewQueueItem,
   setPlastMemSemanticMemoryInvalid,
+  updatePlastMemConversationMessage,
+  updatePlastMemEpisodicMemory,
+  updatePlastMemPendingReviewQueueMemory,
+  updatePlastMemSemanticMemory,
 } from './index'
 
 const envKeys = [
@@ -40,6 +49,7 @@ const envKeys = [
   'OPENAI_EMBEDDING_API_KEY',
   'OPENAI_EMBEDDING_BASE_URL',
   'OPENAI_EMBEDDING_MODEL',
+  'OPENAI_REQUEST_TIMEOUT_SECONDS',
 ] as const
 
 const originalEnv = new Map<string, string | undefined>()
@@ -496,6 +506,169 @@ describe('plast mem Electron service', () => {
     expect(modelInit?.method).toBe('POST')
   })
 
+  it('uses a wider timeout budget for model health provider probes', async () => {
+    env.COMPUTER_USE_PLAST_MEM_TIMEOUT_MS = '2500'
+    env.OPENAI_REQUEST_TIMEOUT_SECONDS = '15'
+
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        database_ok: true,
+        server_time: '2026-05-22T09:00:00Z',
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        chat: {
+          ok: true,
+          error: null,
+        },
+        embedding: {
+          ok: true,
+          error: null,
+        },
+      }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await checkPlastMemHealth({ includeModelHealth: true })
+
+    const timeoutDelays = timeoutSpy.mock.calls
+      .map(([, delay]) => delay)
+      .filter((delay): delay is number => typeof delay === 'number')
+
+    expect(timeoutDelays).toContain(2500)
+    expect(timeoutDelays).toContain(15000)
+  })
+
+  it('lists pending review queue items through review_queue raw endpoint', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify([
+        {
+          id: 'f0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+          conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+          query: 'Remember the user likes concise answers.',
+          memory_ids: ['2f72c8fb-7a8c-4285-90a9-85f32ef2db65'],
+          created_at: '2026-05-22T09:00:00Z',
+          due_memory_count: 1,
+          deferred_memory_count: 0,
+          review_status: 'due',
+          memories: [
+            {
+              id: '2f72c8fb-7a8c-4285-90a9-85f32ef2db65',
+              title: 'Answer preference',
+              content: 'The user prefers concise answers.',
+              created_at: '2026-05-22T08:00:00Z',
+              last_reviewed_at: '2026-05-20T08:00:00Z',
+            },
+          ],
+        },
+      ]), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await retrievePlastMemPendingReviewQueue({ limit: 12 })
+
+    expect(result.enabled).toBe(true)
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0]?.query).toBe('Remember the user likes concise answers.')
+    expect(result.items[0]?.memories[0]?.title).toBe('Answer preference')
+
+    const [input, init] = fetchMock.mock.calls[0]!
+    expect(input).toBe('http://127.0.0.1:3000/api/v0/review_queue/raw')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+      limit: 12,
+    })
+  })
+
+  it('rewrites and approves pending review queue items through dedicated endpoints', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'f0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+        conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+        query: 'Keep the concise-answer preference explicit.',
+        memory_ids: ['2f72c8fb-7a8c-4285-90a9-85f32ef2db65'],
+        created_at: '2026-05-22T09:00:00Z',
+        due_memory_count: 1,
+        deferred_memory_count: 0,
+        review_status: 'due',
+        memories: [],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'f0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+        conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+        query: 'Keep the concise-answer preference explicit.',
+        memory_ids: ['2f72c8fb-7a8c-4285-90a9-85f32ef2db65'],
+        created_at: '2026-05-22T09:00:00Z',
+        due_memory_count: 1,
+        deferred_memory_count: 0,
+        review_status: 'due',
+        memories: [
+          {
+            id: '2f72c8fb-7a8c-4285-90a9-85f32ef2db65',
+            title: 'Edited preference',
+            content: 'The user prefers very concise answers.',
+            created_at: '2026-05-22T08:00:00Z',
+            last_reviewed_at: '2026-05-20T08:00:00Z',
+          },
+        ],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        consumed: true,
+        item_id: 'f0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+        updated_memories: 1,
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        consumed: true,
+        item_id: 'a8cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+      }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const rewriteResult = await rewritePlastMemPendingReviewQueueItem({
+      itemId: 'f0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+      query: 'Keep the concise-answer preference explicit.',
+    })
+    const updateMemoryResult = await updatePlastMemPendingReviewQueueMemory({
+      itemId: 'f0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+      memoryId: '2f72c8fb-7a8c-4285-90a9-85f32ef2db65',
+      title: 'Edited preference',
+      content: 'The user prefers very concise answers.',
+    })
+    const approveResult = await approvePlastMemPendingReviewQueueItem({
+      itemId: 'f0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+    })
+    const dismissResult = await dismissPlastMemPendingReviewQueueItem({
+      itemId: 'a8cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+    })
+
+    expect(rewriteResult.item?.query).toBe('Keep the concise-answer preference explicit.')
+    expect(updateMemoryResult.item?.memories[0]?.title).toBe('Edited preference')
+    expect(approveResult.consumed).toBe(true)
+    expect(approveResult.updatedMemories).toBe(1)
+    expect(dismissResult.consumed).toBe(true)
+
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://127.0.0.1:3000/api/v0/review_queue/rewrite')
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+      item_id: 'f0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+      query: 'Keep the concise-answer preference explicit.',
+    })
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('http://127.0.0.1:3000/api/v0/review_queue/update_memory')
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+      item_id: 'f0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+      memory_id: '2f72c8fb-7a8c-4285-90a9-85f32ef2db65',
+      title: 'Edited preference',
+      content: 'The user prefers very concise answers.',
+    })
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('http://127.0.0.1:3000/api/v0/review_queue/approve')
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({
+      conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+      item_id: 'f0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+    })
+    expect(fetchMock.mock.calls[3]?.[0]).toBe('http://127.0.0.1:3000/api/v0/review_queue/dismiss')
+  })
+
   it('lists semantic memories through semantic_memory raw endpoint', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify([
@@ -566,6 +739,129 @@ describe('plast mem Electron service', () => {
       conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
       memory_id: 'd0f67f24-1a33-4ef1-a52a-74fd5f113f48',
       invalid: true,
+    })
+  })
+
+  it('updates conversation messages and episodic memories through dedicated health endpoints', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        seq: 42,
+        role: 'assistant',
+        speaker_name: 'AIRI',
+        content: 'Updated answer.',
+        timestamp: '2026-05-26T09:30:00Z',
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: '2f72c8fb-7a8c-4285-90a9-85f32ef2db65',
+        conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+        title: 'Updated memory',
+        content: 'Updated summary.',
+        messages: [],
+        classification: 'informative',
+        stability: 1,
+        difficulty: 1,
+        surprise: 0.2,
+        start_at: '2026-05-22T08:00:00Z',
+        end_at: '2026-05-22T08:10:00Z',
+        created_at: '2026-05-22T08:10:00Z',
+        last_reviewed_at: '2026-05-22T08:10:00Z',
+        consolidated_at: null,
+      }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const messageResult = await updatePlastMemConversationMessage({
+      seq: 42,
+      role: 'assistant',
+      speakerName: 'AIRI',
+      content: 'Updated answer.',
+      timestamp: '2026-05-26T09:30:00Z',
+    })
+    const memoryResult = await updatePlastMemEpisodicMemory({
+      memoryId: '2f72c8fb-7a8c-4285-90a9-85f32ef2db65',
+      title: 'Updated memory',
+      content: 'Updated summary.',
+    })
+
+    expect(messageResult.enabled).toBe(true)
+    expect(messageResult.message?.content).toBe('Updated answer.')
+    expect(memoryResult.enabled).toBe(true)
+    expect(memoryResult.memory?.title).toBe('Updated memory')
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://127.0.0.1:3000/api/v0/health/conversation_messages/update')
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+      seq: 42,
+      role: 'assistant',
+      speaker_name: 'AIRI',
+      content: 'Updated answer.',
+      timestamp: '2026-05-26T09:30:00Z',
+    })
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('http://127.0.0.1:3000/api/v0/health/episodic_memories/update')
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+      memory_id: '2f72c8fb-7a8c-4285-90a9-85f32ef2db65',
+      title: 'Updated memory',
+      content: 'Updated summary.',
+    })
+  })
+
+  it('updates semantic memories through semantic_memory update endpoint', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({
+        id: 'd0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+        conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+        category: 'guideline',
+        fact: 'Respond concisely unless the user asks for detail.',
+        source_episodic_ids: ['2f72c8fb-7a8c-4285-90a9-85f32ef2db65'],
+        valid_at: '2026-05-22T09:00:00Z',
+        invalid_at: null,
+        created_at: '2026-05-22T09:00:01Z',
+      }), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await updatePlastMemSemanticMemory({
+      category: 'guideline',
+      fact: 'Respond concisely unless the user asks for detail.',
+      memoryId: 'd0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+    })
+
+    expect(result.enabled).toBe(true)
+    expect(result.memory?.category).toBe('guideline')
+    expect(result.memory?.fact).toBe('Respond concisely unless the user asks for detail.')
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [input, init] = fetchMock.mock.calls[0]!
+    expect(input).toBe('http://127.0.0.1:3000/api/v0/semantic_memory/update')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+      memory_id: 'd0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+      category: 'guideline',
+      fact: 'Respond concisely unless the user asks for detail.',
+    })
+  })
+
+  it('deletes semantic memories through semantic_memory delete endpoint', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('', { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await deletePlastMemSemanticMemory({
+      memoryId: 'd0f67f24-1a33-4ef1-a52a-74fd5f113f48',
+    })
+
+    expect(result.enabled).toBe(true)
+    expect(result.deleted).toBe(true)
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [input, init] = fetchMock.mock.calls[0]!
+    expect(input).toBe('http://127.0.0.1:3000/api/v0/semantic_memory/delete')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      conversation_id: 'c2cb0334-d2ed-4989-8659-7ead6b5f4d3c',
+      memory_id: 'd0f67f24-1a33-4ef1-a52a-74fd5f113f48',
     })
   })
 })

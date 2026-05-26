@@ -12,6 +12,7 @@ mod health;
 mod model_health;
 mod recent_memory;
 mod retrieve_memory;
+mod review_queue;
 mod semantic_memory;
 
 pub use add_message::{
@@ -19,28 +20,51 @@ pub use add_message::{
 };
 #[cfg(debug_assertions)]
 pub use benchmark::BenchmarkJobStatus;
-pub use health::{HealthCheck, HealthCheckResult, HealthCounts};
+pub use health::{
+  ConversationMessageUpdate, ConversationMessageView, ConversationMessagesList,
+  EpisodeSpanView, EpisodeSpansList, EpisodicMemoryUpdate, HealthCheck, HealthCheckResult,
+  HealthCounts,
+};
 pub use model_health::{ModelHealthResult, ModelProviderHealth};
 pub use recent_memory::RecentMemory;
 pub use retrieve_memory::{
   ContextPreRetrieve, EpisodicMemoryResult, RetrieveMemory, RetrieveMemoryRawResult,
   SemanticMemoryResult,
 };
-pub use semantic_memory::{SemanticMemoryList, SemanticMemorySetInvalid};
+pub use review_queue::{
+  PendingReviewQueueActionResult, PendingReviewQueueApprove, PendingReviewQueueDismiss,
+  PendingReviewQueueItemView, PendingReviewQueueList, PendingReviewQueueMemory,
+  PendingReviewQueueStatus,
+  PendingReviewQueueRewrite, PendingReviewQueueUpdateMemory,
+};
+pub use semantic_memory::{
+  SemanticMemoryDelete, SemanticMemoryList, SemanticMemorySetInvalid, SemanticMemoryUpdate,
+};
 
 pub fn app() -> Router<AppState> {
   let router = OpenApiRouter::with_openapi(ApiDoc::openapi())
     .routes(routes!(add_message::add_message))
     .routes(routes!(add_message::import_batch_messages))
     .routes(routes!(health::health))
+    .routes(routes!(health::conversation_messages_raw))
+    .routes(routes!(health::conversation_message_update))
+    .routes(routes!(health::episode_spans_raw))
+    .routes(routes!(health::episodic_memory_update))
     .routes(routes!(model_health::model_health))
     .routes(routes!(recent_memory::recent_memory))
     .routes(routes!(recent_memory::recent_memory_raw))
+    .routes(routes!(review_queue::review_queue_raw))
+    .routes(routes!(review_queue::review_queue_rewrite))
+    .routes(routes!(review_queue::review_queue_update_memory))
+    .routes(routes!(review_queue::review_queue_approve))
+    .routes(routes!(review_queue::review_queue_dismiss))
     .routes(routes!(retrieve_memory::retrieve_memory))
     .routes(routes!(retrieve_memory::retrieve_memory_raw))
     .routes(routes!(retrieve_memory::context_pre_retrieve))
     .routes(routes!(semantic_memory::semantic_memory_raw))
-    .routes(routes!(semantic_memory::semantic_memory_set_invalid));
+    .routes(routes!(semantic_memory::semantic_memory_set_invalid))
+    .routes(routes!(semantic_memory::semantic_memory_update))
+    .routes(routes!(semantic_memory::semantic_memory_delete));
 
   #[cfg(debug_assertions)]
   let router = router.routes(routes!(benchmark::benchmark_job_status));
@@ -69,12 +93,29 @@ pub fn app() -> Router<AppState> {
     HealthCheck,
     HealthCheckResult,
     HealthCounts,
+    ConversationMessagesList,
+    ConversationMessageView,
+    ConversationMessageUpdate,
+    EpisodeSpansList,
+    EpisodeSpanView,
+    EpisodicMemoryUpdate,
     ModelHealthResult,
     ModelProviderHealth,
     BenchmarkJobStatus,
     RecentMemory,
+    PendingReviewQueueMemory,
+    PendingReviewQueueItemView,
+    PendingReviewQueueList,
+    PendingReviewQueueStatus,
+    PendingReviewQueueRewrite,
+    PendingReviewQueueUpdateMemory,
+    PendingReviewQueueApprove,
+    PendingReviewQueueDismiss,
+    PendingReviewQueueActionResult,
     SemanticMemoryList,
     SemanticMemorySetInvalid,
+    SemanticMemoryUpdate,
+    SemanticMemoryDelete,
     RetrieveMemory,
     ContextPreRetrieve,
     RetrieveMemoryRawResult,
@@ -101,11 +142,28 @@ pub struct ApiDoc;
     HealthCheck,
     HealthCheckResult,
     HealthCounts,
+    ConversationMessagesList,
+    ConversationMessageView,
+    ConversationMessageUpdate,
+    EpisodeSpansList,
+    EpisodeSpanView,
+    EpisodicMemoryUpdate,
     ModelHealthResult,
     ModelProviderHealth,
     RecentMemory,
+    PendingReviewQueueMemory,
+    PendingReviewQueueItemView,
+    PendingReviewQueueList,
+    PendingReviewQueueStatus,
+    PendingReviewQueueRewrite,
+    PendingReviewQueueUpdateMemory,
+    PendingReviewQueueApprove,
+    PendingReviewQueueDismiss,
+    PendingReviewQueueActionResult,
     SemanticMemoryList,
     SemanticMemorySetInvalid,
+    SemanticMemoryUpdate,
+    SemanticMemoryDelete,
     RetrieveMemory,
     ContextPreRetrieve,
     RetrieveMemoryRawResult,

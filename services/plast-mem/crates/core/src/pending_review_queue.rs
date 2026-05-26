@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env;
 
 use chrono::{DateTime, Utc};
 use plastmem_entities::{episodic_memory, pending_review_queue};
@@ -103,6 +104,98 @@ pub async fn list_pending_review_conversation_ids(
     .into_iter()
     .map(|row| row.try_get("", "conversation_id").map_err(AppError::from))
     .collect()
+}
+
+pub async fn list_pending_review_items<C>(
+  conversation_id: Uuid,
+  limit: u64,
+  db: &C,
+) -> Result<Vec<PendingReviewQueueItem>, AppError>
+where
+  C: ConnectionTrait,
+{
+  let models = pending_review_queue::Entity::find()
+    .filter(pending_review_queue::Column::ConversationId.eq(conversation_id))
+    .filter(pending_review_queue::Column::ConsumedAt.is_null())
+    .order_by_asc(pending_review_queue::Column::CreatedAt)
+    .limit(limit)
+    .all(db)
+    .await?;
+
+  Ok(
+    models
+      .into_iter()
+      .map(PendingReviewQueueItem::from_model)
+      .collect(),
+  )
+}
+
+pub async fn get_pending_review_item<C>(
+  conversation_id: Uuid,
+  item_id: Uuid,
+  db: &C,
+) -> Result<Option<PendingReviewQueueItem>, AppError>
+where
+  C: ConnectionTrait,
+{
+  let model = pending_review_queue::Entity::find()
+    .filter(pending_review_queue::Column::ConversationId.eq(conversation_id))
+    .filter(pending_review_queue::Column::Id.eq(item_id))
+    .filter(pending_review_queue::Column::ConsumedAt.is_null())
+    .one(db)
+    .await?;
+
+  Ok(model.map(PendingReviewQueueItem::from_model))
+}
+
+pub async fn update_pending_review_item_query<C>(
+  conversation_id: Uuid,
+  item_id: Uuid,
+  query: String,
+  db: &C,
+) -> Result<Option<PendingReviewQueueItem>, AppError>
+where
+  C: ConnectionTrait,
+{
+  let Some(model) = pending_review_queue::Entity::find()
+    .filter(pending_review_queue::Column::ConversationId.eq(conversation_id))
+    .filter(pending_review_queue::Column::Id.eq(item_id))
+    .filter(pending_review_queue::Column::ConsumedAt.is_null())
+    .one(db)
+    .await?
+  else {
+    return Ok(None);
+  };
+
+  let mut active: pending_review_queue::ActiveModel = model.into();
+  active.query = Set(query);
+
+  Ok(Some(PendingReviewQueueItem::from_model(
+    active.update(db).await?,
+  )))
+}
+
+pub async fn consume_pending_review_item<C>(
+  conversation_id: Uuid,
+  item_id: Uuid,
+  consumed_at: DateTime<Utc>,
+  db: &C,
+) -> Result<bool, AppError>
+where
+  C: ConnectionTrait,
+{
+  let result = pending_review_queue::Entity::update_many()
+    .col_expr(
+      pending_review_queue::Column::ConsumedAt,
+      Expr::value(consumed_at),
+    )
+    .filter(pending_review_queue::Column::ConversationId.eq(conversation_id))
+    .filter(pending_review_queue::Column::Id.eq(item_id))
+    .filter(pending_review_queue::Column::ConsumedAt.is_null())
+    .exec(db)
+    .await?;
+
+  Ok(result.rows_affected > 0)
 }
 
 pub async fn plan_pending_review_items_for_update<C>(
@@ -211,6 +304,7 @@ fn build_pending_review_queue_plan(
   memory_states: &HashMap<Uuid, ReviewMemoryState>,
   reviewed_at: DateTime<Utc>,
 ) -> PendingReviewQueuePlan {
+  let review_window_hours = resolve_review_window_hours();
   let mut pending_reviews = Vec::new();
   let mut consumed_item_ids = Vec::new();
   let mut retained_items = Vec::new();
@@ -225,7 +319,7 @@ fn build_pending_review_queue_plan(
         continue;
       };
 
-      if is_review_due(memory_state.last_reviewed_at, reviewed_at) {
+      if is_review_due(memory_state.last_reviewed_at, reviewed_at, review_window_hours) {
         due_memory_ids.push(memory_id);
       } else {
         deferred_memory_ids.push(memory_id);
@@ -256,8 +350,21 @@ fn build_pending_review_queue_plan(
   }
 }
 
-fn is_review_due(last_reviewed_at: DateTime<Utc>, reviewed_at: DateTime<Utc>) -> bool {
-  reviewed_at > last_reviewed_at && (reviewed_at - last_reviewed_at).num_days() >= 1
+fn resolve_review_window_hours() -> i64 {
+  env::var("PLAST_MEM_REVIEW_WINDOW_HOURS")
+    .ok()
+    .and_then(|value| value.trim().parse::<i64>().ok())
+    .filter(|hours| *hours > 0)
+    .unwrap_or(24)
+}
+
+fn is_review_due(
+  last_reviewed_at: DateTime<Utc>,
+  reviewed_at: DateTime<Utc>,
+  review_window_hours: i64,
+) -> bool {
+  reviewed_at > last_reviewed_at
+    && (reviewed_at - last_reviewed_at).num_hours() >= review_window_hours.max(1)
 }
 
 #[cfg(test)]
@@ -353,10 +460,12 @@ mod tests {
     assert!(!is_review_due(
       last_reviewed_at,
       last_reviewed_at + Duration::hours(23),
+      24,
     ));
     assert!(is_review_due(
       last_reviewed_at,
       last_reviewed_at + Duration::hours(24),
+      24,
     ));
   }
 }

@@ -790,6 +790,9 @@ pages:
               max-context-characters:
                 description: Maximum characters injected into chat context.
                 label: Max context characters
+              review-window-hours:
+                description: Minimum wait time before a reviewed memory becomes due again in the review queue.
+                label: Review window
               openai-api-key:
                 description: API key for the OpenAI-compatible provider used by Plast Mem.
                 label: API key
@@ -900,6 +903,16 @@ pages:
             model-error: Model provider error
             model-error-empty: Model provider returned an empty error.
             error-code: 'code {code}:'
+            inspector:
+              close: Close
+              empty: Nothing to show yet.
+              error: Failed to load inspector data
+              loading: Loading...
+              memory-title: Memory title
+              message-role: Message role
+              message-speaker: Speaker name
+              message-time: Message time
+              update-required: Please complete all required fields before saving.
             status:
               ok: OK
               error: Error
@@ -910,7 +923,9 @@ pages:
               episodic-memories: Episodes
               semantic-memories: Facts
               active-semantic-memories: Active facts
-              pending-reviews: Reviews
+              pending-reviews: Pending reviews
+              due-pending-reviews: Due reviews
+              deferred-pending-reviews: Deferred reviews
           tools:
             title: Manual memory tools
           chat-diagnostics:
@@ -986,10 +1001,47 @@ pages:
             title: Manual recall preview
           review-queue:
             description: Tracks retrieval feedback waiting for the Plast Mem review worker.
-            pending: '{count} pending'
-            status-description: Plast Mem exposes the pending count through health checks. Review actions need a service API before this panel can approve or edit items directly.
-            status-title: Action API not available yet
+            deferred: '{count} deferred'
+            deferred-description: These items stay in the queue because their linked memories were reviewed too recently for another FSRS update.
+            deferred-title: Waiting for the 24-hour review window
+            empty: No pending review items right now.
+            empty-deferred: No deferred review items right now.
+            empty-due: No review items are ready to run right now.
+            due: '{count} due now'
+            error: Review queue request failed
+            loading: Loading pending review items...
+            refresh: Refresh
+            sections:
+              deferred: Deferred reviews
+              due: Ready for review
             title: Review queue
+            item:
+              created: 'Queued: {time}'
+              deferred-count: '{count} deferred memory link(s)'
+              due-count: '{count} due memory link(s)'
+              linked-title: Linked episodic memories
+              memories: '{count} memory link(s)'
+              memory-created: 'Created: {time}'
+              memory-reviewed: 'Last reviewed: {time}'
+              query-label: Retrieval query
+            editor:
+              query-placeholder: Rewrite the retrieval query before approval.
+              query-required: Query cannot be empty.
+            memory-editor:
+              content-placeholder: Edit the episodic memory content used for retrieval.
+              content-required: Memory content cannot be empty.
+              title-placeholder: Edit the episodic memory title.
+              title-required: Memory title cannot be empty.
+            actions:
+              approve: Approve
+              approve-failed: Failed to approve the review item.
+              cancel: Cancel
+              confirm-dismiss: Confirm dismiss
+              dismiss: Dismiss
+              dismiss-failed: Failed to dismiss the review item.
+              edit-memory: Edit memory
+              rewrite: Rewrite
+              save: Save
           recent-memories:
             title: Recent memories
             refresh: Refresh
@@ -1016,9 +1068,21 @@ pages:
               label: Show invalidated facts
               description: Includes older facts that Plast Mem has superseded or invalidated.
             actions:
+              cancel: Cancel
+              confirm-delete: Confirm delete
+              delete: Delete
+              edit: Edit
               invalidate: Mark invalid
               restore: Restore
+              save: Save
               sources: Sources
+            editor:
+              category: Category
+              category-placeholder: Leave empty for uncategorized
+              delete-failed: Semantic memory delete failed.
+              fact: Fact
+              fact-placeholder: Edit the stored semantic memory text
+              fact-required: Semantic memory fact is required.
             status:
               active: Active
               invalid: Invalid

@@ -756,6 +756,9 @@ pages:
               max-context-characters:
                 description: 注入聊天上下文的最大字符数。
                 label: 最大上下文字符数
+              review-window-hours:
+                description: 一条记忆在上次复习后，至少要等待多久才会再次进入可复习状态。
+                label: 复习窗口
               openai-api-key:
                 description: Plast Mem 调用 OpenAI 兼容服务时使用的 API key。
                 label: API key
@@ -866,17 +869,29 @@ pages:
             model-error: 模型服务错误
             model-error-empty: 模型服务返回了空错误。
             error-code: '错误码 {code}:'
+            inspector:
+              memory-title: 记忆标题
+              message-role: 消息角色
+              message-speaker: 说话人名称
+              message-time: 消息时间
+              update-required: 请先填写完整必填内容再保存。
+              close: 关闭
+              empty: 还没有可显示的内容。
+              error: 加载查看内容失败
+              loading: 正在加载...
             status:
               ok: 正常
               error: 异常
               unknown: 未知
             counts:
               conversation-messages: 消息
-              episode-spans: 分段
-              episodic-memories: Episodic
-              semantic-memories: Semantic
-              active-semantic-memories: 活跃 Semantic
+              episode-spans: 片段
+              episodic-memories: 情景记忆
+              semantic-memories: 语义记忆
+              active-semantic-memories: 生效语义记忆
               pending-reviews: 待复习
+              due-pending-reviews: 待立即复习
+              deferred-pending-reviews: 延后复习
           tools:
             title: 手动记忆工具
           chat-diagnostics:
@@ -952,10 +967,47 @@ pages:
             title: 手动召回预览
           review-queue:
             description: 显示等待 Plast Mem 复习 worker 处理的检索反馈。
-            pending: '{count} 待处理'
-            status-description: Plast Mem 目前只通过健康检查暴露待处理数量；要在这里直接批准或改写，还需要服务端提供操作 API。
-            status-title: 暂无操作接口
+            deferred: '{count} 条延后'
+            deferred-description: 这些项目仍留在队列中，是因为关联记忆距离上次复习还不到 24 小时，暂时不会再跑一次 FSRS 更新。
+            deferred-title: 等待 24 小时复习窗口
+            empty: 当前没有待处理的复习项。
+            empty-deferred: 当前没有延后复习项。
+            empty-due: 当前没有可立即执行的复习项。
+            due: '{count} 条待立即复习'
+            error: 加载复习队列失败
+            loading: 正在加载待处理复习项...
+            refresh: 刷新
+            sections:
+              deferred: 延后复习
+              due: 待立即复习
             title: 记忆审核队列
+            item:
+              created: '入队时间：{time}'
+              deferred-count: '{count} 条延后关联记忆'
+              due-count: '{count} 条到期关联记忆'
+              linked-title: 关联的 episodic 记忆
+              memories: '{count} 条关联记忆'
+              memory-created: '创建时间：{time}'
+              memory-reviewed: '上次复习：{time}'
+              query-label: 检索查询
+            editor:
+              query-placeholder: 批准前可先改写这条检索查询。
+              query-required: 检索查询不能为空。
+            memory-editor:
+              content-placeholder: 修改这条关联记忆用于检索的正文内容。
+              content-required: 记忆内容不能为空。
+              title-placeholder: 修改这条关联记忆的标题。
+              title-required: 记忆标题不能为空。
+            actions:
+              approve: 批准
+              approve-failed: 批准复习项失败。
+              cancel: 取消
+              confirm-dismiss: 确认跳过
+              dismiss: 跳过
+              dismiss-failed: 跳过复习项失败。
+              edit-memory: 修改记忆
+              rewrite: 改写
+              save: 保存
           recent-memories:
             title: 最近记忆
             refresh: 刷新
@@ -982,9 +1034,21 @@ pages:
               label: 显示失效 facts
               description: 把已经被覆盖或失效的旧事实也一起显示出来。
             actions:
+              cancel: 取消
+              confirm-delete: 确认删除
+              delete: 删除
+              edit: 编辑
               invalidate: 标记失效
               restore: 恢复生效
+              save: 保存
               sources: 来源
+            editor:
+              category: 分类
+              category-placeholder: 留空则视为未分类
+              delete-failed: 删除语义记忆失败。
+              fact: 记忆内容
+              fact-placeholder: 修改这条长期语义记忆的文本
+              fact-required: 记忆内容不能为空。
             status:
               active: 生效中
               invalid: 已失效

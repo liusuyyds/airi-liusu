@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Write;
+use std::env;
 
 use apalis::prelude::Data;
 use chrono::{DateTime, Utc};
@@ -69,6 +70,14 @@ Consider:
 - How central the memory is to the conversation flow
 - A memory matched by multiple queries may indicate higher relevance, but judge by actual usage in context";
 
+fn resolve_review_window_hours() -> i64 {
+  env::var("PLAST_MEM_REVIEW_WINDOW_HOURS")
+    .ok()
+    .and_then(|value| value.trim().parse::<i64>().ok())
+    .filter(|hours| *hours > 0)
+    .unwrap_or(24)
+}
+
 /// Build the markdown user message for the reviewer LLM.
 fn build_review_user_message(
   context_messages: &[Message],
@@ -131,6 +140,7 @@ pub async fn process_memory_review(
   db: Data<DatabaseConnection>,
 ) -> Result<(), AppError> {
   let db = &*db;
+  let review_window_hours = resolve_review_window_hours();
 
   if job.pending_reviews.is_empty() {
     return Ok(());
@@ -155,7 +165,7 @@ pub async fn process_memory_review(
     if job.reviewed_at <= last_reviewed_at {
       continue;
     }
-    if (job.reviewed_at - last_reviewed_at).num_days() < 1 {
+    if (job.reviewed_at - last_reviewed_at).num_hours() < review_window_hours {
       continue;
     }
 

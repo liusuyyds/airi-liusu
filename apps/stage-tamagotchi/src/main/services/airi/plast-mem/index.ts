@@ -3,6 +3,8 @@ import type { createContext } from '@moeru/eventa/adapters/electron/main'
 import type {
   ElectronPlastMemAddMessagePayload,
   ElectronPlastMemAddMessageResult,
+  ElectronPlastMemApprovePendingReviewQueueItemPayload,
+  ElectronPlastMemApprovePendingReviewQueueItemResult,
   ElectronPlastMemChatDiagnostics,
   ElectronPlastMemChatMessage,
   ElectronPlastMemContextDetail,
@@ -10,10 +12,20 @@ import type {
   ElectronPlastMemContextPreRetrievePayload,
   ElectronPlastMemContextPreRetrieveResult,
   ElectronPlastMemContextSource,
+  ElectronPlastMemConversationMessagesPayload,
+  ElectronPlastMemConversationMessagesResult,
+  ElectronPlastMemDeleteSemanticMemoryPayload,
+  ElectronPlastMemDeleteSemanticMemoryResult,
+  ElectronPlastMemDismissPendingReviewQueueItemPayload,
+  ElectronPlastMemDismissPendingReviewQueueItemResult,
+  ElectronPlastMemEpisodeSpansPayload,
+  ElectronPlastMemEpisodeSpansResult,
   ElectronPlastMemHealthPayload,
   ElectronPlastMemHealthResult,
   ElectronPlastMemIngestChatMessagesPayload,
   ElectronPlastMemIngestChatMessagesResult,
+  ElectronPlastMemPendingReviewQueuePayload,
+  ElectronPlastMemPendingReviewQueueResult,
   ElectronPlastMemRecentMemoryPayload,
   ElectronPlastMemRecentMemoryRawPayload,
   ElectronPlastMemRecentMemoryRawResult,
@@ -22,11 +34,21 @@ import type {
   ElectronPlastMemRetrieveChatContextResult,
   ElectronPlastMemRetrieveMemoryRawPayload,
   ElectronPlastMemRetrieveMemoryRawResult,
+  ElectronPlastMemRewritePendingReviewQueueItemPayload,
+  ElectronPlastMemRewritePendingReviewQueueItemResult,
   ElectronPlastMemRuntimeStatus,
   ElectronPlastMemSemanticMemoryRawPayload,
   ElectronPlastMemSemanticMemoryRawResult,
   ElectronPlastMemSetSemanticMemoryInvalidPayload,
   ElectronPlastMemSetSemanticMemoryInvalidResult,
+  ElectronPlastMemUpdateConversationMessagePayload,
+  ElectronPlastMemUpdateConversationMessageResult,
+  ElectronPlastMemUpdateEpisodicMemoryPayload,
+  ElectronPlastMemUpdateEpisodicMemoryResult,
+  ElectronPlastMemUpdatePendingReviewQueueMemoryPayload,
+  ElectronPlastMemUpdatePendingReviewQueueMemoryResult,
+  ElectronPlastMemUpdateSemanticMemoryPayload,
+  ElectronPlastMemUpdateSemanticMemoryResult,
 } from '../../../../shared/eventa'
 import type { McpStdioManager } from '../mcp-servers'
 import type { PlastMemSidecarManager } from './sidecar'
@@ -41,22 +63,33 @@ import {
   electronPlastMemAcquireChatBridge,
   electronPlastMemAddMessage,
   electronPlastMemApplyConfig,
+  electronPlastMemApprovePendingReviewQueueItem,
   electronPlastMemContextPreRetrieve,
+  electronPlastMemConversationMessages,
+  electronPlastMemDeleteSemanticMemory,
+  electronPlastMemDismissPendingReviewQueueItem,
+  electronPlastMemEpisodeSpans,
   electronPlastMemGetConfig,
   electronPlastMemGetRuntimeStatus,
   electronPlastMemGetSidecarStatus,
   electronPlastMemHealth,
   electronPlastMemIngestChatMessages,
+  electronPlastMemPendingReviewQueue,
   electronPlastMemRecentMemory,
   electronPlastMemRecentMemoryRaw,
   electronPlastMemReleaseChatBridge,
   electronPlastMemRestartSidecar,
   electronPlastMemRetrieveChatContext,
   electronPlastMemRetrieveMemoryRaw,
+  electronPlastMemRewritePendingReviewQueueItem,
   electronPlastMemSemanticMemoryRaw,
   electronPlastMemSetSemanticMemoryInvalid,
   electronPlastMemStartSidecar,
   electronPlastMemStopSidecar,
+  electronPlastMemUpdateConversationMessage,
+  electronPlastMemUpdateEpisodicMemory,
+  electronPlastMemUpdatePendingReviewQueueMemory,
+  electronPlastMemUpdateSemanticMemory,
 } from '../../../../shared/eventa'
 import { parseBoolean, trimOptional } from '../runtime-config'
 import {
@@ -73,6 +106,10 @@ const defaultEpisodicLimit = 4
 const defaultSemanticLimit = 12
 const defaultMaxContextCharacters = 5000
 const computerUseMcpServerName = 'computer_use'
+const conversationMessagesPath = 'api/v0/health/conversation_messages'
+const conversationMessagesUpdatePath = 'api/v0/health/conversation_messages/update'
+const episodeSpansPath = 'api/v0/health/episode_spans'
+const episodicMemoryUpdatePath = 'api/v0/health/episodic_memories/update'
 const retrieveMemoryPath = 'api/v0/retrieve_memory'
 const retrieveMemoryRawPath = 'api/v0/retrieve_memory/raw'
 const contextPreRetrievePath = 'api/v0/context_pre_retrieve'
@@ -81,7 +118,14 @@ const modelHealthPath = 'api/v0/model_health'
 const recentMemoryPath = 'api/v0/recent_memory'
 const recentMemoryRawPath = 'api/v0/recent_memory/raw'
 const semanticMemoryRawPath = 'api/v0/semantic_memory/raw'
+const pendingReviewQueuePath = 'api/v0/review_queue/raw'
+const pendingReviewQueueRewritePath = 'api/v0/review_queue/rewrite'
+const pendingReviewQueueApprovePath = 'api/v0/review_queue/approve'
+const pendingReviewQueueDismissPath = 'api/v0/review_queue/dismiss'
+const pendingReviewQueueUpdateMemoryPath = 'api/v0/review_queue/update_memory'
 const semanticMemorySetInvalidPath = 'api/v0/semantic_memory/set_invalid'
+const semanticMemoryUpdatePath = 'api/v0/semantic_memory/update'
+const semanticMemoryDeletePath = 'api/v0/semantic_memory/delete'
 const addMessagePath = 'api/v0/add_message'
 const importBatchMessagesPath = 'api/v0/import_batch_messages'
 const plastMemBridgeVersion = 'chat-memory-2026-05-22-0249'
@@ -132,6 +176,8 @@ interface PlastMemRuntimeConfig {
   openaiEmbeddingApiKey?: string
   openaiEmbeddingBaseUrl?: string
   openaiEmbeddingModel?: string
+  openaiRequestTimeoutSeconds: number
+  reviewWindowHours: number
   requestTimeoutMsec: number
   semanticLimit: number
   workspaceKey?: string
@@ -349,6 +395,8 @@ function resolveEnvPlastMemRuntimeConfig(): PlastMemRuntimeConfig {
     openaiEmbeddingApiKey: trimOptional(env.OPENAI_EMBEDDING_API_KEY),
     openaiEmbeddingBaseUrl: trimOptional(env.OPENAI_EMBEDDING_BASE_URL),
     openaiEmbeddingModel: trimOptional(env.OPENAI_EMBEDDING_MODEL),
+    openaiRequestTimeoutSeconds: parsePositiveInteger(env.OPENAI_REQUEST_TIMEOUT_SECONDS, 120),
+    reviewWindowHours: parsePositiveInteger(env.PLAST_MEM_REVIEW_WINDOW_HOURS, 24),
     requestTimeoutMsec: parsePositiveInteger(env.COMPUTER_USE_PLAST_MEM_TIMEOUT_MS, chatRetrieveTimeoutMsec),
     semanticLimit: parsePositiveInteger(env.COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT, defaultSemanticLimit),
     workspaceKey: trimOptional(env.COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY) ?? (devMode ? 'airi-main' : undefined),
@@ -385,6 +433,8 @@ function resolvePlastMemRuntimeConfig(): PlastMemRuntimeConfig {
     openaiEmbeddingApiKey: trimOptional(config.openaiEmbeddingApiKey) ?? envConfig.openaiEmbeddingApiKey,
     openaiEmbeddingBaseUrl: trimOptional(config.openaiEmbeddingBaseUrl) ?? envConfig.openaiEmbeddingBaseUrl,
     openaiEmbeddingModel: trimOptional(config.openaiEmbeddingModel) ?? envConfig.openaiEmbeddingModel,
+    openaiRequestTimeoutSeconds: config.openaiRequestTimeoutSeconds,
+    reviewWindowHours: config.reviewWindowHours,
     requestTimeoutMsec: config.requestTimeoutMsec,
     semanticLimit: config.semanticLimit,
     workspaceKey: trimOptional(config.workspaceKey) ?? envConfig.workspaceKey,
@@ -453,6 +503,12 @@ function buildChatMemoryContextBlock(markdown: string, maxCharacters: number) {
     '',
     boundText(normalized, maxCharacters),
   ].join('\n')
+}
+
+function resolveModelHealthTimeoutMsec(config: PlastMemRuntimeConfig) {
+  // Model health performs real provider probes, so it needs enough time to
+  // surface backend/provider errors instead of being collapsed into an abort.
+  return Math.max(config.requestTimeoutMsec, config.openaiRequestTimeoutSeconds * 1000)
 }
 
 async function postJsonText(baseUrl: string, path: string, body: unknown, timeoutMsec: number) {
@@ -648,7 +704,7 @@ export async function checkPlastMemHealth(payload: ElectronPlastMemHealthPayload
     let modelHealth: ElectronPlastMemHealthResult['modelHealth']
     if (payload.includeModelHealth) {
       try {
-        modelHealth = await checkPlastMemModelHealth(baseUrl, config.requestTimeoutMsec)
+        modelHealth = await checkPlastMemModelHealth(baseUrl, resolveModelHealthTimeoutMsec(config))
       }
       catch (error) {
         modelHealth = {
@@ -1428,6 +1484,499 @@ export async function retrievePlastMemSemanticMemoryRaw(payload: ElectronPlastMe
   }
 }
 
+export async function retrievePlastMemConversationMessages(payload: ElectronPlastMemConversationMessagesPayload = {}): Promise<ElectronPlastMemConversationMessagesResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: false,
+      messages: [],
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: true,
+      messages: [],
+    }
+  }
+
+  try {
+    const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
+    const response = await postJsonText(baseUrl, conversationMessagesPath, {
+      conversation_id: conversationId,
+      limit: payload.limit ?? 200,
+    }, config.requestTimeoutMsec)
+    const messages = parseJsonResponse<ElectronPlastMemConversationMessagesResult['messages']>(
+      response.text,
+      [],
+      'conversation-messages',
+    )
+
+    return {
+      baseUrl,
+      enabled: true,
+      messages,
+      statusCode: response.statusCode,
+    }
+  }
+  catch (error) {
+    logPlastMemWarn('conversation-messages:error', {
+      error: errorMessageFrom(error) ?? String(error),
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: config.enabled,
+      error: errorMessageFrom(error) ?? String(error),
+      messages: [],
+    }
+  }
+}
+
+export async function updatePlastMemConversationMessage(payload: ElectronPlastMemUpdateConversationMessagePayload): Promise<ElectronPlastMemUpdateConversationMessageResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: false,
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: true,
+    }
+  }
+
+  try {
+    const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
+    const response = await postJsonText(baseUrl, conversationMessagesUpdatePath, {
+      conversation_id: conversationId,
+      seq: payload.seq,
+      role: payload.role,
+      speaker_name: trimOptional(payload.speakerName) ?? null,
+      content: payload.content,
+      timestamp: payload.timestamp,
+    }, config.requestTimeoutMsec)
+    const message = parseJsonResponse<ElectronPlastMemUpdateConversationMessageResult['message']>(
+      response.text,
+      undefined,
+      'conversation-message-update',
+    )
+
+    const result: ElectronPlastMemUpdateConversationMessageResult = {
+      baseUrl,
+      enabled: true,
+      statusCode: response.statusCode,
+    }
+    if (message)
+      result.message = message
+    return result
+  }
+  catch (error) {
+    logPlastMemWarn('conversation-message-update:error', {
+      error: errorMessageFrom(error) ?? String(error),
+      seq: payload.seq,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: config.enabled,
+      error: errorMessageFrom(error) ?? String(error),
+    }
+  }
+}
+
+export async function retrievePlastMemEpisodeSpans(payload: ElectronPlastMemEpisodeSpansPayload = {}): Promise<ElectronPlastMemEpisodeSpansResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: false,
+      spans: [],
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: true,
+      spans: [],
+    }
+  }
+
+  try {
+    const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
+    const response = await postJsonText(baseUrl, episodeSpansPath, {
+      conversation_id: conversationId,
+      limit: payload.limit ?? 200,
+    }, config.requestTimeoutMsec)
+    const spans = parseJsonResponse<ElectronPlastMemEpisodeSpansResult['spans']>(
+      response.text,
+      [],
+      'episode-spans',
+    )
+
+    return {
+      baseUrl,
+      enabled: true,
+      spans,
+      statusCode: response.statusCode,
+    }
+  }
+  catch (error) {
+    logPlastMemWarn('episode-spans:error', {
+      error: errorMessageFrom(error) ?? String(error),
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: config.enabled,
+      error: errorMessageFrom(error) ?? String(error),
+      spans: [],
+    }
+  }
+}
+
+export async function updatePlastMemEpisodicMemory(payload: ElectronPlastMemUpdateEpisodicMemoryPayload): Promise<ElectronPlastMemUpdateEpisodicMemoryResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: false,
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: true,
+    }
+  }
+
+  try {
+    const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
+    const response = await postJsonText(baseUrl, episodicMemoryUpdatePath, {
+      conversation_id: conversationId,
+      memory_id: payload.memoryId,
+      title: payload.title,
+      content: payload.content,
+    }, config.requestTimeoutMsec)
+    const memory = parseJsonResponse<ElectronPlastMemUpdateEpisodicMemoryResult['memory']>(
+      response.text,
+      undefined,
+      'episodic-memory-update',
+    )
+
+    const result: ElectronPlastMemUpdateEpisodicMemoryResult = {
+      baseUrl,
+      enabled: true,
+      statusCode: response.statusCode,
+    }
+    if (memory)
+      result.memory = memory
+    return result
+  }
+  catch (error) {
+    logPlastMemWarn('episodic-memory-update:error', {
+      error: errorMessageFrom(error) ?? String(error),
+      memoryId: payload.memoryId,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: config.enabled,
+      error: errorMessageFrom(error) ?? String(error),
+    }
+  }
+}
+
+export async function retrievePlastMemPendingReviewQueue(payload: ElectronPlastMemPendingReviewQueuePayload = {}): Promise<ElectronPlastMemPendingReviewQueueResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: false,
+      items: [],
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: true,
+      items: [],
+    }
+  }
+
+  try {
+    const baseUrl = requirePlastMemServiceBaseUrl(config)
+    const conversationId = requirePlastMemConversationId(config)
+
+    const response = await postJsonText(baseUrl, pendingReviewQueuePath, {
+      conversation_id: conversationId,
+      limit: payload.limit ?? 20,
+    }, config.requestTimeoutMsec)
+    const items = parseJsonResponse<ElectronPlastMemPendingReviewQueueResult['items']>(
+      response.text,
+      [],
+      'review-queue',
+    )
+
+    return {
+      baseUrl,
+      enabled: true,
+      items,
+      statusCode: response.statusCode,
+    }
+  }
+  catch (error) {
+    logPlastMemWarn('review-queue:error', {
+      error: errorMessageFrom(error) ?? String(error),
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: config.enabled,
+      error: errorMessageFrom(error) ?? String(error),
+      items: [],
+    }
+  }
+}
+
+export async function rewritePlastMemPendingReviewQueueItem(payload: ElectronPlastMemRewritePendingReviewQueueItemPayload): Promise<ElectronPlastMemRewritePendingReviewQueueItemResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: false,
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: true,
+    }
+  }
+
+  try {
+    const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
+    const response = await postJsonText(baseUrl, pendingReviewQueueRewritePath, {
+      conversation_id: conversationId,
+      item_id: payload.itemId,
+      query: payload.query,
+    }, config.requestTimeoutMsec)
+    const item = parseJsonResponse<ElectronPlastMemRewritePendingReviewQueueItemResult['item']>(
+      response.text,
+      undefined,
+      'review-queue-rewrite',
+    )
+
+    const result: ElectronPlastMemRewritePendingReviewQueueItemResult = {
+      baseUrl,
+      enabled: true,
+      statusCode: response.statusCode,
+    }
+    if (item)
+      result.item = item
+    return result
+  }
+  catch (error) {
+    logPlastMemWarn('review-queue-rewrite:error', {
+      error: errorMessageFrom(error) ?? String(error),
+      itemId: payload.itemId,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: config.enabled,
+      error: errorMessageFrom(error) ?? String(error),
+    }
+  }
+}
+
+export async function approvePlastMemPendingReviewQueueItem(payload: ElectronPlastMemApprovePendingReviewQueueItemPayload): Promise<ElectronPlastMemApprovePendingReviewQueueItemResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    return {
+      baseUrl: config.baseUrl,
+      consumed: false,
+      enabled: false,
+      itemId: payload.itemId,
+      updatedMemories: 0,
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    return {
+      baseUrl: config.baseUrl,
+      consumed: false,
+      enabled: true,
+      itemId: payload.itemId,
+      updatedMemories: 0,
+    }
+  }
+
+  try {
+    const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
+    const response = await postJsonText(baseUrl, pendingReviewQueueApprovePath, {
+      conversation_id: conversationId,
+      item_id: payload.itemId,
+    }, config.requestTimeoutMsec)
+    const result = parseJsonResponse<{
+      consumed?: boolean
+      item_id?: string
+      updated_memories?: number
+    }>(
+      response.text,
+      {},
+      'review-queue-approve',
+    )
+
+    return {
+      baseUrl,
+      consumed: result.consumed === true,
+      enabled: true,
+      itemId: result.item_id ?? payload.itemId,
+      statusCode: response.statusCode,
+      updatedMemories: result.updated_memories ?? 0,
+    }
+  }
+  catch (error) {
+    logPlastMemWarn('review-queue-approve:error', {
+      error: errorMessageFrom(error) ?? String(error),
+      itemId: payload.itemId,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      consumed: false,
+      enabled: config.enabled,
+      error: errorMessageFrom(error) ?? String(error),
+      itemId: payload.itemId,
+      updatedMemories: 0,
+    }
+  }
+}
+
+export async function dismissPlastMemPendingReviewQueueItem(payload: ElectronPlastMemDismissPendingReviewQueueItemPayload): Promise<ElectronPlastMemDismissPendingReviewQueueItemResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    return {
+      baseUrl: config.baseUrl,
+      consumed: false,
+      enabled: false,
+      itemId: payload.itemId,
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    return {
+      baseUrl: config.baseUrl,
+      consumed: false,
+      enabled: true,
+      itemId: payload.itemId,
+    }
+  }
+
+  try {
+    const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
+    const response = await postJsonText(baseUrl, pendingReviewQueueDismissPath, {
+      conversation_id: conversationId,
+      item_id: payload.itemId,
+    }, config.requestTimeoutMsec)
+    const result = parseJsonResponse<{
+      consumed?: boolean
+      item_id?: string
+    }>(
+      response.text,
+      {},
+      'review-queue-dismiss',
+    )
+
+    return {
+      baseUrl,
+      consumed: result.consumed === true,
+      enabled: true,
+      itemId: result.item_id ?? payload.itemId,
+      statusCode: response.statusCode,
+    }
+  }
+  catch (error) {
+    logPlastMemWarn('review-queue-dismiss:error', {
+      error: errorMessageFrom(error) ?? String(error),
+      itemId: payload.itemId,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      consumed: false,
+      enabled: config.enabled,
+      error: errorMessageFrom(error) ?? String(error),
+      itemId: payload.itemId,
+    }
+  }
+}
+
+export async function updatePlastMemPendingReviewQueueMemory(payload: ElectronPlastMemUpdatePendingReviewQueueMemoryPayload): Promise<ElectronPlastMemUpdatePendingReviewQueueMemoryResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: false,
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: true,
+    }
+  }
+
+  try {
+    const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
+    const response = await postJsonText(baseUrl, pendingReviewQueueUpdateMemoryPath, {
+      conversation_id: conversationId,
+      item_id: payload.itemId,
+      memory_id: payload.memoryId,
+      title: payload.title,
+      content: payload.content,
+    }, config.requestTimeoutMsec)
+    const item = parseJsonResponse<ElectronPlastMemUpdatePendingReviewQueueMemoryResult['item']>(
+      response.text,
+      undefined,
+      'review-queue-update-memory',
+    )
+
+    const result: ElectronPlastMemUpdatePendingReviewQueueMemoryResult = {
+      baseUrl,
+      enabled: true,
+      statusCode: response.statusCode,
+    }
+    if (item)
+      result.item = item
+    return result
+  }
+  catch (error) {
+    logPlastMemWarn('review-queue-update-memory:error', {
+      error: errorMessageFrom(error) ?? String(error),
+      itemId: payload.itemId,
+      memoryId: payload.memoryId,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: config.enabled,
+      error: errorMessageFrom(error) ?? String(error),
+    }
+  }
+}
+
 export async function setPlastMemSemanticMemoryInvalid(payload: ElectronPlastMemSetSemanticMemoryInvalidPayload): Promise<ElectronPlastMemSetSemanticMemoryInvalidResult> {
   const config = resolvePlastMemRuntimeConfig()
 
@@ -1482,6 +2031,109 @@ export async function setPlastMemSemanticMemoryInvalid(payload: ElectronPlastMem
   }
 }
 
+export async function updatePlastMemSemanticMemory(payload: ElectronPlastMemUpdateSemanticMemoryPayload): Promise<ElectronPlastMemUpdateSemanticMemoryResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: false,
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: true,
+    }
+  }
+
+  try {
+    const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
+
+    const response = await postJsonText(baseUrl, semanticMemoryUpdatePath, {
+      conversation_id: conversationId,
+      memory_id: payload.memoryId,
+      category: payload.category,
+      fact: payload.fact,
+    }, config.requestTimeoutMsec)
+    const memory = parseJsonResponse<ElectronPlastMemUpdateSemanticMemoryResult['memory']>(
+      response.text,
+      undefined,
+      'semantic-update',
+    )
+
+    const result: ElectronPlastMemUpdateSemanticMemoryResult = {
+      baseUrl,
+      enabled: true,
+      statusCode: response.statusCode,
+    }
+    if (memory)
+      result.memory = memory
+    return result
+  }
+  catch (error) {
+    logPlastMemWarn('semantic-update:error', {
+      category: payload.category,
+      error: errorMessageFrom(error) ?? String(error),
+      memoryId: payload.memoryId,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: config.enabled,
+      error: errorMessageFrom(error) ?? String(error),
+    }
+  }
+}
+
+export async function deletePlastMemSemanticMemory(payload: ElectronPlastMemDeleteSemanticMemoryPayload): Promise<ElectronPlastMemDeleteSemanticMemoryResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    return {
+      baseUrl: config.baseUrl,
+      deleted: false,
+      enabled: false,
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    return {
+      baseUrl: config.baseUrl,
+      deleted: false,
+      enabled: true,
+    }
+  }
+
+  try {
+    const { baseUrl, conversationId } = requireConfiguredPlastMem(config)
+
+    const response = await postJsonText(baseUrl, semanticMemoryDeletePath, {
+      conversation_id: conversationId,
+      memory_id: payload.memoryId,
+    }, config.requestTimeoutMsec)
+
+    return {
+      baseUrl,
+      deleted: response.statusCode >= 200 && response.statusCode < 300,
+      enabled: true,
+      statusCode: response.statusCode,
+    }
+  }
+  catch (error) {
+    logPlastMemWarn('semantic-delete:error', {
+      error: errorMessageFrom(error) ?? String(error),
+      memoryId: payload.memoryId,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      deleted: false,
+      enabled: config.enabled,
+      error: errorMessageFrom(error) ?? String(error),
+    }
+  }
+}
+
 export function createPlastMemService(params: {
   context: ReturnType<typeof createContext>['context']
   manager: McpStdioManager
@@ -1510,13 +2162,24 @@ export function createPlastMemService(params: {
     return await params.sidecarManager.restart()
   })
   defineInvokeHandler(params.context, electronPlastMemHealth, payload => checkPlastMemHealth(payload))
+  defineInvokeHandler(params.context, electronPlastMemConversationMessages, payload => retrievePlastMemConversationMessages(payload))
+  defineInvokeHandler(params.context, electronPlastMemUpdateConversationMessage, payload => updatePlastMemConversationMessage(payload))
+  defineInvokeHandler(params.context, electronPlastMemEpisodeSpans, payload => retrievePlastMemEpisodeSpans(payload))
+  defineInvokeHandler(params.context, electronPlastMemUpdateEpisodicMemory, payload => updatePlastMemEpisodicMemory(payload))
   defineInvokeHandler(params.context, electronPlastMemRetrieveChatContext, payload => retrievePlastMemChatContext(payload))
   defineInvokeHandler(params.context, electronPlastMemRetrieveMemoryRaw, payload => retrievePlastMemMemoryRaw(payload))
   defineInvokeHandler(params.context, electronPlastMemContextPreRetrieve, payload => contextPreRetrievePlastMemChatContext(payload))
   defineInvokeHandler(params.context, electronPlastMemRecentMemory, payload => retrievePlastMemRecentMemory(payload))
   defineInvokeHandler(params.context, electronPlastMemRecentMemoryRaw, payload => retrievePlastMemRecentMemoryRaw(payload))
   defineInvokeHandler(params.context, electronPlastMemSemanticMemoryRaw, payload => retrievePlastMemSemanticMemoryRaw(payload))
+  defineInvokeHandler(params.context, electronPlastMemPendingReviewQueue, payload => retrievePlastMemPendingReviewQueue(payload))
+  defineInvokeHandler(params.context, electronPlastMemRewritePendingReviewQueueItem, payload => rewritePlastMemPendingReviewQueueItem(payload))
+  defineInvokeHandler(params.context, electronPlastMemApprovePendingReviewQueueItem, payload => approvePlastMemPendingReviewQueueItem(payload))
+  defineInvokeHandler(params.context, electronPlastMemDismissPendingReviewQueueItem, payload => dismissPlastMemPendingReviewQueueItem(payload))
+  defineInvokeHandler(params.context, electronPlastMemUpdatePendingReviewQueueMemory, payload => updatePlastMemPendingReviewQueueMemory(payload))
   defineInvokeHandler(params.context, electronPlastMemSetSemanticMemoryInvalid, payload => setPlastMemSemanticMemoryInvalid(payload))
+  defineInvokeHandler(params.context, electronPlastMemUpdateSemanticMemory, payload => updatePlastMemSemanticMemory(payload))
+  defineInvokeHandler(params.context, electronPlastMemDeleteSemanticMemory, payload => deletePlastMemSemanticMemory(payload))
   defineInvokeHandler(params.context, electronPlastMemIngestChatMessages, payload => ingestPlastMemChatMessages(payload))
   defineInvokeHandler(params.context, electronPlastMemAddMessage, payload => addPlastMemMessage(payload))
   defineInvokeHandler(params.context, electronPlastMemAcquireChatBridge, (payload) => {

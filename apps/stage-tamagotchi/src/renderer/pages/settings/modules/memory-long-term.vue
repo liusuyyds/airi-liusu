@@ -6,8 +6,12 @@ import type {
 import type {
   ElectronPlastMemChatMessage,
   ElectronPlastMemConfig,
+  ElectronPlastMemConversationMessage,
+  ElectronPlastMemEpisodeSpan,
   ElectronPlastMemEpisodicMemory,
   ElectronPlastMemHealthResult,
+  ElectronPlastMemPendingReviewQueueItem,
+  ElectronPlastMemPendingReviewQueueMemory,
   ElectronPlastMemRetrieveMemoryRawResult,
   ElectronPlastMemRuntimeStatus,
   ElectronPlastMemSemanticMemory,
@@ -18,7 +22,7 @@ import { errorMessageFrom } from '@moeru/std'
 import { useElectronEventaInvoke } from '@proj-airi/electron-vueuse'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
-import { Button, Callout, Collapsible, FieldCheckbox, FieldInput, Input } from '@proj-airi/ui'
+import { Button, Callout, Collapsible, DoubleCheckButton, FieldCheckbox, FieldInput, FieldSelect, Input, Textarea } from '@proj-airi/ui'
 import { useDebounceFn } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -27,24 +31,36 @@ import { useI18n } from 'vue-i18n'
 import {
   defaultElectronPlastMemConfig,
   electronPlastMemApplyConfig,
+  electronPlastMemApprovePendingReviewQueueItem,
+  electronPlastMemConversationMessages,
+  electronPlastMemDeleteSemanticMemory,
+  electronPlastMemDismissPendingReviewQueueItem,
+  electronPlastMemEpisodeSpans,
   electronPlastMemGetConfig,
   electronPlastMemGetRuntimeStatus,
   electronPlastMemGetSidecarStatus,
   electronPlastMemHealth,
   electronPlastMemIngestChatMessages,
+  electronPlastMemPendingReviewQueue,
   electronPlastMemRecentMemoryRaw,
   electronPlastMemRestartSidecar,
   electronPlastMemRetrieveMemoryRaw,
+  electronPlastMemRewritePendingReviewQueueItem,
   electronPlastMemSemanticMemoryRaw,
   electronPlastMemSetSemanticMemoryInvalid,
   electronPlastMemStartSidecar,
   electronPlastMemStopSidecar,
+  electronPlastMemUpdateConversationMessage,
+  electronPlastMemUpdateEpisodicMemory,
+  electronPlastMemUpdatePendingReviewQueueMemory,
+  electronPlastMemUpdateSemanticMemory,
 } from '../../../../shared/eventa'
 
 type BridgeStatusKind = 'checking' | 'disabled' | 'offline' | 'online'
 type ConnectionCheckKind = 'error' | 'ok' | 'unknown'
 type ConfigSaveSyncMode = 'always' | 'ifStable' | 'never'
-type DetailPanelId = 'config' | 'runtime' | 'diagnostics' | 'tools' | 'semantic' | 'recent' | 'health' | 'about'
+type DetailPanelId = 'config' | 'runtime' | 'diagnostics' | 'tools' | 'recent' | 'health' | 'about'
+type HealthInspectorId = 'conversation-messages' | 'episode-spans' | 'episodic-memories' | 'semantic-memories' | 'active-semantic-memories' | 'pending-reviews'
 
 interface ConfigSaveOptions {
   refreshAfterSave: boolean
@@ -63,11 +79,22 @@ const invokeStartPlastMemSidecar = useElectronEventaInvoke(electronPlastMemStart
 const invokeStopPlastMemSidecar = useElectronEventaInvoke(electronPlastMemStopSidecar)
 const invokeRestartPlastMemSidecar = useElectronEventaInvoke(electronPlastMemRestartSidecar)
 const invokePlastMemHealth = useElectronEventaInvoke(electronPlastMemHealth)
+const invokeConversationMessages = useElectronEventaInvoke(electronPlastMemConversationMessages)
+const invokeUpdateConversationMessage = useElectronEventaInvoke(electronPlastMemUpdateConversationMessage)
+const invokeEpisodeSpans = useElectronEventaInvoke(electronPlastMemEpisodeSpans)
 const invokeIngestChatMessages = useElectronEventaInvoke(electronPlastMemIngestChatMessages)
 const invokeRecentMemoryRaw = useElectronEventaInvoke(electronPlastMemRecentMemoryRaw)
+const invokeUpdateEpisodicMemory = useElectronEventaInvoke(electronPlastMemUpdateEpisodicMemory)
 const invokeRetrieveMemoryRaw = useElectronEventaInvoke(electronPlastMemRetrieveMemoryRaw)
 const invokeSemanticMemoryRaw = useElectronEventaInvoke(electronPlastMemSemanticMemoryRaw)
+const invokePendingReviewQueue = useElectronEventaInvoke(electronPlastMemPendingReviewQueue)
+const invokeRewritePendingReviewQueueItem = useElectronEventaInvoke(electronPlastMemRewritePendingReviewQueueItem)
+const invokeApprovePendingReviewQueueItem = useElectronEventaInvoke(electronPlastMemApprovePendingReviewQueueItem)
+const invokeDismissPendingReviewQueueItem = useElectronEventaInvoke(electronPlastMemDismissPendingReviewQueueItem)
+const invokeUpdatePendingReviewQueueMemory = useElectronEventaInvoke(electronPlastMemUpdatePendingReviewQueueMemory)
 const invokeSetSemanticMemoryInvalid = useElectronEventaInvoke(electronPlastMemSetSemanticMemoryInvalid)
+const invokeUpdateSemanticMemory = useElectronEventaInvoke(electronPlastMemUpdateSemanticMemory)
+const invokeDeleteSemanticMemory = useElectronEventaInvoke(electronPlastMemDeleteSemanticMemory)
 const chatSessionStore = useChatSessionStore()
 const { activeCard } = storeToRefs(useAiriCardStore())
 
@@ -110,6 +137,14 @@ const bridgeEnvVars = [
   'OPENAI_EMBEDDING_MODEL',
   'OPENAI_CHAT_MAX_TOKENS',
   'OPENAI_REQUEST_TIMEOUT_SECONDS',
+  'PLAST_MEM_REVIEW_WINDOW_HOURS',
+]
+
+const reviewWindowOptions = [
+  { label: '24h', value: 24 },
+  { label: '12h', value: 12 },
+  { label: '6h', value: 6 },
+  { label: '1h', value: 1 },
 ]
 
 const configDraft = ref<ElectronPlastMemConfig>({ ...defaultElectronPlastMemConfig })
@@ -132,13 +167,41 @@ const isRestartingSidecar = ref(false)
 const health = ref<ElectronPlastMemHealthResult>()
 const healthError = ref('')
 const isCheckingHealth = ref(false)
+const pendingReviewItems = ref<ElectronPlastMemPendingReviewQueueItem[]>([])
+const pendingReviewError = ref('')
+const isLoadingPendingReviewItems = ref(false)
+const mutatingPendingReviewItemId = ref('')
+const editingPendingReviewItemId = ref('')
+const pendingReviewDraftQuery = ref('')
+const editingPendingReviewMemoryKey = ref('')
+const pendingReviewMemoryDraftTitle = ref('')
+const pendingReviewMemoryDraftContent = ref('')
+const conversationMessages = ref<ElectronPlastMemConversationMessage[]>([])
+const conversationMessagesError = ref('')
+const isLoadingConversationMessages = ref(false)
+const editingConversationMessageSeq = ref<number>()
+const mutatingConversationMessageSeq = ref<number>()
+const conversationMessageDraftRole = ref('')
+const conversationMessageDraftSpeakerName = ref('')
+const conversationMessageDraftContent = ref('')
+const conversationMessageDraftTimestamp = ref('')
+const episodeSpans = ref<ElectronPlastMemEpisodeSpan[]>([])
+const episodeSpansError = ref('')
+const isLoadingEpisodeSpans = ref(false)
 const recentMemories = ref<ElectronPlastMemEpisodicMemory[]>([])
 const recentMemoriesError = ref('')
 const isLoadingRecentMemories = ref(false)
+const editingRecentMemoryId = ref('')
+const mutatingRecentMemoryId = ref('')
+const recentMemoryDraftTitle = ref('')
+const recentMemoryDraftContent = ref('')
 const semanticMemories = ref<ElectronPlastMemSemanticMemory[]>([])
 const semanticMemoriesError = ref('')
 const isLoadingSemanticMemories = ref(false)
 const mutatingSemanticMemoryId = ref('')
+const editingSemanticMemoryId = ref('')
+const semanticMemoryDraftCategory = ref('')
+const semanticMemoryDraftFact = ref('')
 const includeInvalidSemanticMemories = ref(false)
 const manualImportMessageLimit = ref(20)
 const manualImportMessage = ref('')
@@ -149,6 +212,7 @@ const previewResult = ref<ElectronPlastMemRetrieveMemoryRawResult>()
 const previewError = ref('')
 const isPreviewingRecall = ref(false)
 const selectedSourceMemoryIds = ref<string[]>([])
+const activeHealthInspector = ref<HealthInspectorId>()
 const activeDetailPanel = ref<DetailPanelId>('config')
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 let activeSavePromise: Promise<boolean> | undefined
@@ -218,6 +282,7 @@ const hasRecallContextPreview = computed(() => recallContextPreview.value.length
 const advancedConfigSummary = computed(() => [
   tn('config.fields.conversation-id.label'),
   tn('config.fields.workspace-key.label'),
+  tn('config.fields.review-window-hours.label'),
   tn('config.fields.request-timeout-msec.label'),
 ].join(' / '))
 const normalizedManualImportMessageLimit = computed(() => Math.max(1, Number(manualImportMessageLimit.value) || 20))
@@ -257,7 +322,11 @@ const healthDatabaseBadgeClass = computed(() => healthStatusBadgeClass(health.va
 const healthChatModelBadgeClass = computed(() => healthStatusBadgeClass(health.value?.modelHealth?.chat.ok))
 const healthEmbeddingModelBadgeClass = computed(() => healthStatusBadgeClass(health.value?.modelHealth?.embedding.ok))
 const healthCounts = computed(() => health.value?.counts)
-const pendingReviewCount = computed(() => healthCounts.value?.pending_reviews ?? 0)
+const duePendingReviewCount = computed(() => healthCounts.value?.due_pending_reviews ?? 0)
+const deferredPendingReviewCount = computed(() => healthCounts.value?.deferred_pending_reviews ?? 0)
+const hasPendingReviewItems = computed(() => pendingReviewItems.value.length > 0)
+const duePendingReviewItems = computed(() => pendingReviewItems.value.filter(item => item.review_status === 'due'))
+const deferredPendingReviewItems = computed(() => pendingReviewItems.value.filter(item => item.review_status === 'deferred'))
 const modelHealthError = computed(() => {
   const modelHealth = health.value?.modelHealth
   if (!modelHealth)
@@ -340,11 +409,6 @@ const detailPanelOptions = computed<Array<{ icon: string, label: string, value: 
     icon: 'i-solar:toolbox-bold-duotone',
     label: tn('panels.tools'),
     value: 'tools',
-  },
-  {
-    icon: 'i-solar:document-add-bold-duotone',
-    label: tn('panels.semantic'),
-    value: 'semantic',
   },
   {
     icon: 'i-solar:brain-bold-duotone',
@@ -706,6 +770,406 @@ async function refreshHealth(includeModelHealth = false) {
   }
 }
 
+async function refreshConversationMessages() {
+  if (isLoadingConversationMessages.value)
+    return
+
+  isLoadingConversationMessages.value = true
+  conversationMessagesError.value = ''
+  try {
+    const result = await invokeConversationMessages({ limit: 200 })
+    if (result.error) {
+      conversationMessagesError.value = result.error
+      conversationMessages.value = []
+      return
+    }
+
+    conversationMessages.value = result.messages
+  }
+  catch (error) {
+    conversationMessagesError.value = errorMessageFrom(error) ?? 'Unknown error'
+    conversationMessages.value = []
+  }
+  finally {
+    isLoadingConversationMessages.value = false
+  }
+}
+
+async function refreshEpisodeSpans() {
+  if (isLoadingEpisodeSpans.value)
+    return
+
+  isLoadingEpisodeSpans.value = true
+  episodeSpansError.value = ''
+  try {
+    const result = await invokeEpisodeSpans({ limit: 200 })
+    if (result.error) {
+      episodeSpansError.value = result.error
+      episodeSpans.value = []
+      return
+    }
+
+    episodeSpans.value = result.spans
+  }
+  catch (error) {
+    episodeSpansError.value = errorMessageFrom(error) ?? 'Unknown error'
+    episodeSpans.value = []
+  }
+  finally {
+    isLoadingEpisodeSpans.value = false
+  }
+}
+
+async function refreshPendingReviewItems() {
+  if (isLoadingPendingReviewItems.value)
+    return
+
+  isLoadingPendingReviewItems.value = true
+  pendingReviewError.value = ''
+  try {
+    const result = await invokePendingReviewQueue({ limit: 20 })
+    if (result.error) {
+      pendingReviewError.value = result.error
+      pendingReviewItems.value = []
+      return
+    }
+
+    pendingReviewItems.value = result.items
+    if (editingPendingReviewItemId.value && !result.items.some(item => item.id === editingPendingReviewItemId.value))
+      resetPendingReviewEditor()
+  }
+  catch (error) {
+    pendingReviewError.value = errorMessageFrom(error) ?? 'Unknown error'
+    pendingReviewItems.value = []
+  }
+  finally {
+    isLoadingPendingReviewItems.value = false
+  }
+}
+
+async function openHealthCountInspector(key: HealthInspectorId) {
+  activeHealthInspector.value = activeHealthInspector.value === key ? undefined : key
+  if (activeHealthInspector.value !== key)
+    return
+
+  if (key === 'conversation-messages') {
+    await refreshConversationMessages()
+    return
+  }
+  if (key === 'episode-spans') {
+    await refreshEpisodeSpans()
+    return
+  }
+  if (key === 'episodic-memories') {
+    await refreshRecentMemories()
+    return
+  }
+  if (key === 'semantic-memories' || key === 'active-semantic-memories') {
+    await refreshSemanticMemories()
+    return
+  }
+  if (key === 'pending-reviews') {
+    await refreshPendingReviewItems()
+  }
+}
+
+function resetConversationMessageEditor() {
+  editingConversationMessageSeq.value = undefined
+  mutatingConversationMessageSeq.value = undefined
+  conversationMessageDraftRole.value = ''
+  conversationMessageDraftSpeakerName.value = ''
+  conversationMessageDraftContent.value = ''
+  conversationMessageDraftTimestamp.value = ''
+}
+
+function beginConversationMessageEdit(message: ElectronPlastMemConversationMessage) {
+  if (mutatingConversationMessageSeq.value != null)
+    return
+
+  editingConversationMessageSeq.value = message.seq
+  conversationMessageDraftRole.value = message.role
+  conversationMessageDraftSpeakerName.value = message.speaker_name ?? ''
+  conversationMessageDraftContent.value = message.content
+  conversationMessageDraftTimestamp.value = message.timestamp.slice(0, 16)
+  conversationMessagesError.value = ''
+}
+
+async function saveConversationMessageEdit(message: ElectronPlastMemConversationMessage) {
+  if (mutatingConversationMessageSeq.value != null)
+    return
+
+  const role = conversationMessageDraftRole.value.trim()
+  const content = conversationMessageDraftContent.value.trim()
+  const timestamp = conversationMessageDraftTimestamp.value.trim()
+  if (!role || !content || !timestamp) {
+    conversationMessagesError.value = tn('health.inspector.update-required')
+    return
+  }
+
+  mutatingConversationMessageSeq.value = message.seq
+  conversationMessagesError.value = ''
+  try {
+    const isoTimestamp = new Date(timestamp).toISOString()
+    const result = await invokeUpdateConversationMessage({
+      seq: message.seq,
+      role,
+      speakerName: conversationMessageDraftSpeakerName.value.trim(),
+      content,
+      timestamp: isoTimestamp,
+    })
+    if (result.error) {
+      conversationMessagesError.value = result.error
+      return
+    }
+    if (result.message) {
+      conversationMessages.value = conversationMessages.value.map(item =>
+        item.seq === result.message?.seq ? result.message : item,
+      )
+    }
+    resetConversationMessageEditor()
+  }
+  catch (error) {
+    conversationMessagesError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    mutatingConversationMessageSeq.value = undefined
+  }
+}
+
+function resetRecentMemoryEditor() {
+  editingRecentMemoryId.value = ''
+  mutatingRecentMemoryId.value = ''
+  recentMemoryDraftTitle.value = ''
+  recentMemoryDraftContent.value = ''
+}
+
+function beginRecentMemoryEdit(memory: ElectronPlastMemEpisodicMemory) {
+  if (mutatingRecentMemoryId.value)
+    return
+
+  editingRecentMemoryId.value = memory.id
+  recentMemoryDraftTitle.value = memory.title
+  recentMemoryDraftContent.value = memory.content
+  recentMemoriesError.value = ''
+}
+
+async function saveRecentMemoryEdit(memory: ElectronPlastMemEpisodicMemory) {
+  if (mutatingRecentMemoryId.value)
+    return
+
+  const title = recentMemoryDraftTitle.value.trim()
+  const content = recentMemoryDraftContent.value.trim()
+  if (!title || !content) {
+    recentMemoriesError.value = tn('health.inspector.update-required')
+    return
+  }
+
+  mutatingRecentMemoryId.value = memory.id
+  recentMemoriesError.value = ''
+  try {
+    const result = await invokeUpdateEpisodicMemory({
+      memoryId: memory.id,
+      title,
+      content,
+    })
+    if (result.error) {
+      recentMemoriesError.value = result.error
+      return
+    }
+    if (result.memory) {
+      recentMemories.value = recentMemories.value.map(item =>
+        item.id === result.memory?.id ? result.memory : item,
+      )
+    }
+    resetRecentMemoryEditor()
+  }
+  catch (error) {
+    recentMemoriesError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    mutatingRecentMemoryId.value = ''
+  }
+}
+
+function resetPendingReviewEditor() {
+  editingPendingReviewItemId.value = ''
+  pendingReviewDraftQuery.value = ''
+}
+
+function resetPendingReviewMemoryEditor() {
+  editingPendingReviewMemoryKey.value = ''
+  pendingReviewMemoryDraftTitle.value = ''
+  pendingReviewMemoryDraftContent.value = ''
+}
+
+function beginPendingReviewEdit(item: ElectronPlastMemPendingReviewQueueItem) {
+  if (mutatingPendingReviewItemId.value)
+    return
+
+  editingPendingReviewItemId.value = item.id
+  pendingReviewDraftQuery.value = item.query
+  pendingReviewError.value = ''
+}
+
+function pendingReviewMemoryEditorKey(itemId: string, memoryId: string) {
+  return `${itemId}:${memoryId}`
+}
+
+function beginPendingReviewMemoryEdit(item: ElectronPlastMemPendingReviewQueueItem, memory: ElectronPlastMemPendingReviewQueueMemory) {
+  if (mutatingPendingReviewItemId.value)
+    return
+
+  editingPendingReviewMemoryKey.value = pendingReviewMemoryEditorKey(item.id, memory.id)
+  pendingReviewMemoryDraftTitle.value = memory.title
+  pendingReviewMemoryDraftContent.value = memory.content
+  pendingReviewError.value = ''
+}
+
+async function savePendingReviewRewrite(item: ElectronPlastMemPendingReviewQueueItem) {
+  if (mutatingPendingReviewItemId.value)
+    return
+
+  const query = pendingReviewDraftQuery.value.trim()
+  if (!query) {
+    pendingReviewError.value = tn('review-queue.editor.query-required')
+    return
+  }
+
+  mutatingPendingReviewItemId.value = item.id
+  pendingReviewError.value = ''
+  try {
+    const result = await invokeRewritePendingReviewQueueItem({
+      itemId: item.id,
+      query,
+    })
+    if (result.error) {
+      pendingReviewError.value = result.error
+      return
+    }
+
+    if (result.item) {
+      pendingReviewItems.value = pendingReviewItems.value.map(current =>
+        current.id === result.item?.id ? result.item : current,
+      )
+    }
+    resetPendingReviewEditor()
+  }
+  catch (error) {
+    pendingReviewError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    mutatingPendingReviewItemId.value = ''
+  }
+}
+
+async function savePendingReviewMemoryEdit(item: ElectronPlastMemPendingReviewQueueItem, memory: ElectronPlastMemPendingReviewQueueMemory) {
+  if (mutatingPendingReviewItemId.value)
+    return
+
+  const title = pendingReviewMemoryDraftTitle.value.trim()
+  const content = pendingReviewMemoryDraftContent.value.trim()
+  if (!title) {
+    pendingReviewError.value = tn('review-queue.memory-editor.title-required')
+    return
+  }
+  if (!content) {
+    pendingReviewError.value = tn('review-queue.memory-editor.content-required')
+    return
+  }
+
+  mutatingPendingReviewItemId.value = item.id
+  pendingReviewError.value = ''
+  try {
+    const result = await invokeUpdatePendingReviewQueueMemory({
+      itemId: item.id,
+      memoryId: memory.id,
+      title,
+      content,
+    })
+    if (result.error) {
+      pendingReviewError.value = result.error
+      return
+    }
+
+    if (result.item) {
+      pendingReviewItems.value = pendingReviewItems.value.map(current =>
+        current.id === result.item?.id ? result.item : current,
+      )
+    }
+    resetPendingReviewMemoryEditor()
+  }
+  catch (error) {
+    pendingReviewError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    mutatingPendingReviewItemId.value = ''
+  }
+}
+
+async function approvePendingReviewItem(item: ElectronPlastMemPendingReviewQueueItem) {
+  if (mutatingPendingReviewItemId.value)
+    return
+
+  mutatingPendingReviewItemId.value = item.id
+  pendingReviewError.value = ''
+  try {
+    const result = await invokeApprovePendingReviewQueueItem({
+      itemId: item.id,
+    })
+    if (result.error) {
+      pendingReviewError.value = result.error
+      return
+    }
+    if (!result.consumed) {
+      pendingReviewError.value = tn('review-queue.actions.approve-failed')
+      return
+    }
+
+    if (editingPendingReviewItemId.value === item.id)
+      resetPendingReviewEditor()
+    pendingReviewItems.value = pendingReviewItems.value.filter(current => current.id !== item.id)
+    await refreshHealth()
+  }
+  catch (error) {
+    pendingReviewError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    mutatingPendingReviewItemId.value = ''
+  }
+}
+
+async function dismissPendingReviewItem(item: ElectronPlastMemPendingReviewQueueItem) {
+  if (mutatingPendingReviewItemId.value)
+    return
+
+  mutatingPendingReviewItemId.value = item.id
+  pendingReviewError.value = ''
+  try {
+    const result = await invokeDismissPendingReviewQueueItem({
+      itemId: item.id,
+    })
+    if (result.error) {
+      pendingReviewError.value = result.error
+      return
+    }
+    if (!result.consumed) {
+      pendingReviewError.value = tn('review-queue.actions.dismiss-failed')
+      return
+    }
+
+    if (editingPendingReviewItemId.value === item.id)
+      resetPendingReviewEditor()
+    pendingReviewItems.value = pendingReviewItems.value.filter(current => current.id !== item.id)
+    await refreshHealth()
+  }
+  catch (error) {
+    pendingReviewError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    mutatingPendingReviewItemId.value = ''
+  }
+}
+
 async function startSidecar() {
   if (isStartingSidecar.value)
     return
@@ -825,6 +1289,8 @@ async function refreshSemanticMemories() {
     }
     else {
       semanticMemories.value = result.memories
+      if (editingSemanticMemoryId.value && !result.memories.some(memory => memory.id === editingSemanticMemoryId.value))
+        resetSemanticMemoryEditor()
     }
   }
   catch (error) {
@@ -905,9 +1371,94 @@ async function previewMemoryRecall() {
 
 async function showSemanticMemorySources(memory: ElectronPlastMemSemanticMemory) {
   selectedSourceMemoryIds.value = memory.source_episodic_ids
-  activeDetailPanel.value = 'semantic'
+  activeDetailPanel.value = 'health'
+  activeHealthInspector.value = memory.invalid_at ? 'semantic-memories' : 'active-semantic-memories'
   if (recentMemories.value.length < 100)
     await refreshRecentMemories()
+}
+
+function resetSemanticMemoryEditor() {
+  editingSemanticMemoryId.value = ''
+  semanticMemoryDraftCategory.value = ''
+  semanticMemoryDraftFact.value = ''
+}
+
+function beginSemanticMemoryEdit(memory: ElectronPlastMemSemanticMemory) {
+  if (mutatingSemanticMemoryId.value)
+    return
+
+  editingSemanticMemoryId.value = memory.id
+  semanticMemoryDraftCategory.value = memory.category
+  semanticMemoryDraftFact.value = memory.fact
+  semanticMemoriesError.value = ''
+}
+
+async function saveSemanticMemoryEdit(memory: ElectronPlastMemSemanticMemory) {
+  if (mutatingSemanticMemoryId.value)
+    return
+
+  const fact = semanticMemoryDraftFact.value.trim()
+  const category = semanticMemoryDraftCategory.value.trim()
+  if (!fact) {
+    semanticMemoriesError.value = tn('semantic-memories.editor.fact-required')
+    return
+  }
+
+  mutatingSemanticMemoryId.value = memory.id
+  semanticMemoriesError.value = ''
+  try {
+    const result = await invokeUpdateSemanticMemory({
+      category,
+      fact,
+      memoryId: memory.id,
+    })
+    if (result.error) {
+      semanticMemoriesError.value = result.error
+      return
+    }
+
+    resetSemanticMemoryEditor()
+    await refreshSemanticMemories()
+    await refreshHealth()
+  }
+  catch (error) {
+    semanticMemoriesError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    mutatingSemanticMemoryId.value = ''
+  }
+}
+
+async function deleteSemanticMemory(memory: ElectronPlastMemSemanticMemory) {
+  if (mutatingSemanticMemoryId.value)
+    return
+
+  mutatingSemanticMemoryId.value = memory.id
+  semanticMemoriesError.value = ''
+  try {
+    const result = await invokeDeleteSemanticMemory({
+      memoryId: memory.id,
+    })
+    if (result.error) {
+      semanticMemoriesError.value = result.error
+      return
+    }
+    if (!result.deleted) {
+      semanticMemoriesError.value = tn('semantic-memories.editor.delete-failed')
+      return
+    }
+
+    if (editingSemanticMemoryId.value === memory.id)
+      resetSemanticMemoryEditor()
+    semanticMemories.value = semanticMemories.value.filter(item => item.id !== memory.id)
+    await refreshHealth()
+  }
+  catch (error) {
+    semanticMemoriesError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    mutatingSemanticMemoryId.value = ''
+  }
 }
 
 async function setSemanticMemoryInvalid(memory: ElectronPlastMemSemanticMemory, invalid: boolean) {
@@ -978,18 +1529,45 @@ function semanticMemoryStatusBadgeClass(memory: ElectronPlastMemSemanticMemory) 
 }
 
 watch(includeInvalidSemanticMemories, () => {
-  void refreshSemanticMemories()
+  if (activeDetailPanel.value === 'health' && activeHealthInspector.value === 'semantic-memories')
+    void refreshSemanticMemories()
 })
 
 watch(activeDetailPanel, (panel) => {
-  if (panel === 'health')
-    void refreshHealth()
-  else if (panel === 'recent')
+  if (panel !== 'health') {
+    selectedSourceMemoryIds.value = []
+    resetSemanticMemoryEditor()
+    resetPendingReviewEditor()
+    resetPendingReviewMemoryEditor()
+  }
+
+  if (panel === 'health') {
+    void Promise.all([
+      refreshHealth(),
+      refreshPendingReviewItems(),
+    ])
+  }
+  else if (panel === 'recent') {
     void refreshRecentMemories()
-  else if (panel === 'semantic')
-    void refreshSemanticMemories()
-  else if (panel === 'runtime')
+  }
+  else if (panel === 'runtime') {
     void refreshStatus()
+  }
+})
+
+watch(activeHealthInspector, (inspector) => {
+  if (inspector !== 'conversation-messages')
+    resetConversationMessageEditor()
+  if (inspector !== 'episodic-memories')
+    resetRecentMemoryEditor()
+  if (inspector !== 'semantic-memories' && inspector !== 'active-semantic-memories') {
+    selectedSourceMemoryIds.value = []
+    resetSemanticMemoryEditor()
+    return
+  }
+
+  if (inspector === 'active-semantic-memories' && includeInvalidSemanticMemories.value)
+    includeInvalidSemanticMemories.value = false
 })
 
 const debouncedAutoSaveConfig = useDebounceFn(() => {
@@ -1017,6 +1595,7 @@ onMounted(() => {
   void refreshStatus()
   void refreshSidecarStatus()
   void refreshHealth()
+  void refreshPendingReviewItems()
   void refreshSemanticMemories()
   refreshTimer = setInterval(() => {
     void refreshStatus()
@@ -1470,6 +2049,12 @@ onBeforeUnmount(() => {
                   :description="tn('config.fields.max-context-characters.description')"
                   placeholder="6000"
                 />
+                <FieldSelect
+                  v-model="configDraft.reviewWindowHours"
+                  :label="tn('config.fields.review-window-hours.label')"
+                  :description="tn('config.fields.review-window-hours.description')"
+                  :options="reviewWindowOptions"
+                />
               </div>
             </section>
 
@@ -1891,12 +2476,794 @@ onBeforeUnmount(() => {
               { key: 'pending-reviews', value: healthCounts?.pending_reviews },
             ]"
             :key="item.key"
-            :class="['min-w-0', 'flex', 'flex-col', 'gap-1', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']"
+            :class="[
+              'min-w-0',
+              'flex',
+              'cursor-pointer',
+              'flex-col',
+              'gap-1',
+              'rounded-md',
+              'bg-neutral-100/70',
+              'p-3',
+              'transition-colors',
+              'hover:bg-neutral-200/70',
+              'dark:bg-neutral-950/30',
+              'dark:hover:bg-neutral-900/70',
+              activeHealthInspector === item.key ? 'ring-1 ring-primary-400/60 dark:ring-primary-300/50' : '',
+            ]"
+            role="button"
+            tabindex="0"
+            @click="openHealthCountInspector(item.key as HealthInspectorId)"
           >
             <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">{{ tn(`health.counts.${item.key}`) }}</span>
             <span :class="['font-mono', 'text-lg', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ formatCount(item.value) }}</span>
           </div>
         </div>
+
+        <section
+          v-if="activeHealthInspector"
+          :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']"
+        >
+          <div :class="['flex', 'items-center', 'justify-between', 'gap-3']">
+            <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+              {{ tn(`health.counts.${activeHealthInspector}`) }}
+            </h4>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="i-solar:close-circle-bold-duotone"
+              :label="tn('health.inspector.close')"
+              @click="activeHealthInspector = undefined"
+            />
+          </div>
+
+          <Callout
+            v-if="activeHealthInspector === 'conversation-messages' && conversationMessagesError"
+            theme="orange"
+            :label="tn('health.inspector.error')"
+          >
+            {{ conversationMessagesError }}
+          </Callout>
+          <div
+            v-else-if="activeHealthInspector === 'conversation-messages' && isLoadingConversationMessages"
+            :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']"
+          >
+            {{ tn('health.inspector.loading') }}
+          </div>
+          <div
+            v-else-if="activeHealthInspector === 'conversation-messages' && conversationMessages.length === 0"
+            :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']"
+          >
+            {{ tn('health.inspector.empty') }}
+          </div>
+          <div
+            v-else-if="activeHealthInspector === 'conversation-messages'"
+            :class="['flex', 'max-h-80', 'flex-col', 'gap-2', 'overflow-y-auto']"
+          >
+            <div
+              v-for="message in conversationMessages"
+              :key="message.seq"
+              :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']"
+            >
+              <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                <span :class="['text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                  {{ message.speaker_name || message.role }}
+                </span>
+                <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                  #{{ message.seq }}
+                </span>
+              </div>
+              <div v-if="editingConversationMessageSeq === message.seq" :class="['mt-2', 'flex', 'flex-col', 'gap-3']">
+                <FieldInput
+                  v-model="conversationMessageDraftRole"
+                  :label="tn('health.inspector.message-role')"
+                  :disabled="mutatingConversationMessageSeq === message.seq"
+                />
+                <FieldInput
+                  v-model="conversationMessageDraftSpeakerName"
+                  :label="tn('health.inspector.message-speaker')"
+                  :disabled="mutatingConversationMessageSeq === message.seq"
+                />
+                <FieldInput
+                  v-model="conversationMessageDraftTimestamp"
+                  :label="tn('health.inspector.message-time')"
+                  type="datetime-local"
+                  :disabled="mutatingConversationMessageSeq === message.seq"
+                />
+                <Textarea
+                  v-model="conversationMessageDraftContent"
+                  :disabled="mutatingConversationMessageSeq === message.seq"
+                  :class="['min-h-24', 'text-sm']"
+                />
+              </div>
+              <p v-else :class="['mt-1', 'whitespace-pre-wrap', 'break-words', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
+                {{ message.content }}
+              </p>
+              <div :class="['mt-2', 'flex', 'flex-wrap', 'justify-end', 'gap-2']">
+                <template v-if="editingConversationMessageSeq === message.seq">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    :disabled="mutatingConversationMessageSeq === message.seq"
+                    @click="resetConversationMessageEditor"
+                  >
+                    {{ tn('semantic-memories.actions.cancel') }}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    :loading="mutatingConversationMessageSeq === message.seq"
+                    :disabled="mutatingConversationMessageSeq === message.seq"
+                    @click="saveConversationMessageEdit(message)"
+                  >
+                    {{ tn('semantic-memories.actions.save') }}
+                  </Button>
+                </template>
+                <Button
+                  v-else
+                  variant="secondary"
+                  size="sm"
+                  icon="i-solar:pen-2-bold-duotone"
+                  :label="tn('semantic-memories.actions.edit')"
+                  @click="beginConversationMessageEdit(message)"
+                />
+              </div>
+            </div>
+          </div>
+
+          <Callout
+            v-else-if="activeHealthInspector === 'episode-spans' && episodeSpansError"
+            theme="orange"
+            :label="tn('health.inspector.error')"
+          >
+            {{ episodeSpansError }}
+          </Callout>
+          <div
+            v-else-if="activeHealthInspector === 'episode-spans' && isLoadingEpisodeSpans"
+            :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']"
+          >
+            {{ tn('health.inspector.loading') }}
+          </div>
+          <div
+            v-else-if="activeHealthInspector === 'episode-spans' && episodeSpans.length === 0"
+            :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']"
+          >
+            {{ tn('health.inspector.empty') }}
+          </div>
+          <div
+            v-else-if="activeHealthInspector === 'episode-spans'"
+            :class="['flex', 'max-h-80', 'flex-col', 'gap-2', 'overflow-y-auto']"
+          >
+            <div
+              v-for="span in episodeSpans"
+              :key="`${span.start_seq}-${span.end_seq}`"
+              :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']"
+            >
+              <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                <span :class="['text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                  {{ classificationLabel(span.classification) }}
+                </span>
+                <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                  {{ span.start_seq }} - {{ span.end_seq }}
+                </span>
+              </div>
+              <p :class="['mt-1', 'text-[11px]', 'text-neutral-500', 'dark:text-neutral-400']">
+                {{ formatMemoryTime(span.created_at) }}
+              </p>
+            </div>
+          </div>
+
+          <div
+            v-else-if="activeHealthInspector === 'episodic-memories'"
+            :class="['flex', 'flex-col', 'gap-2', 'max-h-80', 'overflow-y-auto']"
+          >
+            <div
+              v-for="memory in recentMemories"
+              :key="memory.id"
+              :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']"
+            >
+              <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                <span :class="['text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                  {{ memory.title || tn('recent-memories.untitled') }}
+                </span>
+                <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                  {{ memory.id.slice(0, 8) }}
+                </span>
+              </div>
+              <div v-if="editingRecentMemoryId === memory.id" :class="['mt-2', 'flex', 'flex-col', 'gap-3']">
+                <FieldInput
+                  v-model="recentMemoryDraftTitle"
+                  :label="tn('health.inspector.memory-title')"
+                  :disabled="mutatingRecentMemoryId === memory.id"
+                />
+                <Textarea
+                  v-model="recentMemoryDraftContent"
+                  :disabled="mutatingRecentMemoryId === memory.id"
+                  :class="['min-h-24', 'text-sm']"
+                />
+              </div>
+              <p v-else :class="['mt-1', 'line-clamp-3', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
+                {{ memory.content }}
+              </p>
+              <div :class="['mt-2', 'flex', 'flex-wrap', 'justify-end', 'gap-2']">
+                <template v-if="editingRecentMemoryId === memory.id">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    :disabled="mutatingRecentMemoryId === memory.id"
+                    @click="resetRecentMemoryEditor"
+                  >
+                    {{ tn('semantic-memories.actions.cancel') }}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    :loading="mutatingRecentMemoryId === memory.id"
+                    :disabled="mutatingRecentMemoryId === memory.id"
+                    @click="saveRecentMemoryEdit(memory)"
+                  >
+                    {{ tn('semantic-memories.actions.save') }}
+                  </Button>
+                </template>
+                <Button
+                  v-else
+                  variant="secondary"
+                  size="sm"
+                  icon="i-solar:pen-2-bold-duotone"
+                  :label="tn('semantic-memories.actions.edit')"
+                  @click="beginRecentMemoryEdit(memory)"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-else-if="activeHealthInspector === 'semantic-memories' || activeHealthInspector === 'active-semantic-memories'"
+            :class="['flex', 'flex-col', 'gap-2', 'max-h-80', 'overflow-y-auto']"
+          >
+            <div
+              v-for="memory in semanticMemories"
+              :key="memory.id"
+              :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']"
+            >
+              <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                <span :class="['text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
+                  {{ memory.category || tn('semantic-memories.uncategorized') }}
+                </span>
+                <div :class="['flex', 'items-center', 'gap-1.5']">
+                  <span :class="['rounded-full', 'px-1.5', 'py-0.5', 'text-[10px]', 'font-medium', semanticMemoryStatusBadgeClass(memory)]">
+                    {{ semanticMemoryStatusLabel(memory) }}
+                  </span>
+                  <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                    {{ memory.id.slice(0, 8) }}
+                  </span>
+                </div>
+              </div>
+              <div v-if="editingSemanticMemoryId === memory.id" :class="['mt-2', 'flex', 'flex-col', 'gap-3']">
+                <FieldInput
+                  v-model="semanticMemoryDraftCategory"
+                  :label="tn('semantic-memories.editor.category')"
+                  :placeholder="tn('semantic-memories.editor.category-placeholder')"
+                  :disabled="mutatingSemanticMemoryId === memory.id"
+                />
+                <div :class="['flex', 'flex-col', 'gap-1.5']">
+                  <span :class="['text-xs', 'font-medium', 'text-neutral-600', 'dark:text-neutral-300']">
+                    {{ tn('semantic-memories.editor.fact') }}
+                  </span>
+                  <Textarea
+                    v-model="semanticMemoryDraftFact"
+                    :disabled="mutatingSemanticMemoryId === memory.id"
+                    :placeholder="tn('semantic-memories.editor.fact-placeholder')"
+                    :class="['min-h-28', 'text-sm']"
+                  />
+                </div>
+              </div>
+              <p v-else :class="['mt-1', 'line-clamp-3', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
+                {{ memory.fact }}
+              </p>
+              <div :class="['mt-1', 'flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                <span>{{ tn('semantic-memories.created', { time: formatMemoryTime(memory.created_at) }) }}</span>
+                <span>{{ tn('semantic-memories.valid-at', { time: formatMemoryTime(memory.valid_at) }) }}</span>
+                <span v-if="memory.invalid_at">{{ tn('semantic-memories.invalid-at', { time: formatMemoryTime(memory.invalid_at) }) }}</span>
+                <span>{{ tn('semantic-memories.sources', { count: memory.source_episodic_ids.length }) }}</span>
+              </div>
+              <div :class="['mt-2', 'flex', 'flex-wrap', 'justify-end', 'gap-2']">
+                <template v-if="editingSemanticMemoryId === memory.id">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    :disabled="Boolean(mutatingSemanticMemoryId)"
+                    @click="resetSemanticMemoryEditor"
+                  >
+                    {{ tn('semantic-memories.actions.cancel') }}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    :loading="mutatingSemanticMemoryId === memory.id"
+                    :disabled="Boolean(mutatingSemanticMemoryId)"
+                    @click="saveSemanticMemoryEdit(memory)"
+                  >
+                    {{ tn('semantic-memories.actions.save') }}
+                  </Button>
+                </template>
+                <template v-else>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon="i-solar:link-round-angle-bold-duotone"
+                    :disabled="memory.source_episodic_ids.length === 0 || Boolean(mutatingSemanticMemoryId)"
+                    :label="tn('semantic-memories.actions.sources')"
+                    @click="showSemanticMemorySources(memory)"
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon="i-solar:pen-2-bold-duotone"
+                    :disabled="Boolean(mutatingSemanticMemoryId)"
+                    :label="tn('semantic-memories.actions.edit')"
+                    @click="beginSemanticMemoryEdit(memory)"
+                  />
+                  <Button
+                    :variant="memory.invalid_at ? 'secondary' : 'caution'"
+                    size="sm"
+                    :loading="mutatingSemanticMemoryId === memory.id"
+                    :disabled="Boolean(mutatingSemanticMemoryId)"
+                    :icon="memory.invalid_at ? 'i-solar:restart-bold-duotone' : 'i-solar:trash-bin-minimalistic-bold-duotone'"
+                    :label="memory.invalid_at ? tn('semantic-memories.actions.restore') : tn('semantic-memories.actions.invalidate')"
+                    @click="setSemanticMemoryInvalid(memory, !memory.invalid_at)"
+                  />
+                  <DoubleCheckButton
+                    variant="danger"
+                    cancel-variant="secondary"
+                    size="sm"
+                    :disabled="Boolean(mutatingSemanticMemoryId)"
+                    :loading="mutatingSemanticMemoryId === memory.id"
+                    @confirm="deleteSemanticMemory(memory)"
+                  >
+                    {{ tn('semantic-memories.actions.delete') }}
+                    <template #confirm>
+                      {{ tn('semantic-memories.actions.confirm-delete') }}
+                    </template>
+                    <template #cancel>
+                      {{ tn('semantic-memories.actions.cancel') }}
+                    </template>
+                  </DoubleCheckButton>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <section
+            v-if="selectedSourceMemoryIds.length > 0 && (activeHealthInspector === 'semantic-memories' || activeHealthInspector === 'active-semantic-memories')"
+            :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-white/50', 'p-3', 'dark:bg-neutral-900/40']"
+          >
+            <div :class="['flex', 'items-center', 'justify-between', 'gap-3']">
+              <div :class="['flex', 'items-center', 'gap-2']">
+                <div :class="['i-solar:link-round-angle-bold-duotone', 'text-lg', 'text-neutral-500']" />
+                <span :class="['text-sm', 'font-medium', 'text-neutral-700', 'dark:text-neutral-200']">
+                  {{ tn('semantic-memories.sources-view.title') }}
+                </span>
+              </div>
+              <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                {{ formatCount(selectedSourceMemoryIds.length) }}
+              </span>
+            </div>
+            <div v-if="selectedSourceMemories.length === 0" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
+              {{ tn('semantic-memories.sources-view.empty') }}
+            </div>
+            <div v-else :class="['flex', 'flex-col', 'gap-2', 'max-h-64', 'overflow-y-auto']">
+              <div
+                v-for="memory in selectedSourceMemories"
+                :key="memory.id"
+                :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']"
+              >
+                <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                  <span :class="['text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ memory.title || tn('recent-memories.untitled') }}</span>
+                  <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">{{ memory.id.slice(0, 8) }}</span>
+                </div>
+                <p :class="['mt-1', 'whitespace-pre-wrap', 'break-words', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
+                  {{ memory.content }}
+                </p>
+              </div>
+            </div>
+            <div v-if="missingSourceMemoryIds.length > 0" :class="['text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+              {{ tn('semantic-memories.sources-view.missing', { count: missingSourceMemoryIds.length }) }}
+            </div>
+          </section>
+
+          <div
+            v-else-if="activeHealthInspector === 'pending-reviews'"
+            :class="['flex', 'flex-col', 'gap-3']"
+          >
+            <section :class="['flex', 'flex-col', 'gap-2']">
+              <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                <span :class="['text-xs', 'font-semibold', 'text-amber-700', 'dark:text-amber-300']">
+                  {{ tn('health.counts.due-pending-reviews') }}
+                </span>
+                <span :class="['rounded-full', 'bg-amber-500/15', 'px-2', 'py-0.5', 'text-[10px]', 'font-medium', 'text-amber-700', 'dark:text-amber-300']">
+                  {{ formatCount(duePendingReviewCount) }}
+                </span>
+              </div>
+              <div v-if="duePendingReviewItems.length === 0" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
+                {{ tn('review-queue.empty-due') }}
+              </div>
+              <div
+                v-else
+                :class="['flex', 'flex-col', 'gap-3']"
+              >
+                <div
+                  v-for="item in duePendingReviewItems"
+                  :key="item.id"
+                  :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'border', 'border-amber-300/40', 'bg-white/70', 'p-3', 'dark:border-amber-400/25', 'dark:bg-neutral-900/70']"
+                >
+                  <div :class="['flex', 'items-start', 'justify-between', 'gap-3']">
+                    <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                      <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
+                        {{ tn('review-queue.item.query-label') }}
+                      </span>
+                      <div v-if="editingPendingReviewItemId === item.id" :class="['flex', 'flex-col', 'gap-2']">
+                        <Textarea
+                          v-model="pendingReviewDraftQuery"
+                          :disabled="mutatingPendingReviewItemId === item.id"
+                          :placeholder="tn('review-queue.editor.query-placeholder')"
+                          :class="['min-h-24', 'text-sm']"
+                        />
+                      </div>
+                      <p v-else :class="['whitespace-pre-wrap', 'break-words', 'text-sm', 'text-neutral-700', 'leading-5', 'dark:text-neutral-200']">
+                        {{ item.query }}
+                      </p>
+                    </div>
+                    <span :class="['shrink-0', 'font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                      {{ item.id.slice(0, 8) }}
+                    </span>
+                  </div>
+
+                  <div :class="['flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                    <span>{{ tn('review-queue.item.created', { time: formatMemoryTime(item.created_at) }) }}</span>
+                    <span>{{ tn('review-queue.item.memories', { count: item.memories.length }) }}</span>
+                    <span>{{ tn('review-queue.item.due-count', { count: item.due_memory_count }) }}</span>
+                  </div>
+
+                  <Collapsible :default="false">
+                    <template #trigger="slotProps">
+                      <button
+                        :class="['w-full', 'flex', 'items-center', 'justify-between', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'text-left', 'dark:bg-neutral-950/40']"
+                        @click="slotProps.setVisible(!slotProps.visible)"
+                      >
+                        <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
+                          <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ tn('review-queue.item.linked-title') }}
+                          </span>
+                          <span :class="['text-xs', 'text-neutral-600', 'dark:text-neutral-300']">
+                            {{ tn('review-queue.item.memories', { count: item.memories.length }) }}
+                          </span>
+                        </div>
+                        <div :class="['flex', 'items-center', 'gap-2']">
+                          <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ formatCount(item.memories.length) }}
+                          </span>
+                          <div
+                            :class="[
+                              'i-solar:alt-arrow-down-linear',
+                              'text-base',
+                              'text-neutral-400',
+                              'transition-transform',
+                              'duration-250',
+                              'dark:text-neutral-500',
+                              slotProps.visible ? 'rotate-180' : 'rotate-0',
+                            ]"
+                          />
+                        </div>
+                      </button>
+                    </template>
+
+                    <div :class="['mt-2', 'grid', 'grid-cols-1', 'gap-2', 'xl:grid-cols-2']">
+                      <div
+                        v-for="memory in item.memories"
+                        :key="memory.id"
+                        :class="['min-w-0', 'flex', 'flex-col', 'gap-1.5', 'rounded-md', 'bg-neutral-100/70', 'p-2.5', 'dark:bg-neutral-950/40']"
+                      >
+                        <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                          <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ memory.id.slice(0, 8) }}
+                          </span>
+                          <span :class="['text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ tn('review-queue.item.memory-reviewed', { time: formatMemoryTime(memory.last_reviewed_at) }) }}
+                          </span>
+                        </div>
+                        <FieldInput
+                          v-if="editingPendingReviewMemoryKey === pendingReviewMemoryEditorKey(item.id, memory.id)"
+                          v-model="pendingReviewMemoryDraftTitle"
+                          :disabled="mutatingPendingReviewItemId === item.id"
+                          :placeholder="tn('review-queue.memory-editor.title-placeholder')"
+                        />
+                        <Textarea
+                          v-if="editingPendingReviewMemoryKey === pendingReviewMemoryEditorKey(item.id, memory.id)"
+                          v-model="pendingReviewMemoryDraftContent"
+                          :disabled="mutatingPendingReviewItemId === item.id"
+                          :placeholder="tn('review-queue.memory-editor.content-placeholder')"
+                          :class="['min-h-24', 'text-sm']"
+                        />
+                        <p v-else :class="['whitespace-pre-wrap', 'break-words', 'text-[11px]', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
+                          {{ memory.content }}
+                        </p>
+                        <div :class="['flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                          <span>{{ tn('review-queue.item.memory-created', { time: formatMemoryTime(memory.created_at) }) }}</span>
+                        </div>
+                        <div :class="['flex', 'flex-wrap', 'justify-end', 'gap-2']">
+                          <template v-if="editingPendingReviewMemoryKey === pendingReviewMemoryEditorKey(item.id, memory.id)">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              :disabled="Boolean(mutatingPendingReviewItemId)"
+                              @click="resetPendingReviewMemoryEditor"
+                            >
+                              {{ tn('review-queue.actions.cancel') }}
+                            </Button>
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              :loading="mutatingPendingReviewItemId === item.id"
+                              :disabled="Boolean(mutatingPendingReviewItemId)"
+                              @click="savePendingReviewMemoryEdit(item, memory)"
+                            >
+                              {{ tn('review-queue.actions.save') }}
+                            </Button>
+                          </template>
+                          <Button
+                            v-else
+                            variant="secondary"
+                            size="sm"
+                            icon="i-solar:pen-2-bold-duotone"
+                            :disabled="Boolean(mutatingPendingReviewItemId)"
+                            :label="tn('review-queue.actions.edit-memory')"
+                            @click="beginPendingReviewMemoryEdit(item, memory)"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </Collapsible>
+
+                  <div :class="['flex', 'flex-wrap', 'justify-end', 'gap-2']">
+                    <template v-if="editingPendingReviewItemId === item.id">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        :disabled="Boolean(mutatingPendingReviewItemId)"
+                        @click="resetPendingReviewEditor"
+                      >
+                        {{ tn('review-queue.actions.cancel') }}
+                      </Button>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        :loading="mutatingPendingReviewItemId === item.id"
+                        :disabled="Boolean(mutatingPendingReviewItemId)"
+                        @click="savePendingReviewRewrite(item)"
+                      >
+                        {{ tn('review-queue.actions.save') }}
+                      </Button>
+                    </template>
+                    <template v-else>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon="i-solar:pen-2-bold-duotone"
+                        :disabled="Boolean(mutatingPendingReviewItemId)"
+                        :label="tn('review-queue.actions.rewrite')"
+                        @click="beginPendingReviewEdit(item)"
+                      />
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        :loading="mutatingPendingReviewItemId === item.id"
+                        :disabled="Boolean(mutatingPendingReviewItemId)"
+                        :label="tn('review-queue.actions.approve')"
+                        @click="approvePendingReviewItem(item)"
+                      />
+                      <DoubleCheckButton
+                        variant="secondary"
+                        cancel-variant="secondary"
+                        size="sm"
+                        :disabled="Boolean(mutatingPendingReviewItemId)"
+                        :loading="mutatingPendingReviewItemId === item.id"
+                        @confirm="dismissPendingReviewItem(item)"
+                      >
+                        {{ tn('review-queue.actions.dismiss') }}
+                        <template #confirm>
+                          {{ tn('review-queue.actions.confirm-dismiss') }}
+                        </template>
+                        <template #cancel>
+                          {{ tn('review-queue.actions.cancel') }}
+                        </template>
+                      </DoubleCheckButton>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section :class="['flex', 'flex-col', 'gap-2']">
+              <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                <span :class="['text-xs', 'font-semibold', 'text-sky-700', 'dark:text-sky-300']">
+                  {{ tn('health.counts.deferred-pending-reviews') }}
+                </span>
+                <span :class="['rounded-full', 'bg-sky-500/15', 'px-2', 'py-0.5', 'text-[10px]', 'font-medium', 'text-sky-700', 'dark:text-sky-300']">
+                  {{ formatCount(deferredPendingReviewCount) }}
+                </span>
+              </div>
+              <div v-if="deferredPendingReviewItems.length > 0" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
+                <span :class="['font-medium']">{{ tn('review-queue.deferred-title') }}</span>
+                {{ ` ` }}{{ tn('review-queue.deferred-description') }}
+              </div>
+              <div v-else :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
+                {{ tn('review-queue.empty-deferred') }}
+              </div>
+              <div
+                v-if="deferredPendingReviewItems.length > 0"
+                :class="['flex', 'flex-col', 'gap-3']"
+              >
+                <div
+                  v-for="item in deferredPendingReviewItems"
+                  :key="item.id"
+                  :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'border', 'border-sky-300/40', 'bg-white/70', 'p-3', 'dark:border-sky-400/25', 'dark:bg-neutral-900/70']"
+                >
+                  <div :class="['flex', 'items-start', 'justify-between', 'gap-3']">
+                    <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                      <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
+                        {{ tn('review-queue.item.query-label') }}
+                      </span>
+                      <p :class="['whitespace-pre-wrap', 'break-words', 'text-sm', 'text-neutral-700', 'leading-5', 'dark:text-neutral-200']">
+                        {{ item.query }}
+                      </p>
+                    </div>
+                    <span :class="['shrink-0', 'font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                      {{ item.id.slice(0, 8) }}
+                    </span>
+                  </div>
+
+                  <div :class="['flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                    <span>{{ tn('review-queue.item.created', { time: formatMemoryTime(item.created_at) }) }}</span>
+                    <span>{{ tn('review-queue.item.memories', { count: item.memories.length }) }}</span>
+                    <span>{{ tn('review-queue.item.deferred-count', { count: item.deferred_memory_count }) }}</span>
+                  </div>
+
+                  <Collapsible :default="false">
+                    <template #trigger="slotProps">
+                      <button
+                        :class="['w-full', 'flex', 'items-center', 'justify-between', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'text-left', 'dark:bg-neutral-950/40']"
+                        @click="slotProps.setVisible(!slotProps.visible)"
+                      >
+                        <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
+                          <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ tn('review-queue.item.linked-title') }}
+                          </span>
+                          <span :class="['text-xs', 'text-neutral-600', 'dark:text-neutral-300']">
+                            {{ tn('review-queue.item.memories', { count: item.memories.length }) }}
+                          </span>
+                        </div>
+                        <div :class="['flex', 'items-center', 'gap-2']">
+                          <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ formatCount(item.memories.length) }}
+                          </span>
+                          <div
+                            :class="[
+                              'i-solar:alt-arrow-down-linear',
+                              'text-base',
+                              'text-neutral-400',
+                              'transition-transform',
+                              'duration-250',
+                              'dark:text-neutral-500',
+                              slotProps.visible ? 'rotate-180' : 'rotate-0',
+                            ]"
+                          />
+                        </div>
+                      </button>
+                    </template>
+
+                    <div :class="['mt-2', 'grid', 'grid-cols-1', 'gap-2', 'xl:grid-cols-2']">
+                      <div
+                        v-for="memory in item.memories"
+                        :key="memory.id"
+                        :class="['min-w-0', 'flex', 'flex-col', 'gap-1.5', 'rounded-md', 'bg-neutral-100/70', 'p-2.5', 'dark:bg-neutral-950/40']"
+                      >
+                        <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                          <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ memory.id.slice(0, 8) }}
+                          </span>
+                          <span :class="['text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ tn('review-queue.item.memory-reviewed', { time: formatMemoryTime(memory.last_reviewed_at) }) }}
+                          </span>
+                        </div>
+                        <FieldInput
+                          v-if="editingPendingReviewMemoryKey === pendingReviewMemoryEditorKey(item.id, memory.id)"
+                          v-model="pendingReviewMemoryDraftTitle"
+                          :disabled="mutatingPendingReviewItemId === item.id"
+                          :placeholder="tn('review-queue.memory-editor.title-placeholder')"
+                        />
+                        <Textarea
+                          v-if="editingPendingReviewMemoryKey === pendingReviewMemoryEditorKey(item.id, memory.id)"
+                          v-model="pendingReviewMemoryDraftContent"
+                          :disabled="mutatingPendingReviewItemId === item.id"
+                          :placeholder="tn('review-queue.memory-editor.content-placeholder')"
+                          :class="['min-h-24', 'text-sm']"
+                        />
+                        <p v-else :class="['whitespace-pre-wrap', 'break-words', 'text-[11px]', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
+                          {{ memory.content }}
+                        </p>
+                        <div :class="['flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                          <span>{{ tn('review-queue.item.memory-created', { time: formatMemoryTime(memory.created_at) }) }}</span>
+                        </div>
+                        <div :class="['flex', 'flex-wrap', 'justify-end', 'gap-2']">
+                          <template v-if="editingPendingReviewMemoryKey === pendingReviewMemoryEditorKey(item.id, memory.id)">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              :disabled="Boolean(mutatingPendingReviewItemId)"
+                              @click="resetPendingReviewMemoryEditor"
+                            >
+                              {{ tn('review-queue.actions.cancel') }}
+                            </Button>
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              :loading="mutatingPendingReviewItemId === item.id"
+                              :disabled="Boolean(mutatingPendingReviewItemId)"
+                              @click="savePendingReviewMemoryEdit(item, memory)"
+                            >
+                              {{ tn('review-queue.actions.save') }}
+                            </Button>
+                          </template>
+                          <Button
+                            v-else
+                            variant="secondary"
+                            size="sm"
+                            icon="i-solar:pen-2-bold-duotone"
+                            :disabled="Boolean(mutatingPendingReviewItemId)"
+                            :label="tn('review-queue.actions.edit-memory')"
+                            @click="beginPendingReviewMemoryEdit(item, memory)"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </Collapsible>
+
+                  <div :class="['flex', 'flex-wrap', 'justify-end', 'gap-2']">
+                    <template v-if="editingPendingReviewItemId === item.id">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        :disabled="Boolean(mutatingPendingReviewItemId)"
+                        @click="resetPendingReviewEditor"
+                      >
+                        {{ tn('review-queue.actions.cancel') }}
+                      </Button>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        :loading="mutatingPendingReviewItemId === item.id"
+                        :disabled="Boolean(mutatingPendingReviewItemId)"
+                        @click="savePendingReviewRewrite(item)"
+                      >
+                        {{ tn('review-queue.actions.save') }}
+                      </Button>
+                    </template>
+                    <Button
+                      v-else
+                      variant="secondary"
+                      size="sm"
+                      icon="i-solar:pen-2-bold-duotone"
+                      :disabled="Boolean(mutatingPendingReviewItemId)"
+                      :label="tn('review-queue.actions.rewrite')"
+                      @click="beginPendingReviewEdit(item)"
+                    />
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
 
         <Callout v-if="healthError" theme="orange" :label="tn('health.error')">
           {{ healthError }}
@@ -1905,7 +3272,7 @@ onBeforeUnmount(() => {
           <span :class="['whitespace-pre-wrap']">{{ modelHealthError }}</span>
         </Callout>
 
-        <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
+        <section v-if="false" :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
           <div :class="['flex', 'items-start', 'justify-between', 'gap-3']">
             <div :class="['flex', 'items-start', 'gap-2']">
               <div :class="['i-solar:checklist-minimalistic-bold-duotone', 'mt-0.5', 'text-lg', 'text-neutral-500']" />
@@ -1918,13 +3285,386 @@ onBeforeUnmount(() => {
                 </p>
               </div>
             </div>
-            <span :class="['rounded-full', 'px-2', 'py-0.5', 'text-xs', 'font-medium', pendingReviewCount > 0 ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300']">
-              {{ tn('review-queue.pending', { count: pendingReviewCount }) }}
-            </span>
+            <div :class="['flex', 'flex-wrap', 'justify-end', 'gap-2']">
+              <span :class="['rounded-full', 'px-2', 'py-0.5', 'text-xs', 'font-medium', duePendingReviewCount > 0 ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300']">
+                {{ tn('review-queue.due', { count: duePendingReviewCount }) }}
+              </span>
+              <span :class="['rounded-full', 'px-2', 'py-0.5', 'text-xs', 'font-medium', deferredPendingReviewCount > 0 ? 'bg-sky-500/15 text-sky-700 dark:text-sky-300' : 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300']">
+                {{ tn('review-queue.deferred', { count: deferredPendingReviewCount }) }}
+              </span>
+            </div>
           </div>
-          <Callout theme="primary" :label="tn('review-queue.status-title')">
-            {{ tn('review-queue.status-description') }}
+          <div :class="['flex', 'items-center', 'justify-end', 'gap-2']">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="i-solar:refresh-bold-duotone"
+              :loading="isLoadingPendingReviewItems"
+              :label="tn('review-queue.refresh')"
+              @click="refreshPendingReviewItems"
+            />
+          </div>
+          <Callout v-if="pendingReviewError" theme="orange" :label="tn('review-queue.error')">
+            {{ pendingReviewError }}
           </Callout>
+          <div v-else-if="isLoadingPendingReviewItems" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
+            {{ tn('review-queue.loading') }}
+          </div>
+          <div v-else-if="!hasPendingReviewItems" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
+            {{ tn('review-queue.empty') }}
+          </div>
+          <div v-else :class="['flex', 'flex-col', 'gap-3']">
+            <section :class="['flex', 'flex-col', 'gap-3']">
+              <div :class="['flex', 'items-center', 'justify-between', 'gap-3']">
+                <span :class="['text-xs', 'font-semibold', 'uppercase', 'text-amber-700', 'dark:text-amber-300']">
+                  {{ tn('review-queue.sections.due') }}
+                </span>
+                <span :class="['rounded-full', 'bg-amber-500/15', 'px-2', 'py-0.5', 'text-xs', 'font-medium', 'text-amber-700', 'dark:text-amber-300']">
+                  {{ formatCount(duePendingReviewItems.length) }}
+                </span>
+              </div>
+              <div v-if="duePendingReviewItems.length === 0" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
+                {{ tn('review-queue.empty-due') }}
+              </div>
+              <div v-else :class="['flex', 'flex-col', 'gap-3']">
+                <div
+                  v-for="item in duePendingReviewItems"
+                  :key="item.id"
+                  :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'border', 'border-amber-300/40', 'bg-white/70', 'p-3', 'dark:border-amber-400/25', 'dark:bg-neutral-900/70']"
+                >
+                  <div :class="['flex', 'items-start', 'justify-between', 'gap-3']">
+                    <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                      <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
+                        {{ tn('review-queue.item.query-label') }}
+                      </span>
+                      <div v-if="editingPendingReviewItemId === item.id" :class="['flex', 'flex-col', 'gap-2']">
+                        <Textarea
+                          v-model="pendingReviewDraftQuery"
+                          :disabled="mutatingPendingReviewItemId === item.id"
+                          :placeholder="tn('review-queue.editor.query-placeholder')"
+                          :class="['min-h-24', 'text-sm']"
+                        />
+                      </div>
+                      <p v-else :class="['whitespace-pre-wrap', 'break-words', 'text-sm', 'text-neutral-700', 'leading-5', 'dark:text-neutral-200']">
+                        {{ item.query }}
+                      </p>
+                    </div>
+                    <span :class="['shrink-0', 'font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                      {{ item.id.slice(0, 8) }}
+                    </span>
+                  </div>
+
+                  <div :class="['flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                    <span>{{ tn('review-queue.item.created', { time: formatMemoryTime(item.created_at) }) }}</span>
+                    <span>{{ tn('review-queue.item.memories', { count: item.memories.length }) }}</span>
+                    <span>{{ tn('review-queue.item.due-count', { count: item.due_memory_count }) }}</span>
+                  </div>
+
+                  <Collapsible :default="false">
+                    <template #trigger="slotProps">
+                      <button
+                        :class="['w-full', 'flex', 'items-center', 'justify-between', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'text-left', 'dark:bg-neutral-950/40']"
+                        @click="slotProps.setVisible(!slotProps.visible)"
+                      >
+                        <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
+                          <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ tn('review-queue.item.linked-title') }}
+                          </span>
+                          <span :class="['text-xs', 'text-neutral-600', 'dark:text-neutral-300']">
+                            {{ tn('review-queue.item.memories', { count: item.memories.length }) }}
+                          </span>
+                        </div>
+                        <div :class="['flex', 'items-center', 'gap-2']">
+                          <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ formatCount(item.memories.length) }}
+                          </span>
+                          <div
+                            :class="[
+                              'i-solar:alt-arrow-down-linear',
+                              'text-base',
+                              'text-neutral-400',
+                              'transition-transform',
+                              'duration-250',
+                              'dark:text-neutral-500',
+                              slotProps.visible ? 'rotate-180' : 'rotate-0',
+                            ]"
+                          />
+                        </div>
+                      </button>
+                    </template>
+
+                    <div :class="['mt-2', 'grid', 'grid-cols-1', 'gap-2', 'xl:grid-cols-2']">
+                      <div
+                        v-for="memory in item.memories"
+                        :key="memory.id"
+                        :class="['min-w-0', 'flex', 'flex-col', 'gap-1.5', 'rounded-md', 'bg-neutral-100/70', 'p-2.5', 'dark:bg-neutral-950/40']"
+                      >
+                        <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                          <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ memory.id.slice(0, 8) }}
+                          </span>
+                          <span :class="['text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ tn('review-queue.item.memory-reviewed', { time: formatMemoryTime(memory.last_reviewed_at) }) }}
+                          </span>
+                        </div>
+                        <FieldInput
+                          v-if="editingPendingReviewMemoryKey === pendingReviewMemoryEditorKey(item.id, memory.id)"
+                          v-model="pendingReviewMemoryDraftTitle"
+                          :disabled="mutatingPendingReviewItemId === item.id"
+                          :placeholder="tn('review-queue.memory-editor.title-placeholder')"
+                        />
+                        <Textarea
+                          v-if="editingPendingReviewMemoryKey === pendingReviewMemoryEditorKey(item.id, memory.id)"
+                          v-model="pendingReviewMemoryDraftContent"
+                          :disabled="mutatingPendingReviewItemId === item.id"
+                          :placeholder="tn('review-queue.memory-editor.content-placeholder')"
+                          :class="['min-h-24', 'text-sm']"
+                        />
+                        <p v-else :class="['whitespace-pre-wrap', 'break-words', 'text-[11px]', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
+                          {{ memory.content }}
+                        </p>
+                        <div :class="['flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                          <span>{{ tn('review-queue.item.memory-created', { time: formatMemoryTime(memory.created_at) }) }}</span>
+                        </div>
+                        <div :class="['flex', 'flex-wrap', 'justify-end', 'gap-2']">
+                          <template v-if="editingPendingReviewMemoryKey === pendingReviewMemoryEditorKey(item.id, memory.id)">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              :disabled="Boolean(mutatingPendingReviewItemId)"
+                              @click="resetPendingReviewMemoryEditor"
+                            >
+                              {{ tn('review-queue.actions.cancel') }}
+                            </Button>
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              :loading="mutatingPendingReviewItemId === item.id"
+                              :disabled="Boolean(mutatingPendingReviewItemId)"
+                              @click="savePendingReviewMemoryEdit(item, memory)"
+                            >
+                              {{ tn('review-queue.actions.save') }}
+                            </Button>
+                          </template>
+                          <Button
+                            v-else
+                            variant="secondary"
+                            size="sm"
+                            icon="i-solar:pen-2-bold-duotone"
+                            :disabled="Boolean(mutatingPendingReviewItemId)"
+                            :label="tn('review-queue.actions.edit-memory')"
+                            @click="beginPendingReviewMemoryEdit(item, memory)"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </Collapsible>
+
+                  <div :class="['flex', 'flex-wrap', 'justify-end', 'gap-2']">
+                    <template v-if="editingPendingReviewItemId === item.id">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        :disabled="Boolean(mutatingPendingReviewItemId)"
+                        @click="resetPendingReviewEditor"
+                      >
+                        {{ tn('review-queue.actions.cancel') }}
+                      </Button>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        :loading="mutatingPendingReviewItemId === item.id"
+                        :disabled="Boolean(mutatingPendingReviewItemId)"
+                        @click="savePendingReviewRewrite(item)"
+                      >
+                        {{ tn('review-queue.actions.save') }}
+                      </Button>
+                    </template>
+                    <template v-else>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon="i-solar:pen-2-bold-duotone"
+                        :disabled="Boolean(mutatingPendingReviewItemId)"
+                        :label="tn('review-queue.actions.rewrite')"
+                        @click="beginPendingReviewEdit(item)"
+                      />
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        icon="i-solar:check-read-bold-duotone"
+                        :loading="mutatingPendingReviewItemId === item.id"
+                        :disabled="Boolean(mutatingPendingReviewItemId)"
+                        :label="tn('review-queue.actions.approve')"
+                        @click="approvePendingReviewItem(item)"
+                      />
+                      <DoubleCheckButton
+                        variant="secondary"
+                        cancel-variant="secondary"
+                        size="sm"
+                        :disabled="Boolean(mutatingPendingReviewItemId)"
+                        :loading="mutatingPendingReviewItemId === item.id"
+                        @confirm="dismissPendingReviewItem(item)"
+                      >
+                        {{ tn('review-queue.actions.dismiss') }}
+                        <template #confirm>
+                          {{ tn('review-queue.actions.confirm-dismiss') }}
+                        </template>
+                        <template #cancel>
+                          {{ tn('review-queue.actions.cancel') }}
+                        </template>
+                      </DoubleCheckButton>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section :class="['flex', 'flex-col', 'gap-3']">
+              <div :class="['flex', 'items-center', 'justify-between', 'gap-3']">
+                <span :class="['text-xs', 'font-semibold', 'uppercase', 'text-sky-700', 'dark:text-sky-300']">
+                  {{ tn('review-queue.sections.deferred') }}
+                </span>
+                <span :class="['rounded-full', 'bg-sky-500/15', 'px-2', 'py-0.5', 'text-xs', 'font-medium', 'text-sky-700', 'dark:text-sky-300']">
+                  {{ formatCount(deferredPendingReviewItems.length) }}
+                </span>
+              </div>
+              <div :class="['rounded-md', 'bg-sky-500/8', 'px-3', 'py-2', 'text-xs', 'text-sky-800', 'leading-5', 'dark:bg-sky-400/10', 'dark:text-sky-200']">
+                <span :class="['font-medium']">{{ tn('review-queue.deferred-title') }}</span>
+                {{ ` ` }}{{ tn('review-queue.deferred-description') }}
+              </div>
+              <div v-if="deferredPendingReviewItems.length === 0" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
+                {{ tn('review-queue.empty-deferred') }}
+              </div>
+              <div v-else :class="['flex', 'flex-col', 'gap-3']">
+                <div
+                  v-for="item in deferredPendingReviewItems"
+                  :key="item.id"
+                  :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'border', 'border-sky-300/40', 'bg-white/70', 'p-3', 'dark:border-sky-400/25', 'dark:bg-neutral-900/70']"
+                >
+                  <div :class="['flex', 'items-start', 'justify-between', 'gap-3']">
+                    <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
+                      <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
+                        {{ tn('review-queue.item.query-label') }}
+                      </span>
+                      <p :class="['whitespace-pre-wrap', 'break-words', 'text-sm', 'text-neutral-700', 'leading-5', 'dark:text-neutral-200']">
+                        {{ item.query }}
+                      </p>
+                    </div>
+                    <span :class="['shrink-0', 'font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                      {{ item.id.slice(0, 8) }}
+                    </span>
+                  </div>
+
+                  <div :class="['flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                    <span>{{ tn('review-queue.item.created', { time: formatMemoryTime(item.created_at) }) }}</span>
+                    <span>{{ tn('review-queue.item.memories', { count: item.memories.length }) }}</span>
+                    <span>{{ tn('review-queue.item.deferred-count', { count: item.deferred_memory_count }) }}</span>
+                  </div>
+
+                  <Collapsible :default="false">
+                    <template #trigger="slotProps">
+                      <button
+                        :class="['w-full', 'flex', 'items-center', 'justify-between', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'text-left', 'dark:bg-neutral-950/40']"
+                        @click="slotProps.setVisible(!slotProps.visible)"
+                      >
+                        <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
+                          <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ tn('review-queue.item.linked-title') }}
+                          </span>
+                          <span :class="['text-xs', 'text-neutral-600', 'dark:text-neutral-300']">
+                            {{ tn('review-queue.item.memories', { count: item.memories.length }) }}
+                          </span>
+                        </div>
+                        <div :class="['flex', 'items-center', 'gap-2']">
+                          <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ formatCount(item.memories.length) }}
+                          </span>
+                          <div
+                            :class="[
+                              'i-solar:alt-arrow-down-linear',
+                              'text-base',
+                              'text-neutral-400',
+                              'transition-transform',
+                              'duration-250',
+                              'dark:text-neutral-500',
+                              slotProps.visible ? 'rotate-180' : 'rotate-0',
+                            ]"
+                          />
+                        </div>
+                      </button>
+                    </template>
+
+                    <div :class="['mt-2', 'grid', 'grid-cols-1', 'gap-2', 'xl:grid-cols-2']">
+                      <div
+                        v-for="memory in item.memories"
+                        :key="memory.id"
+                        :class="['min-w-0', 'flex', 'flex-col', 'gap-1.5', 'rounded-md', 'bg-neutral-100/70', 'p-2.5', 'dark:bg-neutral-950/40']"
+                      >
+                        <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                          <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ memory.id.slice(0, 8) }}
+                          </span>
+                          <span :class="['text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ tn('review-queue.item.memory-reviewed', { time: formatMemoryTime(memory.last_reviewed_at) }) }}
+                          </span>
+                        </div>
+                        <FieldInput
+                          v-if="editingPendingReviewMemoryKey === pendingReviewMemoryEditorKey(item.id, memory.id)"
+                          v-model="pendingReviewMemoryDraftTitle"
+                          :disabled="mutatingPendingReviewItemId === item.id"
+                          :placeholder="tn('review-queue.memory-editor.title-placeholder')"
+                        />
+                        <Textarea
+                          v-if="editingPendingReviewMemoryKey === pendingReviewMemoryEditorKey(item.id, memory.id)"
+                          v-model="pendingReviewMemoryDraftContent"
+                          :disabled="mutatingPendingReviewItemId === item.id"
+                          :placeholder="tn('review-queue.memory-editor.content-placeholder')"
+                          :class="['min-h-24', 'text-sm']"
+                        />
+                        <p v-else :class="['whitespace-pre-wrap', 'break-words', 'text-[11px]', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
+                          {{ memory.content }}
+                        </p>
+                        <div :class="['flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                          <span>{{ tn('review-queue.item.memory-created', { time: formatMemoryTime(memory.created_at) }) }}</span>
+                        </div>
+                        <div :class="['flex', 'flex-wrap', 'justify-end', 'gap-2']">
+                          <template v-if="editingPendingReviewMemoryKey === pendingReviewMemoryEditorKey(item.id, memory.id)">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              :disabled="Boolean(mutatingPendingReviewItemId)"
+                              @click="resetPendingReviewMemoryEditor"
+                            >
+                              {{ tn('review-queue.actions.cancel') }}
+                            </Button>
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              :loading="mutatingPendingReviewItemId === item.id"
+                              :disabled="Boolean(mutatingPendingReviewItemId)"
+                              @click="savePendingReviewMemoryEdit(item, memory)"
+                            >
+                              {{ tn('review-queue.actions.save') }}
+                            </Button>
+                          </template>
+                          <Button
+                            v-else
+                            variant="secondary"
+                            size="sm"
+                            icon="i-solar:pen-2-bold-duotone"
+                            :disabled="Boolean(mutatingPendingReviewItemId)"
+                            :label="tn('review-queue.actions.edit-memory')"
+                            @click="beginPendingReviewMemoryEdit(item, memory)"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </Collapsible>
+                </div>
+              </div>
+            </section>
+          </div>
         </section>
       </section>
 
@@ -2299,154 +4039,6 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
-      </section>
-
-      <section
-        v-else-if="activeDetailPanel === 'semantic'"
-        :class="[
-          'flex',
-          'flex-col',
-          'gap-4',
-          'rounded-lg',
-          'border',
-          'border-neutral-200/70',
-          'bg-white/70',
-          'p-3',
-          'dark:border-neutral-800/70',
-          'dark:bg-neutral-900/30',
-        ]"
-      >
-        <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-3']">
-          <div :class="['flex', 'items-center', 'gap-2']">
-            <div :class="['i-solar:document-add-bold-duotone', 'text-xl', 'text-primary-500', 'dark:text-primary-300']" />
-            <h3 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-              {{ tn('semantic-memories.title') }}
-            </h3>
-          </div>
-          <div :class="['flex', 'flex-wrap', 'items-center', 'justify-end', 'gap-2']">
-            <div :class="['min-w-52']">
-              <FieldCheckbox
-                v-model="includeInvalidSemanticMemories"
-                :label="tn('semantic-memories.include-invalid.label')"
-                :description="tn('semantic-memories.include-invalid.description')"
-              />
-            </div>
-            <Button
-              variant="secondary" size="sm" :loading="isLoadingSemanticMemories"
-              icon="i-solar:refresh-bold-duotone" :label="tn('semantic-memories.refresh')"
-              @click="refreshSemanticMemories"
-            />
-          </div>
-        </div>
-
-        <Callout v-if="semanticMemoriesError" theme="orange" :label="tn('semantic-memories.error')">
-          {{ semanticMemoriesError }}
-        </Callout>
-
-        <div v-if="semanticMemories.length === 0 && !semanticMemoriesError && !isLoadingSemanticMemories" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
-          {{ tn('semantic-memories.empty') }}
-        </div>
-
-        <div :class="['flex', 'flex-col', 'gap-2', 'max-h-96', 'overflow-y-auto']">
-          <div
-            v-for="memory in semanticMemories"
-            :key="memory.id"
-            :class="[
-              'flex',
-              'flex-col',
-              'gap-2',
-              'rounded-md',
-              'border',
-              'border-neutral-200/50',
-              'bg-neutral-50/70',
-              'p-2.5',
-              'dark:border-neutral-800/50',
-              'dark:bg-neutral-950/30',
-            ]"
-          >
-            <div :class="['flex', 'flex-wrap', 'items-start', 'justify-between', 'gap-2']">
-              <div :class="['flex', 'flex-wrap', 'items-center', 'gap-1.5']">
-                <span :class="['rounded-full', 'bg-sky-500/15', 'px-1.5', 'py-0.5', 'text-[10px]', 'font-medium', 'text-sky-700', 'dark:text-sky-300']">
-                  {{ memory.category || tn('semantic-memories.uncategorized') }}
-                </span>
-                <span :class="['rounded-full', 'px-1.5', 'py-0.5', 'text-[10px]', 'font-medium', semanticMemoryStatusBadgeClass(memory)]">
-                  {{ semanticMemoryStatusLabel(memory) }}
-                </span>
-              </div>
-              <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
-                {{ memory.id.slice(0, 8) }}
-              </span>
-            </div>
-
-            <p :class="['break-words', 'text-sm', 'text-neutral-700', 'leading-5', 'dark:text-neutral-200']">
-              {{ memory.fact }}
-            </p>
-
-            <div :class="['flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
-              <span>{{ tn('semantic-memories.created', { time: formatMemoryTime(memory.created_at) }) }}</span>
-              <span>{{ tn('semantic-memories.valid-at', { time: formatMemoryTime(memory.valid_at) }) }}</span>
-              <span v-if="memory.invalid_at">{{ tn('semantic-memories.invalid-at', { time: formatMemoryTime(memory.invalid_at) }) }}</span>
-              <span>{{ tn('semantic-memories.sources', { count: memory.source_episodic_ids.length }) }}</span>
-            </div>
-
-            <div :class="['flex', 'flex-wrap', 'justify-end', 'gap-2']">
-              <Button
-                variant="secondary"
-                size="sm"
-                icon="i-solar:link-round-angle-bold-duotone"
-                :disabled="memory.source_episodic_ids.length === 0"
-                :label="tn('semantic-memories.actions.sources')"
-                @click="showSemanticMemorySources(memory)"
-              />
-              <Button
-                :variant="memory.invalid_at ? 'secondary' : 'caution'"
-                size="sm"
-                :loading="mutatingSemanticMemoryId === memory.id"
-                :icon="memory.invalid_at ? 'i-solar:restart-bold-duotone' : 'i-solar:trash-bin-minimalistic-bold-duotone'"
-                :label="memory.invalid_at ? tn('semantic-memories.actions.restore') : tn('semantic-memories.actions.invalidate')"
-                @click="setSemanticMemoryInvalid(memory, !memory.invalid_at)"
-              />
-            </div>
-          </div>
-        </div>
-
-        <section
-          v-if="selectedSourceMemoryIds.length > 0"
-          :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']"
-        >
-          <div :class="['flex', 'items-center', 'justify-between', 'gap-3']">
-            <div :class="['flex', 'items-center', 'gap-2']">
-              <div :class="['i-solar:link-round-angle-bold-duotone', 'text-lg', 'text-neutral-500']" />
-              <span :class="['text-sm', 'font-medium', 'text-neutral-700', 'dark:text-neutral-200']">
-                {{ tn('semantic-memories.sources-view.title') }}
-              </span>
-            </div>
-            <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
-              {{ formatCount(selectedSourceMemoryIds.length) }}
-            </span>
-          </div>
-          <div v-if="selectedSourceMemories.length === 0" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
-            {{ tn('semantic-memories.sources-view.empty') }}
-          </div>
-          <div v-else :class="['flex', 'flex-col', 'gap-2', 'max-h-64', 'overflow-y-auto']">
-            <div
-              v-for="memory in selectedSourceMemories"
-              :key="memory.id"
-              :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']"
-            >
-              <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
-                <span :class="['text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ memory.title || tn('recent-memories.untitled') }}</span>
-                <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">{{ memory.id.slice(0, 8) }}</span>
-              </div>
-              <p :class="['mt-1', 'whitespace-pre-wrap', 'break-words', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
-                {{ memory.content }}
-              </p>
-            </div>
-          </div>
-          <div v-if="missingSourceMemoryIds.length > 0" :class="['text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
-            {{ tn('semantic-memories.sources-view.missing', { count: missingSourceMemoryIds.length }) }}
-          </div>
-        </section>
       </section>
 
       <section
