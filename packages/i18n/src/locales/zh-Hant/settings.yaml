@@ -712,11 +712,12 @@ pages:
               unknown: 未知
             counts:
               conversation-messages: 訊息
-              episode-spans: 分段
-              episodic-memories: Episodic
-              semantic-memories: Semantic
-              active-semantic-memories: 活躍 Semantic
-              pending-reviews: 待複習
+              episode-spans: 片段
+              episodic-memories: 情景記憶
+              semantic-memories: 語義記憶
+              active-semantic-memories: 生效語義記憶
+              due-pending-reviews: 待立即複習
+              deferred-pending-reviews: 延後複習
           chat-diagnostics:
             never: 從未
             title: 聊天橋診斷
@@ -773,11 +774,28 @@ pages:
               label: 顯示失效 facts
               description: 把已經被覆蓋或失效的舊事實也一起顯示出來。
             actions:
+              cancel: 取消
+              confirm-delete: 確認刪除
+              delete: 刪除
+              edit: 編輯
               invalidate: 標記失效
               restore: 恢復生效
+              save: 儲存
+              sources: 來源
+            editor:
+              category: 分類
+              category-placeholder: 留空則視為未分類
+              delete-failed: 刪除語義記憶失敗。
+              fact: 記憶內容
+              fact-placeholder: 修改這條長期語義記憶的文字
+              fact-required: 記憶內容不能為空。
             status:
               active: 生效中
               invalid: 已失效
+            sources-view:
+              empty: 來源 episodic 記憶不在目前已載入的最近記憶視窗裡。
+              missing: '{count} 個來源 id 未載入'
+              title: 來源片段
           facts:
             external:
               description: >-

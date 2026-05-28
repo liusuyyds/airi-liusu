@@ -280,7 +280,7 @@ describe('registerComputerUseTools: PTY approval bridge', () => {
     expect((runtime.browserDomBridge.triggerEvent as any)).not.toHaveBeenCalled()
   })
 
-  it('does not register browser agent tools when the embedded workspace is missing', () => {
+  it('keeps browser agent diagnostics available when the embedded workspace is missing', async () => {
     vi.mocked(getBrowserAgentLaunchContext).mockReturnValue({
       cdpUrl: 'http://localhost:9222',
       cliCwd: '/tmp/missing-computer_use',
@@ -289,7 +289,7 @@ describe('registerComputerUseTools: PTY approval bridge', () => {
       rootExists: false,
     })
 
-    const { server, listRegisteredToolNames } = createMockServer()
+    const { server, invoke, listRegisteredToolNames } = createMockServer()
     registerComputerUseTools({
       server,
       runtime,
@@ -297,9 +297,28 @@ describe('registerComputerUseTools: PTY approval bridge', () => {
       enableTestTools: false,
     })
 
-    expect(listRegisteredToolNames()).not.toContain('browser_agent_get_status')
-    expect(listRegisteredToolNames()).not.toContain('browser_agent_run')
+    expect(listRegisteredToolNames()).toContain('browser_agent_get_status')
+    expect(listRegisteredToolNames()).toContain('browser_agent_run')
     expect(listRegisteredToolNames()).toContain('browser_dom_get_bridge_status')
+
+    const statusResult = await invoke('browser_agent_get_status')
+    expect(statusResult.structuredContent).toMatchObject({
+      status: 'missing',
+      browserAgent: {
+        rootExists: false,
+      },
+    })
+
+    const runResult = await invoke('browser_agent_run', {
+      instruction: 'Open the AIRI docs',
+    })
+    expect(runResult.isError).toBe(true)
+    expect(runResult.structuredContent).toMatchObject({
+      status: 'missing',
+      browserAgent: {
+        rootExists: false,
+      },
+    })
   })
 
   it('rejects browser_dom_click when the connected extension transport is read-only', async () => {

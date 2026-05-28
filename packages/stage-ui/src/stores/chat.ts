@@ -706,12 +706,15 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
           })
       }
 
+      if (isStaleGeneration())
+        return
+
       trackAssistantResponseRendered({
         model: options.model,
         latency_ms: Math.round(performance.now() - llmRequestTs),
       })
 
-      if (!isStaleGeneration() && buildingMessage.slices.length > 0) {
+      if (buildingMessage.slices.length > 0) {
         const finalAssistant = toRaw(buildingMessage)
         chatSession.appendSessionMessages(sessionId, [finalAssistant, ...sanitizedToolMessages])
         // Cloud sync v1: push assistant message to server

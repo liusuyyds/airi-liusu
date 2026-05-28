@@ -67,15 +67,19 @@ Extract only high-value, durable semantic facts that should become active semant
 5. Do not rewrite stable speaker labels into `User` or `Assistant` unless the source only uses those labels.
 6. Skip temporary reactions, acknowledgements, and low-value contextual chatter.
 7. Use present tense for persistent facts.
-8. When the episode contains grounded time anchors (parenthetical dates like \"(October 20, 2022)\"), \
+8. Write each fact in the dominant language used by the supporting episode content.
+   - If the source episode is mainly Chinese, output Chinese facts.
+   - If the source episode is mainly English, output English facts.
+   - Do not translate named entities unless the source itself does so.
+9. When the episode contains grounded time anchors (parenthetical dates like \"(October 20, 2022)\"), \
 preserve both the original time expression AND the grounded anchor in the fact.
    - GOOD: fact='James won an online gaming tournament last week (July 3-4, 2022)'
    - GOOD: fact='John is starting his dream job next month (July 2022)'
    - BAD:  fact='James won an online gaming tournament last week'  (missing anchor)
    - BAD:  fact='James won an online gaming tournament (July 3-4, 2022)'  (dropped original expression)
    - If no grounded anchor exists in the episode for a time expression, keep the original expression as-is.
-9. For `target_fact_id`, use an empty string in cold start mode.
-10. For `confidence`, use a number between 0 and 1.
+10. For `target_fact_id`, use an empty string in cold start mode.
+11. For `confidence`, use a number between 0 and 1.
 
 ## Action semantics
 - `new`: create a new active fact
@@ -102,7 +106,8 @@ Generate a prediction of what the conversation SHOULD contain based on:
 3. If knowledge is insufficient, indicate what you cannot predict.
 4. Preserve named participants and exact item names already present in the knowledge.
 5. Do not normalize named speakers into `User` or `Assistant` unless the knowledge only provides generic role labels.
-6. The prediction will be compared with actual conversation to identify knowledge gaps.";
+6. Keep the prediction in the same dominant language as the provided title and knowledge unless the source is clearly mixed.
+7. The prediction will be compared with actual conversation to identify knowledge gaps.";
 
 const EXTRACT_FROM_COMPARISON_PROMPT: &str = "\
 You are performing the CALIBRATE phase of Predict-Calibrate Learning.
@@ -134,6 +139,10 @@ Decide how semantic memory should change after seeing where the prediction was w
 8. Preserve exact noun phrases when they matter for QA or retrieval.
 9. Prefer precise, durable actions over speculative ones.
 10. Use `confidence` between 0 and 1.
+11. Write each fact in the dominant language used by the supporting episode content.
+    - If the source episode is mainly Chinese, output Chinese facts.
+    - If the source episode is mainly English, output English facts.
+    - Do not translate named entities unless the source itself does so.
 
 ## Fact quality
 - Extract only durable, high-value facts that are likely to remain useful over time.
@@ -959,5 +968,20 @@ mod tests {
     assert!(guide.contains("`user`: the human user"));
     assert!(guide.contains("`assistant`: AIRI"));
     assert!(guide.contains("Never invert emotional direction"));
+  }
+
+  #[test]
+  fn semantic_prompts_preserve_episode_language() {
+    assert!(
+      COLD_START_SYSTEM_PROMPT
+        .contains("If the source episode is mainly Chinese, output Chinese facts.")
+    );
+    assert!(
+      EXTRACT_FROM_COMPARISON_PROMPT
+        .contains("If the source episode is mainly Chinese, output Chinese facts.")
+    );
+    assert!(PREDICTION_SYSTEM_PROMPT.contains(
+      "Keep the prediction in the same dominant language as the provided title and knowledge"
+    ));
   }
 }

@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::utils::AppState;
 use crate::review_window::{is_review_due, resolve_review_window_hours};
+use crate::utils::AppState;
 
 #[derive(Debug, Clone, Copy, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -300,7 +300,8 @@ pub async fn review_queue_update_memory(
     )
   })?;
 
-  let item = load_pending_review_or_404(payload.conversation_id, payload.item_id, &state.db).await?;
+  let item =
+    load_pending_review_or_404(payload.conversation_id, payload.item_id, &state.db).await?;
   if !item.memory_ids.contains(&payload.memory_id) {
     return Err(AppError::with_status(
       StatusCode::NOT_FOUND,

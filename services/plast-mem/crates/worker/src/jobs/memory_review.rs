@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::fmt::Write;
 use std::env;
+use std::fmt::Write;
 
 use apalis::prelude::Data;
 use chrono::{DateTime, Utc};

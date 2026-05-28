@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use plastmem_entities::{
   EpisodeClassification, conversation_message, episode_span, segmentation_state,
 };
-use plastmem_shared::AppError;
+use plastmem_shared::{APP_ENV, AppError};
 use sea_orm::{
   ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
   QueryOrder, QuerySelect, Set, TransactionTrait, sea_query::OnConflict,
@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::ConversationMessage;
 
-pub const SEGMENTATION_LEASE_TTL_MINUTES: i64 = 120;
+pub const DEFAULT_SEGMENTATION_LEASE_TTL_SECONDS: i64 = 300;
 
 // ──────────────────────────────────────────────────
 // Types
@@ -335,7 +335,15 @@ pub async fn recover_stale_segmentation_job(
     return Ok(false);
   };
 
-  let expired_before = Utc::now() - chrono::TimeDelta::minutes(SEGMENTATION_LEASE_TTL_MINUTES);
+  // NOTICE:
+  // Segmentation claims are created before the worker finishes the first span.
+  // If the worker crashes or an Apalis row stays locked in `Running`, every
+  // later chat turn in that conversation is blocked behind the stale lease.
+  // Keep recovery aggressive so a fresh turn can self-heal the queue quickly.
+  let lease_ttl_seconds = i64::try_from(APP_ENV.segmentation_lease_ttl_seconds)
+    .unwrap_or(DEFAULT_SEGMENTATION_LEASE_TTL_SECONDS)
+    .max(1);
+  let expired_before = Utc::now() - chrono::TimeDelta::seconds(lease_ttl_seconds);
   if active_since >= expired_before {
     txn.commit().await?;
     return Ok(false);

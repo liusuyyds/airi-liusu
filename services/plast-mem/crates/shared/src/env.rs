@@ -46,6 +46,7 @@ pub struct AppEnv {
   pub openai_embedding_api_key: String,
   pub openai_embedding_model: String,
   pub openai_request_timeout_seconds: u64,
+  pub segmentation_lease_ttl_seconds: u64,
   pub enable_fsrs_review: bool,
   pub predict_calibrate_concurrency: usize,
 }
@@ -71,6 +72,7 @@ impl AppEnv {
       openai_embedding_api_key: required_env("OPENAI_EMBEDDING_API_KEY"),
       openai_embedding_model: required_env("OPENAI_EMBEDDING_MODEL"),
       openai_request_timeout_seconds: u64_env("OPENAI_REQUEST_TIMEOUT_SECONDS", 60),
+      segmentation_lease_ttl_seconds: u64_env("SEGMENTATION_LEASE_TTL_SECONDS", 300),
       enable_fsrs_review: bool_env("ENABLE_FSRS_REVIEW", true),
       predict_calibrate_concurrency: usize_env("PREDICT_CALIBRATE_CONCURRENCY", 4),
     }

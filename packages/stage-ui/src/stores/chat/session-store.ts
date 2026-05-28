@@ -29,6 +29,25 @@ import { useAiriCardStore } from '../modules/airi-card'
 import { mergeLoadedSessionMessages } from './session-message-merge'
 
 const PERSIST_DEBOUNCE_MS = 300
+const persistFlushLifecycle = {
+  registered: false,
+  flush: async () => {},
+}
+
+function ensurePersistFlushLifecycle(flush: () => Promise<void>) {
+  persistFlushLifecycle.flush = flush
+
+  if (persistFlushLifecycle.registered || typeof globalThis.addEventListener !== 'function')
+    return
+
+  const flushPendingPersists = () => {
+    void persistFlushLifecycle.flush()
+  }
+
+  globalThis.addEventListener('pagehide', flushPendingPersists)
+  globalThis.addEventListener('beforeunload', flushPendingPersists)
+  persistFlushLifecycle.registered = true
+}
 /**
  * Roles that are eligible to push to the cloud. Wire schema accepts more,
  *  but our v1 contract only round-trips authored turns.
@@ -290,11 +309,34 @@ export const useChatSessionStore = defineStore('chat-session', () => {
    */
   function flushPersist(sessionId: string) {
     const timer = persistTimers.get(sessionId)
-    if (timer) {
-      clearTimeout(timer)
-      persistTimers.delete(sessionId)
-      void persistSession(sessionId)
+    if (!timer)
+      return persistQueue
+
+    clearTimeout(timer)
+    persistTimers.delete(sessionId)
+    return persistSession(sessionId)
+  }
+
+  /**
+   * Forces every pending debounced session persist to start immediately.
+   *
+   * Use when:
+   * - The renderer is unloading or hiding and pending `setTimeout` flushes may
+   *   never fire
+   * - An async teardown must wait for the latest session snapshots to land
+   *
+   * Returns:
+   * - Resolves after all pending debounced persists have been enqueued and the
+   *   current persist queue has drained
+   */
+  async function flushAllPersists() {
+    const sessionIds = [...persistTimers.keys()]
+    if (sessionIds.length === 0) {
+      await persistQueue
+      return
     }
+
+    await Promise.allSettled(sessionIds.map(sessionId => flushPersist(sessionId)))
   }
 
   function replaceSessionMessages(sessionId: string, next: ChatHistoryItem[], options?: { persist?: boolean }) {
@@ -1202,6 +1244,7 @@ export const useChatSessionStore = defineStore('chat-session', () => {
     }
     initializing.value = true
     initializePromise = (async () => {
+      ensurePersistFlushLifecycle(flushAllPersists)
       await ensureActiveSessionForCharacter()
       ready.value = true
       // Surface any outbox left over from a previous session (closed tab
@@ -1322,8 +1365,7 @@ export const useChatSessionStore = defineStore('chat-session', () => {
   }
 
   async function resetAllSessions() {
-    for (const sessionId of persistTimers.keys())
-      flushPersist(sessionId)
+    await flushAllPersists()
     const currentUserId = getCurrentUserId()
     const characterId = getCurrentCharacterId()
     const sessionIds = new Set<string>()
@@ -1484,6 +1526,7 @@ export const useChatSessionStore = defineStore('chat-session', () => {
     applyRemoteSnapshot,
     getSnapshot,
     cleanupMessages,
+    flushAllPersists,
     flushPersist,
     getAllSessions,
     resetAllSessions,

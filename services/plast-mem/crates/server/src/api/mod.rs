@@ -21,9 +21,8 @@ pub use add_message::{
 #[cfg(debug_assertions)]
 pub use benchmark::BenchmarkJobStatus;
 pub use health::{
-  ConversationMessageUpdate, ConversationMessageView, ConversationMessagesList,
-  EpisodeSpanView, EpisodeSpansList, EpisodicMemoryUpdate, HealthCheck, HealthCheckResult,
-  HealthCounts,
+  ConversationMessageUpdate, ConversationMessageView, ConversationMessagesList, EpisodeSpanView,
+  EpisodeSpansList, EpisodicMemoryUpdate, HealthCheck, HealthCheckResult, HealthCounts,
 };
 pub use model_health::{ModelHealthResult, ModelProviderHealth};
 pub use recent_memory::RecentMemory;
@@ -34,8 +33,7 @@ pub use retrieve_memory::{
 pub use review_queue::{
   PendingReviewQueueActionResult, PendingReviewQueueApprove, PendingReviewQueueDismiss,
   PendingReviewQueueItemView, PendingReviewQueueList, PendingReviewQueueMemory,
-  PendingReviewQueueStatus,
-  PendingReviewQueueRewrite, PendingReviewQueueUpdateMemory,
+  PendingReviewQueueRewrite, PendingReviewQueueStatus, PendingReviewQueueUpdateMemory,
 };
 pub use semantic_memory::{
   SemanticMemoryDelete, SemanticMemoryList, SemanticMemorySetInvalid, SemanticMemoryUpdate,

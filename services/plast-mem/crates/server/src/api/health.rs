@@ -1,11 +1,11 @@
 use axum::{Json, extract::State, http::StatusCode};
 use chrono::{DateTime, Utc};
 use plastmem_ai::embed;
+use plastmem_core::EpisodicMemory;
 use plastmem_entities::{
   EpisodeClassification, conversation_message, episode_span, episodic_memory, pending_review_queue,
   semantic_memory,
 };
-use plastmem_core::EpisodicMemory;
 use plastmem_shared::{AppError, MessageRole};
 use sea_orm::{
   ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::utils::AppState;
 use crate::review_window::{is_review_due, resolve_review_window_hours};
+use crate::utils::AppState;
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct HealthCheck {
@@ -194,7 +194,9 @@ async fn fetch_counts(
     let has_due_memory = item.memory_ids.iter().any(|memory_id| {
       memory_last_reviewed_at
         .get(memory_id)
-        .is_some_and(|last_reviewed_at| is_review_due(*last_reviewed_at, reviewed_at, review_window_hours))
+        .is_some_and(|last_reviewed_at| {
+          is_review_due(*last_reviewed_at, reviewed_at, review_window_hours)
+        })
     });
 
     if has_due_memory {
@@ -288,13 +290,18 @@ pub async fn conversation_messages_raw(
     .all(&state.db)
     .await?;
 
-  Ok(Json(models.into_iter().map(|message| ConversationMessageView {
-    seq: message.seq,
-    role: message.role,
-    speaker_name: message.speaker_name,
-    content: message.content,
-    timestamp: message.timestamp.with_timezone(&Utc),
-  }).collect()))
+  Ok(Json(
+    models
+      .into_iter()
+      .map(|message| ConversationMessageView {
+        seq: message.seq,
+        role: message.role,
+        speaker_name: message.speaker_name,
+        content: message.content,
+        timestamp: message.timestamp.with_timezone(&Utc),
+      })
+      .collect(),
+  ))
 }
 
 #[utoipa::path(
@@ -317,12 +324,17 @@ pub async fn episode_spans_raw(
     .all(&state.db)
     .await?;
 
-  Ok(Json(models.into_iter().map(|span| EpisodeSpanView {
-    start_seq: span.start_seq,
-    end_seq: span.end_seq,
-    classification: episode_classification_label(&span.classification),
-    created_at: span.created_at.with_timezone(&Utc),
-  }).collect()))
+  Ok(Json(
+    models
+      .into_iter()
+      .map(|span| EpisodeSpanView {
+        start_seq: span.start_seq,
+        end_seq: span.end_seq,
+        classification: episode_classification_label(&span.classification),
+        created_at: span.created_at.with_timezone(&Utc),
+      })
+      .collect(),
+  ))
 }
 
 /// Update a stored conversation message.

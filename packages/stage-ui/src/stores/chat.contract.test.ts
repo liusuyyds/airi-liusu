@@ -457,6 +457,64 @@ describe('chat orchestrator contract', () => {
     expect(composedMessages.some(message => Array.isArray((message as { tool_calls?: unknown }).tool_calls))).toBe(false)
   })
 
+  it('stops post-stream hooks and assistant persistence once the session generation goes stale mid-turn', async () => {
+    getContextsSnapshotMock.mockReturnValue({})
+
+    llmStreamMock.mockImplementation(async (_model: string, _chatProvider: ChatProvider, _messages: Message[], options: any) => {
+      await options.onStreamEvent({ type: 'text-delta', text: 'partial reply' })
+      currentGeneration = 2
+      await options.onStreamEvent({ type: 'finish', finishReason: 'stop' })
+    })
+
+    const store = useChatOrchestratorStore()
+    const hookOrder: string[] = []
+
+    store.onBeforeMessageComposed(async () => {
+      hookOrder.push('before-compose')
+    })
+    store.onAfterMessageComposed(async () => {
+      hookOrder.push('after-compose')
+    })
+    store.onBeforeSend(async () => {
+      hookOrder.push('before-send')
+    })
+    store.onTokenLiteral(async () => {
+      hookOrder.push('token-literal')
+    })
+    store.onStreamEnd(async () => {
+      hookOrder.push('stream-end')
+    })
+    store.onAssistantResponseEnd(async () => {
+      hookOrder.push('assistant-end')
+    })
+    store.onAfterSend(async () => {
+      hookOrder.push('after-send')
+    })
+    store.onAssistantMessage(async () => {
+      hookOrder.push('assistant-message')
+    })
+    store.onChatTurnComplete(async () => {
+      hookOrder.push('turn-complete')
+    })
+
+    await store.ingest('clear me mid-turn', {
+      model: 'gpt-test',
+      chatProvider: provider,
+    })
+
+    expect(hookOrder).toEqual([
+      'before-compose',
+      'after-compose',
+      'before-send',
+      'token-literal',
+    ])
+    expect(sessionMessages['session-1']).toHaveLength(2)
+    expect(sessionMessages['session-1']?.[1]).toMatchObject({
+      role: 'user',
+      content: 'clear me mid-turn',
+    })
+  })
+
   it('uses forked session id in ingestOnFork and keeps public store contract keys', async () => {
     getContextsSnapshotMock.mockReturnValue({})
     forkSessionMock.mockResolvedValue('session-forked')

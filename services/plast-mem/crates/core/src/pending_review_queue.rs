@@ -319,7 +319,11 @@ fn build_pending_review_queue_plan(
         continue;
       };
 
-      if is_review_due(memory_state.last_reviewed_at, reviewed_at, review_window_hours) {
+      if is_review_due(
+        memory_state.last_reviewed_at,
+        reviewed_at,
+        review_window_hours,
+      ) {
         due_memory_ids.push(memory_id);
       } else {
         deferred_memory_ids.push(memory_id);
