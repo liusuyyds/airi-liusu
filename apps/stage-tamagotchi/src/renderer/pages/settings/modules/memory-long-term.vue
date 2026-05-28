@@ -9,6 +9,7 @@ import type {
   ElectronPlastMemConversationMessage,
   ElectronPlastMemEpisodeSpan,
   ElectronPlastMemEpisodicMemory,
+  ElectronPlastMemFailedReviewJob,
   ElectronPlastMemHealthResult,
   ElectronPlastMemPendingReviewQueueItem,
   ElectronPlastMemPendingReviewQueueMemory,
@@ -43,6 +44,7 @@ import {
   electronPlastMemDeleteSemanticMemory,
   electronPlastMemDismissPendingReviewQueueItem,
   electronPlastMemEpisodeSpans,
+  electronPlastMemFailedReviewJobs,
   electronPlastMemGetConfig,
   electronPlastMemGetRuntimeStatus,
   electronPlastMemGetSidecarStatus,
@@ -52,6 +54,7 @@ import {
   electronPlastMemRecentMemoryRaw,
   electronPlastMemRestartSidecar,
   electronPlastMemRetrieveMemoryRaw,
+  electronPlastMemRetryFailedReviewJob,
   electronPlastMemRewritePendingReviewQueueItem,
   electronPlastMemSemanticMemoryRaw,
   electronPlastMemSetSemanticMemoryInvalid,
@@ -93,6 +96,8 @@ const invokeUpdateEpisodicMemory = useElectronEventaInvoke(electronPlastMemUpdat
 const invokeRetrieveMemoryRaw = useElectronEventaInvoke(electronPlastMemRetrieveMemoryRaw)
 const invokeSemanticMemoryRaw = useElectronEventaInvoke(electronPlastMemSemanticMemoryRaw)
 const invokePendingReviewQueue = useElectronEventaInvoke(electronPlastMemPendingReviewQueue)
+const invokeFailedReviewJobs = useElectronEventaInvoke(electronPlastMemFailedReviewJobs)
+const invokeRetryFailedReviewJob = useElectronEventaInvoke(electronPlastMemRetryFailedReviewJob)
 const invokeRewritePendingReviewQueueItem = useElectronEventaInvoke(electronPlastMemRewritePendingReviewQueueItem)
 const invokeApprovePendingReviewQueueItem = useElectronEventaInvoke(electronPlastMemApprovePendingReviewQueueItem)
 const invokeDismissPendingReviewQueueItem = useElectronEventaInvoke(electronPlastMemDismissPendingReviewQueueItem)
@@ -131,9 +136,13 @@ const health = ref<ElectronPlastMemHealthResult>()
 const healthError = ref('')
 const isCheckingHealth = ref(false)
 const pendingReviewItems = ref<ElectronPlastMemPendingReviewQueueItem[]>([])
+const failedReviewJobs = ref<ElectronPlastMemFailedReviewJob[]>([])
 const pendingReviewError = ref('')
 const isLoadingPendingReviewItems = ref(false)
+const isLoadingFailedReviewJobs = ref(false)
 const mutatingPendingReviewItemId = ref('')
+const mutatingFailedReviewJobId = ref('')
+const expandedFailedReviewJobIds = ref<string[]>([])
 const editingPendingReviewItemId = ref('')
 const pendingReviewDraftQuery = ref('')
 const editingPendingReviewMemoryKey = ref('')
@@ -205,6 +214,8 @@ const duePendingReviewCount = computed(() => healthCounts.value?.due_pending_rev
 const deferredPendingReviewCount = computed(() => healthCounts.value?.deferred_pending_reviews ?? 0)
 const duePendingReviewItems = computed(() => pendingReviewItems.value.filter(item => item.review_status === 'due'))
 const deferredPendingReviewItems = computed(() => pendingReviewItems.value.filter(item => item.review_status === 'deferred'))
+const failedReviewJobCount = computed(() => failedReviewJobs.value.length)
+const failedReviewPreviewLimit = 4
 const modelHealthError = computed(() => {
   const modelHealth = health.value?.modelHealth
   if (!modelHealth)
@@ -593,6 +604,30 @@ async function refreshPendingReviewItems() {
   }
 }
 
+async function refreshFailedReviewJobs() {
+  if (isLoadingFailedReviewJobs.value)
+    return
+
+  isLoadingFailedReviewJobs.value = true
+  try {
+    const result = await invokeFailedReviewJobs({ limit: 20 })
+    if (result.error) {
+      failedReviewJobs.value = []
+      pendingReviewError.value = result.error
+      return
+    }
+
+    failedReviewJobs.value = result.jobs
+  }
+  catch (error) {
+    pendingReviewError.value = errorMessageFrom(error) ?? 'Unknown error'
+    failedReviewJobs.value = []
+  }
+  finally {
+    isLoadingFailedReviewJobs.value = false
+  }
+}
+
 async function openHealthCountInspector(key: HealthInspectorId) {
   activeHealthInspector.value = activeHealthInspector.value === key ? undefined : key
   if (activeHealthInspector.value !== key)
@@ -616,6 +651,7 @@ async function openHealthCountInspector(key: HealthInspectorId) {
   }
   if (key === 'pending-reviews') {
     await refreshPendingReviewItems()
+    await refreshFailedReviewJobs()
   }
 }
 
@@ -759,6 +795,33 @@ function beginPendingReviewEdit(item: ElectronPlastMemPendingReviewQueueItem) {
 
 function pendingReviewMemoryEditorKey(itemId: string, memoryId: string) {
   return `${itemId}:${memoryId}`
+}
+
+function failedReviewVisibleReviews(job: ElectronPlastMemFailedReviewJob) {
+  if (expandedFailedReviewJobIds.value.includes(job.id))
+    return job.review.pending_reviews
+
+  return job.review.pending_reviews.slice(0, failedReviewPreviewLimit)
+}
+
+function failedReviewHiddenReviewCount(job: ElectronPlastMemFailedReviewJob) {
+  if (expandedFailedReviewJobIds.value.includes(job.id))
+    return 0
+
+  return Math.max(0, job.review.pending_reviews.length - failedReviewPreviewLimit)
+}
+
+function failedReviewTotalMemoryCount(job: ElectronPlastMemFailedReviewJob) {
+  return job.review.pending_reviews.reduce((total, review) => total + review.memory_count, 0)
+}
+
+function toggleFailedReviewQueries(job: ElectronPlastMemFailedReviewJob) {
+  if (expandedFailedReviewJobIds.value.includes(job.id)) {
+    expandedFailedReviewJobIds.value = expandedFailedReviewJobIds.value.filter(id => id !== job.id)
+    return
+  }
+
+  expandedFailedReviewJobIds.value = [...expandedFailedReviewJobIds.value, job.id]
 }
 
 function beginPendingReviewMemoryEdit(item: ElectronPlastMemPendingReviewQueueItem, memory: ElectronPlastMemPendingReviewQueueMemory) {
@@ -913,6 +976,37 @@ async function dismissPendingReviewItem(item: ElectronPlastMemPendingReviewQueue
   }
   finally {
     mutatingPendingReviewItemId.value = ''
+  }
+}
+
+async function retryFailedReviewJob(job: ElectronPlastMemFailedReviewJob) {
+  if (mutatingFailedReviewJobId.value)
+    return
+
+  mutatingFailedReviewJobId.value = job.id
+  pendingReviewError.value = ''
+  try {
+    const result = await invokeRetryFailedReviewJob({
+      jobId: job.id,
+    })
+    if (result.error) {
+      pendingReviewError.value = result.error
+      return
+    }
+    if (!result.ok) {
+      pendingReviewError.value = tn('review-jobs.retry-failed')
+      await refreshFailedReviewJobs()
+      return
+    }
+
+    failedReviewJobs.value = failedReviewJobs.value.filter(current => current.id !== job.id)
+    await refreshHealth()
+  }
+  catch (error) {
+    pendingReviewError.value = errorMessageFrom(error) ?? 'Unknown error'
+  }
+  finally {
+    mutatingFailedReviewJobId.value = ''
   }
 }
 
@@ -1291,6 +1385,7 @@ watch(activeDetailPanel, (panel) => {
     void Promise.all([
       refreshHealth(),
       refreshPendingReviewItems(),
+      refreshFailedReviewJobs(),
     ])
   }
   else if (panel === 'recent') {
@@ -1338,6 +1433,7 @@ onMounted(() => {
   void refreshSidecarStatus()
   void refreshHealth()
   void refreshPendingReviewItems()
+  void refreshFailedReviewJobs()
   void refreshSemanticMemories()
   refreshTimer = setInterval(() => {
     void refreshStatus()
@@ -2006,6 +2102,10 @@ onBeforeUnmount(() => {
             v-else-if="activeHealthInspector === 'pending-reviews'"
             :class="['flex', 'flex-col', 'gap-3']"
           >
+            <Callout v-if="pendingReviewError" theme="orange" :label="tn('review-queue.error')">
+              {{ pendingReviewError }}
+            </Callout>
+
             <section :class="['flex', 'flex-col', 'gap-2']">
               <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
                 <span :class="['text-xs', 'font-semibold', 'text-amber-700', 'dark:text-amber-300']">
@@ -2389,6 +2489,153 @@ onBeforeUnmount(() => {
                       @click="beginPendingReviewEdit(item)"
                     />
                   </div>
+                </div>
+              </div>
+            </section>
+
+            <section :class="['flex', 'flex-col', 'gap-2']">
+              <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
+                <div :class="['flex', 'items-center', 'gap-2']">
+                  <span :class="['text-xs', 'font-semibold', 'text-rose-700', 'dark:text-rose-300']">
+                    {{ tn('review-jobs.title') }}
+                  </span>
+                  <span
+                    v-if="isLoadingFailedReviewJobs"
+                    :class="['text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']"
+                  >
+                    {{ tn('review-jobs.loading') }}
+                  </span>
+                </div>
+                <span :class="['rounded-full', 'bg-rose-500/15', 'px-2', 'py-0.5', 'text-[10px]', 'font-medium', 'text-rose-700', 'dark:text-rose-300']">
+                  {{ tn('review-jobs.count', { count: failedReviewJobCount }) }}
+                </span>
+              </div>
+              <p :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
+                {{ tn('review-jobs.description') }}
+              </p>
+              <div v-if="failedReviewJobs.length === 0" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
+                {{ tn('review-jobs.empty') }}
+              </div>
+              <div v-else :class="['flex', 'flex-col', 'gap-2']">
+                <div
+                  v-for="job in failedReviewJobs"
+                  :key="job.id"
+                  :class="['rounded-md', 'border', 'border-rose-300/35', 'bg-rose-50/60', 'dark:border-rose-400/20', 'dark:bg-rose-950/12']"
+                >
+                  <Collapsible :default="false">
+                    <template #trigger="slotProps">
+                      <div :class="['flex', 'items-center', 'justify-between', 'gap-3', 'px-3', 'py-2']">
+                        <button
+                          :class="['min-w-0', 'flex', 'flex-1', 'items-center', 'gap-2', 'text-left']"
+                          @click="slotProps.setVisible(!slotProps.visible)"
+                        >
+                          <div
+                            :class="[
+                              'i-solar:alt-arrow-down-linear',
+                              'shrink-0',
+                              'text-base',
+                              'text-neutral-400',
+                              'transition-transform',
+                              'duration-250',
+                              'dark:text-neutral-500',
+                              slotProps.visible ? 'rotate-180' : 'rotate-0',
+                            ]"
+                          />
+                          <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
+                            <span :class="['truncate', 'text-xs', 'font-semibold', 'text-neutral-800', 'dark:text-neutral-100']">
+                              {{ job.review.title }}
+                            </span>
+                            <div :class="['flex', 'flex-wrap', 'gap-x-2', 'gap-y-0.5', 'text-[10px]', 'text-neutral-500', 'dark:text-neutral-400']">
+                              <span>{{ tn('review-jobs.attempts', { attempts: job.attempts, max: job.max_attempts }) }}</span>
+                              <span>{{ tn('review-jobs.failed-at', { time: formatMemoryTime(job.done_at ?? job.run_at) }) }}</span>
+                              <span>{{ tn('review-jobs.review-summary', { queries: job.review.pending_reviews.length, memories: failedReviewTotalMemoryCount(job) }) }}</span>
+                            </div>
+                          </div>
+                        </button>
+                        <div :class="['flex', 'shrink-0', 'items-center', 'gap-2']">
+                          <Collapsible :default="false">
+                            <template #trigger="errorSlotProps">
+                              <button
+                                :class="['i-solar:danger-circle-bold-duotone', 'text-lg', 'text-rose-600', 'transition', 'hover:scale-105', 'dark:text-rose-300']"
+                                :aria-label="errorSlotProps.visible ? tn('review-jobs.hide-error') : tn('review-jobs.show-error')"
+                                @click.stop="errorSlotProps.setVisible(!errorSlotProps.visible)"
+                              />
+                            </template>
+                            <div :class="['absolute', 'right-16', 'z-20', 'mt-2', 'max-h-48', 'w-[min(28rem,calc(100vw-4rem))]', 'overflow-auto', 'rounded-md', 'border', 'border-rose-300/50', 'bg-white', 'p-3', 'shadow-lg', 'dark:border-rose-400/30', 'dark:bg-neutral-950']">
+                              <p :class="['whitespace-pre-wrap', 'break-words', 'text-[11px]', 'text-rose-800', 'leading-5', 'dark:text-rose-200']">
+                                {{ job.error }}
+                              </p>
+                            </div>
+                          </Collapsible>
+                          <span :class="['rounded-full', 'bg-rose-500/15', 'px-2', 'py-0.5', 'text-[10px]', 'font-semibold', 'uppercase', 'text-rose-700', 'dark:text-rose-300']">
+                            {{ job.status }}
+                          </span>
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            icon="i-solar:restart-bold-duotone"
+                            :loading="mutatingFailedReviewJobId === job.id"
+                            :disabled="Boolean(mutatingFailedReviewJobId)"
+                            :label="tn('review-jobs.retry')"
+                            @click.stop="retryFailedReviewJob(job)"
+                          />
+                        </div>
+                      </div>
+                    </template>
+
+                    <div :class="['border-t', 'border-rose-200/60', 'px-3', 'py-2.5', 'dark:border-rose-400/15']">
+                      <div :class="['mb-2', 'flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-500', 'dark:text-neutral-400']">
+                        <span :class="['shrink-0', 'font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
+                          {{ job.id.slice(0, 12) }}
+                        </span>
+                        <span>{{ tn('review-jobs.reviewed-at', { time: formatMemoryTime(job.review.reviewed_at) }) }}</span>
+                      </div>
+                      <div :class="['grid', 'grid-cols-1', 'gap-2']">
+                        <div :class="['flex', 'flex-col', 'gap-1.5', 'rounded-md', 'bg-white/45', 'p-2', 'dark:bg-neutral-950/25']">
+                          <div :class="['flex', 'flex-wrap', 'gap-1.5']">
+                            <span
+                              v-for="(review, reviewIndex) in failedReviewVisibleReviews(job)"
+                              :key="`${job.id}:review:${reviewIndex}`"
+                              :class="['max-w-full', 'rounded-full', 'bg-white/80', 'px-2', 'py-1', 'text-[11px]', 'text-neutral-700', 'shadow-sm', 'dark:bg-neutral-900/80', 'dark:text-neutral-200']"
+                            >
+                              {{ review.query }}
+                            </span>
+                            <button
+                              v-if="failedReviewHiddenReviewCount(job) > 0"
+                              :class="['rounded-full', 'bg-neutral-200/70', 'px-2', 'py-1', 'text-[11px]', 'text-neutral-500', 'transition', 'hover:bg-neutral-300/80', 'hover:text-neutral-700', 'dark:bg-neutral-800/70', 'dark:text-neutral-400', 'dark:hover:bg-neutral-700/80', 'dark:hover:text-neutral-200']"
+                              @click="toggleFailedReviewQueries(job)"
+                            >
+                              {{ tn('review-jobs.more-queries', { count: failedReviewHiddenReviewCount(job) }) }}
+                            </button>
+                            <button
+                              v-else-if="job.review.pending_reviews.length > failedReviewPreviewLimit"
+                              :class="['rounded-full', 'bg-neutral-200/70', 'px-2', 'py-1', 'text-[11px]', 'text-neutral-500', 'transition', 'hover:bg-neutral-300/80', 'hover:text-neutral-700', 'dark:bg-neutral-800/70', 'dark:text-neutral-400', 'dark:hover:bg-neutral-700/80', 'dark:hover:text-neutral-200']"
+                              @click="toggleFailedReviewQueries(job)"
+                            >
+                              {{ tn('review-jobs.collapse-queries') }}
+                            </button>
+                          </div>
+                        </div>
+                        <div :class="['flex', 'flex-col', 'gap-1.5']">
+                          <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
+                            {{ tn('review-jobs.context-messages') }}
+                          </span>
+                          <div
+                            v-for="(message, messageIndex) in job.review.context_messages"
+                            :key="`${job.id}:message:${messageIndex}`"
+                            :class="['rounded-md', 'bg-white/65', 'p-2', 'dark:bg-neutral-950/35']"
+                          >
+                            <span :class="['text-[10px]', 'font-semibold', 'text-neutral-500', 'dark:text-neutral-400']">
+                              {{ message.speaker }}
+                            </span>
+                            <p :class="['mt-0.5', 'text-xs', 'text-neutral-700', 'leading-5', 'dark:text-neutral-200']">
+                              {{ message.content }}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </Collapsible>
                 </div>
               </div>
             </section>

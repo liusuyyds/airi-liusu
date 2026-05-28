@@ -18,8 +18,10 @@ import {
   getPlastMemRuntimeStatus,
   ingestPlastMemChatMessages,
   retrievePlastMemChatContext,
+  retrievePlastMemFailedReviewJobs,
   retrievePlastMemPendingReviewQueue,
   retrievePlastMemSemanticMemoryRaw,
+  retryPlastMemFailedReviewJob,
   rewritePlastMemPendingReviewQueueItem,
   setPlastMemSemanticMemoryInvalid,
   updatePlastMemConversationMessage,
@@ -536,6 +538,65 @@ describe('plast mem Electron service', () => {
 
     expect(timeoutDelays).toContain(2500)
     expect(timeoutDelays).toContain(15000)
+  })
+
+  it('lists and retries failed memory review jobs through dedicated review job endpoints', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        {
+          id: 'JID-01HYX9N2F7VD57G3N6Q5M2Y0BM',
+          status: 'Killed',
+          attempts: 5,
+          max_attempts: 5,
+          run_at: '2026-05-22T09:00:00Z',
+          done_at: '2026-05-22T09:00:30Z',
+          error: 'OpenAI-compatible request failed after retries.',
+          review: {
+            title: 'Remember concise answers.',
+            pending_reviews: [
+              {
+                query: 'Remember concise answers.',
+                memory_count: 1,
+              },
+            ],
+            context_messages: [
+              {
+                speaker: 'user',
+                content: 'Please be brief.',
+              },
+            ],
+            reviewed_at: '2026-05-22T09:00:00Z',
+          },
+        },
+      ]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: true,
+        job_id: 'JID-01HYX9N2F7VD57G3N6Q5M2Y0BM',
+      }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const listResult = await retrievePlastMemFailedReviewJobs({ limit: 8 })
+    const retryResult = await retryPlastMemFailedReviewJob({
+      jobId: 'JID-01HYX9N2F7VD57G3N6Q5M2Y0BM',
+    })
+
+    expect(listResult.enabled).toBe(true)
+    expect(listResult.jobs).toHaveLength(1)
+    expect(listResult.jobs[0]?.status).toBe('Killed')
+    expect(listResult.jobs[0]?.error).toBe('OpenAI-compatible request failed after retries.')
+    expect(listResult.jobs[0]?.review.title).toBe('Remember concise answers.')
+    expect(retryResult.ok).toBe(true)
+    expect(retryResult.jobId).toBe('JID-01HYX9N2F7VD57G3N6Q5M2Y0BM')
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://127.0.0.1:3000/api/v0/review_jobs/failures')
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      limit: 8,
+    })
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('http://127.0.0.1:3000/api/v0/review_jobs/retry')
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      job_id: 'JID-01HYX9N2F7VD57G3N6Q5M2Y0BM',
+    })
   })
 
   it('lists pending review queue items through review_queue raw endpoint', async () => {

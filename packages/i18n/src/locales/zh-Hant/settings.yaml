@@ -748,6 +748,24 @@ pages:
                 rejected: 已拒絕
               time: '上次寫入：{time}'
               title: 回覆後捕獲
+          review-jobs:
+            attempts: '嘗試次數：{attempts}/{max}'
+            collapse-queries: 收起
+            context-messages: 上下文
+            count: '{count} 個失敗'
+            description: 顯示已耗盡自動重試或目前失敗的記憶復習 worker 任務。
+            empty: 目前沒有失敗的記憶復習任務。
+            failed-at: '失敗時間：{time}'
+            hide-error: 隱藏錯誤
+            loading: 正在載入失敗任務...
+            memory-count: '{count} 條關聯記憶'
+            more-queries: '還有 {count} 條'
+            reviewed-at: '復習時間：{time}'
+            review-summary: '{queries} 條查詢 · {memories} 條關聯記憶'
+            retry: 重試
+            retry-failed: 重試記憶復習任務失敗。
+            show-error: 查看錯誤
+            title: 失敗的復習任務
           recent-memories:
             title: 最近記憶
             refresh: 重新整理

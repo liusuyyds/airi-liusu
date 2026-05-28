@@ -20,6 +20,8 @@ import type {
   ElectronPlastMemDismissPendingReviewQueueItemResult,
   ElectronPlastMemEpisodeSpansPayload,
   ElectronPlastMemEpisodeSpansResult,
+  ElectronPlastMemFailedReviewJobListPayload,
+  ElectronPlastMemFailedReviewJobListResult,
   ElectronPlastMemHealthPayload,
   ElectronPlastMemHealthResult,
   ElectronPlastMemIngestChatMessagesPayload,
@@ -34,6 +36,8 @@ import type {
   ElectronPlastMemRetrieveChatContextResult,
   ElectronPlastMemRetrieveMemoryRawPayload,
   ElectronPlastMemRetrieveMemoryRawResult,
+  ElectronPlastMemRetryFailedReviewJobPayload,
+  ElectronPlastMemRetryFailedReviewJobResult,
   ElectronPlastMemRewritePendingReviewQueueItemPayload,
   ElectronPlastMemRewritePendingReviewQueueItemResult,
   ElectronPlastMemRuntimeStatus,
@@ -69,6 +73,7 @@ import {
   electronPlastMemDeleteSemanticMemory,
   electronPlastMemDismissPendingReviewQueueItem,
   electronPlastMemEpisodeSpans,
+  electronPlastMemFailedReviewJobs,
   electronPlastMemGetConfig,
   electronPlastMemGetRuntimeStatus,
   electronPlastMemGetSidecarStatus,
@@ -81,6 +86,7 @@ import {
   electronPlastMemRestartSidecar,
   electronPlastMemRetrieveChatContext,
   electronPlastMemRetrieveMemoryRaw,
+  electronPlastMemRetryFailedReviewJob,
   electronPlastMemRewritePendingReviewQueueItem,
   electronPlastMemSemanticMemoryRaw,
   electronPlastMemSetSemanticMemoryInvalid,
@@ -123,6 +129,8 @@ const pendingReviewQueueRewritePath = 'api/v0/review_queue/rewrite'
 const pendingReviewQueueApprovePath = 'api/v0/review_queue/approve'
 const pendingReviewQueueDismissPath = 'api/v0/review_queue/dismiss'
 const pendingReviewQueueUpdateMemoryPath = 'api/v0/review_queue/update_memory'
+const failedReviewJobsPath = 'api/v0/review_jobs/failures'
+const failedReviewJobRetryPath = 'api/v0/review_jobs/retry'
 const semanticMemorySetInvalidPath = 'api/v0/semantic_memory/set_invalid'
 const semanticMemoryUpdatePath = 'api/v0/semantic_memory/update'
 const semanticMemoryDeletePath = 'api/v0/semantic_memory/delete'
@@ -1747,6 +1755,114 @@ export async function retrievePlastMemPendingReviewQueue(payload: ElectronPlastM
   }
 }
 
+export async function retrievePlastMemFailedReviewJobs(payload: ElectronPlastMemFailedReviewJobListPayload = {}): Promise<ElectronPlastMemFailedReviewJobListResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: false,
+      jobs: [],
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: true,
+      jobs: [],
+    }
+  }
+
+  try {
+    const baseUrl = requirePlastMemServiceBaseUrl(config)
+    const response = await postJsonText(baseUrl, failedReviewJobsPath, {
+      limit: payload.limit ?? 20,
+    }, config.requestTimeoutMsec)
+    const jobs = parseJsonResponse<ElectronPlastMemFailedReviewJobListResult['jobs']>(
+      response.text,
+      [],
+      'review-jobs-failures',
+    )
+
+    return {
+      baseUrl,
+      enabled: true,
+      jobs,
+      statusCode: response.statusCode,
+    }
+  }
+  catch (error) {
+    logPlastMemWarn('review-jobs-failures:error', {
+      error: errorMessageFrom(error) ?? String(error),
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: config.enabled,
+      error: errorMessageFrom(error) ?? String(error),
+      jobs: [],
+    }
+  }
+}
+
+export async function retryPlastMemFailedReviewJob(payload: ElectronPlastMemRetryFailedReviewJobPayload): Promise<ElectronPlastMemRetryFailedReviewJobResult> {
+  const config = resolvePlastMemRuntimeConfig()
+
+  if (!config.enabled) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: false,
+      jobId: payload.jobId,
+      ok: false,
+    }
+  }
+
+  if (payload.ownerId && isStaleChatBridgeOwner(payload.ownerId)) {
+    return {
+      baseUrl: config.baseUrl,
+      enabled: true,
+      jobId: payload.jobId,
+      ok: false,
+    }
+  }
+
+  try {
+    const baseUrl = requirePlastMemServiceBaseUrl(config)
+    const response = await postJsonText(baseUrl, failedReviewJobRetryPath, {
+      job_id: payload.jobId,
+    }, config.requestTimeoutMsec)
+    const result = parseJsonResponse<{
+      job_id?: string
+      ok?: boolean
+    }>(
+      response.text,
+      {},
+      'review-jobs-retry',
+    )
+
+    return {
+      baseUrl,
+      enabled: true,
+      jobId: result.job_id ?? payload.jobId,
+      ok: result.ok === true,
+      statusCode: response.statusCode,
+    }
+  }
+  catch (error) {
+    logPlastMemWarn('review-jobs-retry:error', {
+      error: errorMessageFrom(error) ?? String(error),
+      jobId: payload.jobId,
+    })
+    return {
+      baseUrl: config.baseUrl,
+      enabled: config.enabled,
+      error: errorMessageFrom(error) ?? String(error),
+      jobId: payload.jobId,
+      ok: false,
+    }
+  }
+}
+
 export async function rewritePlastMemPendingReviewQueueItem(payload: ElectronPlastMemRewritePendingReviewQueueItemPayload): Promise<ElectronPlastMemRewritePendingReviewQueueItemResult> {
   const config = resolvePlastMemRuntimeConfig()
 
@@ -2173,6 +2289,8 @@ export function createPlastMemService(params: {
   defineInvokeHandler(params.context, electronPlastMemRecentMemoryRaw, payload => retrievePlastMemRecentMemoryRaw(payload))
   defineInvokeHandler(params.context, electronPlastMemSemanticMemoryRaw, payload => retrievePlastMemSemanticMemoryRaw(payload))
   defineInvokeHandler(params.context, electronPlastMemPendingReviewQueue, payload => retrievePlastMemPendingReviewQueue(payload))
+  defineInvokeHandler(params.context, electronPlastMemFailedReviewJobs, payload => retrievePlastMemFailedReviewJobs(payload))
+  defineInvokeHandler(params.context, electronPlastMemRetryFailedReviewJob, payload => retryPlastMemFailedReviewJob(payload))
   defineInvokeHandler(params.context, electronPlastMemRewritePendingReviewQueueItem, payload => rewritePlastMemPendingReviewQueueItem(payload))
   defineInvokeHandler(params.context, electronPlastMemApprovePendingReviewQueueItem, payload => approvePlastMemPendingReviewQueueItem(payload))
   defineInvokeHandler(params.context, electronPlastMemDismissPendingReviewQueueItem, payload => dismissPlastMemPendingReviewQueueItem(payload))

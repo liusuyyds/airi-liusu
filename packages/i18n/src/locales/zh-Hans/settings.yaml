@@ -1008,6 +1008,24 @@ pages:
               edit-memory: 修改记忆
               rewrite: 改写
               save: 保存
+          review-jobs:
+            attempts: '尝试次数：{attempts}/{max}'
+            collapse-queries: 收起
+            context-messages: 上下文
+            count: '{count} 个失败'
+            description: 显示自动重试耗尽或当前失败的记忆复习 worker 任务。
+            empty: 当前没有失败的记忆复习任务。
+            failed-at: '失败时间：{time}'
+            hide-error: 隐藏错误
+            loading: 正在加载失败任务...
+            memory-count: '{count} 条关联记忆'
+            more-queries: '还有 {count} 条'
+            reviewed-at: '复习时间：{time}'
+            review-summary: '{queries} 条查询 · {memories} 条关联记忆'
+            retry: 重试
+            retry-failed: 重试记忆复习任务失败。
+            show-error: 查看错误
+            title: 失败的复习任务
           recent-memories:
             title: 最近记忆
             refresh: 刷新

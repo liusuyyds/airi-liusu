@@ -12,6 +12,7 @@ mod health;
 mod model_health;
 mod recent_memory;
 mod retrieve_memory;
+mod review_jobs;
 mod review_queue;
 mod semantic_memory;
 
@@ -29,6 +30,11 @@ pub use recent_memory::RecentMemory;
 pub use retrieve_memory::{
   ContextPreRetrieve, EpisodicMemoryResult, RetrieveMemory, RetrieveMemoryRawResult,
   SemanticMemoryResult,
+};
+pub use review_jobs::{
+  FailedReviewJob, FailedReviewJobContextMessage, FailedReviewJobList,
+  FailedReviewJobPendingReview, FailedReviewJobRetry, FailedReviewJobRetryResult,
+  FailedReviewJobReview,
 };
 pub use review_queue::{
   PendingReviewQueueActionResult, PendingReviewQueueApprove, PendingReviewQueueDismiss,
@@ -56,6 +62,8 @@ pub fn app() -> Router<AppState> {
     .routes(routes!(review_queue::review_queue_update_memory))
     .routes(routes!(review_queue::review_queue_approve))
     .routes(routes!(review_queue::review_queue_dismiss))
+    .routes(routes!(review_jobs::review_job_failures))
+    .routes(routes!(review_jobs::review_job_retry))
     .routes(routes!(retrieve_memory::retrieve_memory))
     .routes(routes!(retrieve_memory::retrieve_memory_raw))
     .routes(routes!(retrieve_memory::context_pre_retrieve))
@@ -110,6 +118,13 @@ pub fn app() -> Router<AppState> {
     PendingReviewQueueApprove,
     PendingReviewQueueDismiss,
     PendingReviewQueueActionResult,
+    FailedReviewJob,
+    FailedReviewJobReview,
+    FailedReviewJobPendingReview,
+    FailedReviewJobContextMessage,
+    FailedReviewJobList,
+    FailedReviewJobRetry,
+    FailedReviewJobRetryResult,
     SemanticMemoryList,
     SemanticMemorySetInvalid,
     SemanticMemoryUpdate,
@@ -158,6 +173,13 @@ pub struct ApiDoc;
     PendingReviewQueueApprove,
     PendingReviewQueueDismiss,
     PendingReviewQueueActionResult,
+    FailedReviewJob,
+    FailedReviewJobReview,
+    FailedReviewJobPendingReview,
+    FailedReviewJobContextMessage,
+    FailedReviewJobList,
+    FailedReviewJobRetry,
+    FailedReviewJobRetryResult,
     SemanticMemoryList,
     SemanticMemorySetInvalid,
     SemanticMemoryUpdate,

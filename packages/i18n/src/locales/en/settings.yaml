@@ -1042,6 +1042,24 @@ pages:
               edit-memory: Edit memory
               rewrite: Rewrite
               save: Save
+          review-jobs:
+            attempts: 'Attempts: {attempts}/{max}'
+            collapse-queries: Collapse
+            context-messages: Context
+            count: '{count} failed'
+            description: Shows memory-review worker jobs that exhausted automatic retries or are currently failed.
+            empty: No failed memory-review tasks right now.
+            failed-at: 'Failed: {time}'
+            hide-error: Hide error
+            loading: Loading failures...
+            memory-count: '{count} linked memories'
+            more-queries: '+{count} more'
+            reviewed-at: 'Reviewed: {time}'
+            review-summary: '{queries} queries · {memories} linked memories'
+            retry: Retry
+            retry-failed: Failed to retry the memory-review task.
+            show-error: Show error
+            title: Failed review tasks
           recent-memories:
             title: Recent memories
             refresh: Refresh

@@ -3717,6 +3717,7 @@ dependencies = [
  "schemars",
  "sea-orm",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "utoipa",

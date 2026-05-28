@@ -640,6 +640,49 @@ export interface ElectronPlastMemPendingReviewQueueResult {
   statusCode?: number
 }
 
+export interface ElectronPlastMemFailedReviewJob {
+  attempts: number
+  done_at?: string | null
+  error: string
+  id: string
+  max_attempts: number
+  review: {
+    context_messages: Array<{ content: string, speaker: string }>
+    pending_reviews: Array<{ memory_count: number, query: string }>
+    reviewed_at: string
+    title: string
+  }
+  run_at: string
+  status: string
+}
+
+export interface ElectronPlastMemFailedReviewJobListPayload {
+  limit?: number
+  ownerId?: string
+}
+
+export interface ElectronPlastMemFailedReviewJobListResult {
+  baseUrl?: string
+  enabled: boolean
+  error?: string
+  jobs: ElectronPlastMemFailedReviewJob[]
+  statusCode?: number
+}
+
+export interface ElectronPlastMemRetryFailedReviewJobPayload {
+  jobId: string
+  ownerId?: string
+}
+
+export interface ElectronPlastMemRetryFailedReviewJobResult {
+  baseUrl?: string
+  enabled: boolean
+  error?: string
+  jobId: string
+  ok: boolean
+  statusCode?: number
+}
+
 export interface ElectronPlastMemRewritePendingReviewQueueItemPayload {
   itemId: string
   ownerId?: string
@@ -780,6 +823,8 @@ export const electronPlastMemRecentMemoryRaw = defineInvokeEventa<ElectronPlastM
 export const electronPlastMemUpdateEpisodicMemory = defineInvokeEventa<ElectronPlastMemUpdateEpisodicMemoryResult, ElectronPlastMemUpdateEpisodicMemoryPayload>('eventa:invoke:electron:plast-mem:episodic-memory:update')
 export const electronPlastMemSemanticMemoryRaw = defineInvokeEventa<ElectronPlastMemSemanticMemoryRawResult, ElectronPlastMemSemanticMemoryRawPayload>('eventa:invoke:electron:plast-mem:semantic-memory-raw')
 export const electronPlastMemPendingReviewQueue = defineInvokeEventa<ElectronPlastMemPendingReviewQueueResult, ElectronPlastMemPendingReviewQueuePayload>('eventa:invoke:electron:plast-mem:review-queue')
+export const electronPlastMemFailedReviewJobs = defineInvokeEventa<ElectronPlastMemFailedReviewJobListResult, ElectronPlastMemFailedReviewJobListPayload>('eventa:invoke:electron:plast-mem:review-jobs:failures')
+export const electronPlastMemRetryFailedReviewJob = defineInvokeEventa<ElectronPlastMemRetryFailedReviewJobResult, ElectronPlastMemRetryFailedReviewJobPayload>('eventa:invoke:electron:plast-mem:review-jobs:retry')
 export const electronPlastMemRewritePendingReviewQueueItem = defineInvokeEventa<ElectronPlastMemRewritePendingReviewQueueItemResult, ElectronPlastMemRewritePendingReviewQueueItemPayload>('eventa:invoke:electron:plast-mem:review-queue:rewrite')
 export const electronPlastMemApprovePendingReviewQueueItem = defineInvokeEventa<ElectronPlastMemApprovePendingReviewQueueItemResult, ElectronPlastMemApprovePendingReviewQueueItemPayload>('eventa:invoke:electron:plast-mem:review-queue:approve')
 export const electronPlastMemDismissPendingReviewQueueItem = defineInvokeEventa<ElectronPlastMemDismissPendingReviewQueueItemResult, ElectronPlastMemDismissPendingReviewQueueItemPayload>('eventa:invoke:electron:plast-mem:review-queue:dismiss')
