@@ -180,6 +180,8 @@ export const useChatSyncStore = defineStore('stage-tamagotchi:chat-sync', () => 
   const stopSyncWatchers: Array<() => void> = []
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined
   let channel: BroadcastChannel | null = null
+  let commandQueue = Promise.resolve()
+  let commandGeneration = 0
 
   function post(message: ChatSyncMessage) {
     try {
@@ -442,6 +444,27 @@ export const useChatSyncStore = defineStore('stage-tamagotchi:chat-sync', () => 
     }
   }
 
+  function enqueueCommand(message: Extract<ChatSyncMessage, { type: 'command' }>) {
+    const generation = commandGeneration
+    const queued = commandQueue.then(async () => {
+      if (generation !== commandGeneration)
+        return
+
+      await handleCommand(message)
+    })
+
+    commandQueue = queued.catch((error) => {
+      logChatSyncError('command queue failed', error, {
+        mode: mode.value,
+        authorityId: authorityId.value,
+        requestId: message.requestId,
+        senderId: message.senderId,
+        command: message.command,
+        payload: previewChatSyncPayload(message.payload),
+      })
+    })
+  }
+
   function handleResponse(message: Extract<ChatSyncMessage, { type: 'response' }>) {
     const pending = pendingRequests.get(message.requestId)
     if (!pending)
@@ -486,7 +509,7 @@ export const useChatSyncStore = defineStore('stage-tamagotchi:chat-sync', () => 
         applyStreamSnapshot(message.snapshot)
         return
       case 'command':
-        void handleCommand(message)
+        enqueueCommand(message)
         return
       case 'response':
         handleResponse(message)
@@ -619,6 +642,8 @@ export const useChatSyncStore = defineStore('stage-tamagotchi:chat-sync', () => 
   }
 
   function dispose() {
+    commandGeneration += 1
+    commandQueue = Promise.resolve()
     stopWatchers()
     clearHeartbeat()
     resetPendingRequests()

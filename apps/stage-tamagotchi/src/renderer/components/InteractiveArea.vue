@@ -14,7 +14,7 @@ import { useLlmToolsStore } from '@proj-airi/stage-ui/stores/llm-tools'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
 import { cleanupNocturneMemoryContext, formatTokenCount, formatTokenCountCN } from '@proj-airi/stage-ui/utils'
 import { BasicTextarea } from '@proj-airi/ui'
-import { useDebounceFn, useLocalStorage } from '@vueuse/core'
+import { useLocalStorage } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from 'reka-ui'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
@@ -56,6 +56,7 @@ const { systemPrompt } = storeToRefs(characterStore)
  */
 const contextTokensDisplay = ref(0)
 let contextTokenComputeTimer: ReturnType<typeof setTimeout> | undefined
+let debouncedComputeTimer: ReturnType<typeof setTimeout> | undefined
 
 function buildContextArray(): unknown[] {
   const cleanMessages = cleanupNocturneMemoryContext(messages.value as ChatHistoryItem[])
@@ -165,7 +166,18 @@ function scheduleContextTokenCompute(delayMs = 0) {
   }, delayMs)
 }
 
-const debouncedCompute = useDebounceFn(() => scheduleContextTokenCompute(), 250)
+function debouncedCompute() {
+  if (debouncedComputeTimer)
+    clearTimeout(debouncedComputeTimer)
+
+  debouncedComputeTimer = setTimeout(() => {
+    debouncedComputeTimer = undefined
+    if (isUnmounted)
+      return
+
+    scheduleContextTokenCompute()
+  }, 250)
+}
 
 // NOTICE: 只监听 messages 长度和 streamingMessage，不监听 sending。
 // 将 sending 加入依赖会导致流式→空闲过渡期间，重量级 tiktoken 计算在
@@ -363,6 +375,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   isUnmounted = true
+
+  if (debouncedComputeTimer) {
+    clearTimeout(debouncedComputeTimer)
+    debouncedComputeTimer = undefined
+  }
 
   if (contextTokenComputeTimer)
     clearTimeout(contextTokenComputeTimer)

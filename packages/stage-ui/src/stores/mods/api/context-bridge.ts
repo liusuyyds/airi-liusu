@@ -50,6 +50,30 @@ export function normalizeContextSnapshot<C extends Pick<ChatStreamEventContext, 
   }
 }
 
+function cloneContextSnapshot<C extends Pick<ChatStreamEventContext, 'contexts'>>(context: C): C {
+  return safeClone(normalizeContextSnapshot(context))
+}
+
+// NOTICE:
+// Token hooks fire for every streamed chunk, but the surrounding context object is stable for
+// the lifetime of one stream. Cache the normalized deep clone by object identity so repeated
+// token events do not re-clone the full context graph on every chunk.
+// Stream-end and assistant-end still take a fresh snapshot so late finalization stays accurate.
+// Removal condition:
+// If the orchestrator starts mutating ChatStreamEventContext in place between token events, this
+// cache must be replaced with a versioned invalidation strategy.
+const tokenContextSnapshots = new WeakMap<ChatStreamEventContext, ChatStreamEventContext>()
+
+function cloneTokenContextSnapshot(context: ChatStreamEventContext) {
+  const cachedSnapshot = tokenContextSnapshots.get(context)
+  if (cachedSnapshot)
+    return cachedSnapshot
+
+  const snapshot = cloneContextSnapshot(context)
+  tokenContextSnapshots.set(context, snapshot)
+  return snapshot
+}
+
 export const useContextBridgeStore = defineStore('mods:api:context-bridge', () => {
   const consumerRegistrationEvents = [
     'input:text',
@@ -101,7 +125,12 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
 
   const disposeHookFns = ref<Array<() => void>>([])
   let remoteStreamGuard: { sessionId: string, generation: number } | null = null
+  let remoteStreamDepth = 0
   let initialized = false
+
+  function isMirroringRemoteStream() {
+    return remoteStreamDepth > 0
+  }
 
   function recordContextIngestRejected(options: {
     channel: 'server' | 'broadcast' | 'input'
@@ -408,8 +437,6 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
       registerConsumers()
       disposeHookFns.value.push(serverChannelStore.onReconnected(() => registerConsumers()))
 
-      let isProcessingRemoteStream = false
-
       const { stop } = watch(incomingContext, (event) => {
         if (!event)
           return
@@ -707,52 +734,52 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
 
       disposeHookFns.value.push(
         chatOrchestrator.onBeforeMessageComposed(async (message, context) => {
-          if (isProcessingRemoteStream)
+          if (isMirroringRemoteStream())
             return
 
-          broadcastStreamEvent({ type: 'before-compose', message: safeClone(message), sessionId: chatSession.activeSessionId, context: safeClone(normalizeContextSnapshot(context)) })
+          broadcastStreamEvent({ type: 'before-compose', message: safeClone(message), sessionId: chatSession.activeSessionId, context: cloneContextSnapshot(context) })
         }),
         chatOrchestrator.onAfterMessageComposed(async (message, context) => {
-          if (isProcessingRemoteStream)
+          if (isMirroringRemoteStream())
             return
 
-          broadcastStreamEvent({ type: 'after-compose', message: safeClone(message), sessionId: chatSession.activeSessionId, context: safeClone(normalizeContextSnapshot(context)) })
+          broadcastStreamEvent({ type: 'after-compose', message: safeClone(message), sessionId: chatSession.activeSessionId, context: cloneContextSnapshot(context) })
         }),
         chatOrchestrator.onBeforeSend(async (message, context) => {
-          if (isProcessingRemoteStream)
+          if (isMirroringRemoteStream())
             return
 
-          broadcastStreamEvent({ type: 'before-send', message: safeClone(message), sessionId: chatSession.activeSessionId, context: safeClone(normalizeContextSnapshot(context)) })
+          broadcastStreamEvent({ type: 'before-send', message: safeClone(message), sessionId: chatSession.activeSessionId, context: cloneContextSnapshot(context) })
         }),
         chatOrchestrator.onAfterSend(async (message, context) => {
-          if (isProcessingRemoteStream)
+          if (isMirroringRemoteStream())
             return
 
-          broadcastStreamEvent({ type: 'after-send', message: safeClone(message), sessionId: chatSession.activeSessionId, context: safeClone(normalizeContextSnapshot(context)) })
+          broadcastStreamEvent({ type: 'after-send', message: safeClone(message), sessionId: chatSession.activeSessionId, context: cloneContextSnapshot(context) })
         }),
         chatOrchestrator.onTokenLiteral(async (literal, context) => {
-          if (isProcessingRemoteStream)
+          if (isMirroringRemoteStream())
             return
 
-          broadcastStreamEvent({ type: 'token-literal', literal, sessionId: chatSession.activeSessionId, context: safeClone(normalizeContextSnapshot(context)) })
+          broadcastStreamEvent({ type: 'token-literal', literal, sessionId: chatSession.activeSessionId, context: cloneTokenContextSnapshot(context) })
         }),
         chatOrchestrator.onTokenSpecial(async (special, context) => {
-          if (isProcessingRemoteStream)
+          if (isMirroringRemoteStream())
             return
 
-          broadcastStreamEvent({ type: 'token-special', special, sessionId: chatSession.activeSessionId, context: safeClone(normalizeContextSnapshot(context)) })
+          broadcastStreamEvent({ type: 'token-special', special, sessionId: chatSession.activeSessionId, context: cloneTokenContextSnapshot(context) })
         }),
         chatOrchestrator.onStreamEnd(async (context) => {
-          if (isProcessingRemoteStream)
+          if (isMirroringRemoteStream())
             return
 
-          broadcastStreamEvent({ type: 'stream-end', sessionId: chatSession.activeSessionId, context: safeClone(normalizeContextSnapshot(context)) })
+          broadcastStreamEvent({ type: 'stream-end', sessionId: chatSession.activeSessionId, context: cloneContextSnapshot(context) })
         }),
         chatOrchestrator.onAssistantResponseEnd(async (message, context) => {
-          if (isProcessingRemoteStream)
+          if (isMirroringRemoteStream())
             return
 
-          broadcastStreamEvent({ type: 'assistant-end', message: safeClone(message), sessionId: chatSession.activeSessionId, context: safeClone(normalizeContextSnapshot(context)) })
+          broadcastStreamEvent({ type: 'assistant-end', message: safeClone(message), sessionId: chatSession.activeSessionId, context: cloneContextSnapshot(context) })
         }),
 
         chatOrchestrator.onAssistantMessage(async (message, _messageText, context) => {
@@ -805,7 +832,7 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
         if (!event)
           return
 
-        isProcessingRemoteStream = true
+        remoteStreamDepth += 1
 
         try {
           // Use the receiver's active session to avoid clobbering chat state when events come from other windows/devtools.
@@ -874,7 +901,7 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
           }
         }
         finally {
-          isProcessingRemoteStream = false
+          remoteStreamDepth = Math.max(0, remoteStreamDepth - 1)
         }
       })
       disposeHookFns.value.push(stopIncomingStreamWatch)
@@ -903,12 +930,20 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
         })
       }
 
-      for (const fn of disposeHookFns.value) {
-        fn()
+      const currentDisposeHooks = disposeHookFns.value
+      disposeHookFns.value = []
+      for (const fn of currentDisposeHooks) {
+        try {
+          fn()
+        }
+        catch (error) {
+          console.warn('[context-bridge] dispose hook failed:', errorMessageFrom(error) ?? String(error))
+        }
       }
 
       initialized = false
       remoteStreamGuard = null
+      remoteStreamDepth = 0
 
       for (const [requestId, waiter] of sparkNotifyBridgeWaiters) {
         if (waiter.timeout)
@@ -917,10 +952,9 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
       }
     }
     finally {
+      disposeHookFns.value = []
       mutex.release()
     }
-
-    disposeHookFns.value = []
   }
 
   return {

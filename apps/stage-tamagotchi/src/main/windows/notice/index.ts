@@ -64,12 +64,30 @@ export function setupNoticeWindowManager(params: {
     open: async (payload: RequestWindowPayload) => {
       const handle = await manager.open(payload)
       return await new Promise<boolean>((resolve) => {
-        defineInvokeHandler(handle.context, noticeWindowEventa.windowAction, (action) => {
+        let settled = false
+        const cleanupWindowActionHandler = defineInvokeHandler(handle.context, noticeWindowEventa.windowAction, (action) => {
           if (!action?.id || action.id !== handle.id)
             return
-          resolve(action.action === 'confirm')
+
+          settle(action.action === 'confirm')
           safeClose(handle.window)
         })
+
+        const handleWindowClosed = () => {
+          settle(false)
+        }
+
+        function settle(result: boolean) {
+          if (settled)
+            return
+
+          settled = true
+          cleanupWindowActionHandler()
+          handle.window.removeListener('closed', handleWindowClosed)
+          resolve(result)
+        }
+
+        handle.window.once('closed', handleWindowClosed)
       })
     },
   }

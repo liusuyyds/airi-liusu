@@ -416,4 +416,67 @@ describe('useChatSyncStore authority ingest failures', async () => {
     authority.close()
     store.dispose()
   })
+
+  /**
+   * @example
+   * peer.postMessage({ type: 'command', command: 'ingest', payload: { text: 'first' } })
+   * peer.postMessage({ type: 'command', command: 'ingest', payload: { text: 'second' } })
+   * expect(maxConcurrentIngest).toBe(1)
+   */
+  it('serializes authority command handling to preserve chat state order', async () => {
+    let activeIngests = 0
+    let maxConcurrentIngests = 0
+    let resolveFirst: (() => void) | undefined
+    mockState.ingest.mockImplementation(async (text: string) => {
+      activeIngests += 1
+      maxConcurrentIngests = Math.max(maxConcurrentIngests, activeIngests)
+      if (text === 'first') {
+        await new Promise<void>((resolve) => {
+          resolveFirst = resolve
+        })
+      }
+      activeIngests -= 1
+    })
+
+    const store = useChatSyncStore()
+    store.initialize('authority')
+
+    const peer = new MockBroadcastChannel('airi:stage-tamagotchi:chat-sync')
+    peer.postMessage({
+      type: 'command',
+      requestId: 'req-serial-1',
+      senderId: 'peer',
+      command: 'ingest',
+      payload: {
+        text: 'first',
+        sessionId: 'session-1',
+      },
+    })
+    peer.postMessage({
+      type: 'command',
+      requestId: 'req-serial-2',
+      senderId: 'peer',
+      command: 'ingest',
+      payload: {
+        text: 'second',
+        sessionId: 'session-1',
+      },
+    })
+
+    await vi.waitFor(() => {
+      expect(mockState.ingest).toHaveBeenCalledTimes(1)
+    })
+    expect(mockState.ingest).toHaveBeenCalledWith('first', expect.any(Object), 'session-1')
+
+    resolveFirst?.()
+    await vi.waitFor(() => {
+      expect(mockState.ingest).toHaveBeenCalledTimes(2)
+    })
+
+    expect(mockState.ingest).toHaveBeenNthCalledWith(2, 'second', expect.any(Object), 'session-1')
+    expect(maxConcurrentIngests).toBe(1)
+
+    peer.close()
+    store.dispose()
+  })
 })

@@ -598,16 +598,13 @@ export const useChatSessionStore = defineStore('chat-session', () => {
       // where the server still has the row and re-creates the local mapping.
       // The reconcile-driven `drainTombstones` retries failed DELETEs.
       await enqueuePersist(() => chatSessionsRepo.addTombstone(currentUserId, cloudChatId))
-      getCloudMapper().deleteChat(cloudChatId).then(
-        async () => {
-          // Server confirmed the delete; reconcile will not see this id again,
-          // so we can drop the tombstone.
-          await enqueuePersist(() => chatSessionsRepo.removeTombstones(currentUserId, [cloudChatId]))
-        },
-        (err) => {
-          console.warn('[chat-sync] DELETE /api/v1/chats failed for', sessionId, errorMessageFrom(err))
-        },
-      )
+      void getCloudMapper().deleteChat(cloudChatId).then(async () => {
+        // Server confirmed the delete; reconcile will not see this id again,
+        // so we can drop the tombstone.
+        await enqueuePersist(() => chatSessionsRepo.removeTombstones(currentUserId, [cloudChatId]))
+      }).catch((err) => {
+        console.warn('[chat-sync] DELETE /api/v1/chats failed for', sessionId, errorMessageFrom(err))
+      })
     }
 
     // If the deleted session was active, pick another for the same

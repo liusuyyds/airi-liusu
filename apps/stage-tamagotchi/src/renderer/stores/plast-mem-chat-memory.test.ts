@@ -34,6 +34,10 @@ const hooks = vi.hoisted(() => ({
   chatTurnComplete: [] as ChatTurnCompleteHook[],
 }))
 
+const contextStoreMock = vi.hoisted(() => ({
+  ingestContextMessage: vi.fn(),
+}))
+
 const invokeMocks = vi.hoisted(() => ({
   acquireChatBridge: vi.fn(async (_payload?: unknown) => ({ acquired: true, activeOwnerId: 'owner-1' })),
   checkHealth: vi.fn(async (_payload?: unknown) => ({ databaseOk: true, enabled: true })),
@@ -71,19 +75,25 @@ vi.mock('@proj-airi/stage-ui/stores/chat', () => ({
   useChatOrchestratorStore: () => ({
     onBeforeMessageComposed: (hook: BeforeMessageComposedHook) => {
       hooks.beforeMessageComposed.push(hook)
-      return () => {}
+      return () => {
+        const index = hooks.beforeMessageComposed.indexOf(hook)
+        if (index >= 0)
+          hooks.beforeMessageComposed.splice(index, 1)
+      }
     },
     onChatTurnComplete: (hook: ChatTurnCompleteHook) => {
       hooks.chatTurnComplete.push(hook)
-      return () => {}
+      return () => {
+        const index = hooks.chatTurnComplete.indexOf(hook)
+        if (index >= 0)
+          hooks.chatTurnComplete.splice(index, 1)
+      }
     },
   }),
 }))
 
 vi.mock('@proj-airi/stage-ui/stores/chat/context-store', () => ({
-  useChatContextStore: () => ({
-    ingestContextMessage: vi.fn(),
-  }),
+  useChatContextStore: () => contextStoreMock,
 }))
 
 vi.mock('@proj-airi/stage-ui/stores/modules/airi-card', () => ({
@@ -105,6 +115,7 @@ describe('usePlastMemChatMemoryStore', async () => {
     hooks.beforeMessageComposed.length = 0
     hooks.chatTurnComplete.length = 0
     activeCardRef = ref({ name: 'CardName', nickname: 'CardNickname' })
+    contextStoreMock.ingestContextMessage.mockClear()
 
     for (const mock of Object.values(invokeMocks))
       mock.mockClear()
@@ -220,5 +231,71 @@ describe('usePlastMemChatMemoryStore', async () => {
       content: 'Still the first card.',
       timestamp: 1760000001000,
     })
+  })
+
+  /**
+   * @example
+   * const initializePromise = store.initialize()
+   * store.dispose()
+   * resolveAcquire({ acquired: true })
+   * await initializePromise
+   * expect(invokeMocks.releaseChatBridge).toHaveBeenCalledOnce()
+   */
+  it('releases a stale lease when dispose wins the initialize race', async () => {
+    let resolveAcquire: ((value: { acquired: true, activeOwnerId: string }) => void) | undefined
+    invokeMocks.acquireChatBridge.mockImplementationOnce(async () => {
+      return await new Promise((resolve) => {
+        resolveAcquire = resolve
+      })
+    })
+    const store = usePlastMemChatMemoryStore()
+
+    const initializePromise = store.initialize()
+    await Promise.resolve()
+    store.dispose()
+    resolveAcquire?.({ acquired: true, activeOwnerId: 'owner-1' })
+    await initializePromise
+
+    expect(invokeMocks.releaseChatBridge).toHaveBeenCalledTimes(1)
+    expect(hooks.beforeMessageComposed).toHaveLength(0)
+    expect(hooks.chatTurnComplete).toHaveLength(0)
+  })
+
+  /**
+   * @example
+   * const recallPromise = hooks.beforeMessageComposed[0]?.('hello', turnContext)
+   * await vi.waitFor(() => expect(invokeMocks.recentMemory).toHaveBeenCalledOnce())
+   * store.dispose()
+   * resolveRecent({ contextBlock: 'stale recent memory' })
+   * await recallPromise
+   * expect(contextStoreMock.ingestContextMessage).not.toHaveBeenCalled()
+   */
+  it('does not write recent memory into context after dispose', async () => {
+    let resolveRecent: ((value: { contextBlock: string, enabled: true, recalled: true }) => void) | undefined
+    invokeMocks.recentMemory.mockImplementationOnce(async () => {
+      return await new Promise((resolve) => {
+        resolveRecent = resolve
+      })
+    })
+    const store = usePlastMemChatMemoryStore()
+    await store.initialize()
+
+    await hooks.beforeMessageComposed[0]?.('hello', {
+      message: {
+        content: 'hello',
+        createdAt: 1760000000000,
+        id: 'turn-recent',
+      },
+    })
+    await vi.waitFor(() => {
+      expect(invokeMocks.recentMemory).toHaveBeenCalledTimes(1)
+    })
+
+    store.dispose()
+    resolveRecent?.({ contextBlock: 'stale recent memory', enabled: true, recalled: true })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(contextStoreMock.ingestContextMessage).not.toHaveBeenCalled()
   })
 })

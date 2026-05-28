@@ -148,7 +148,26 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
   const leaseAcquired = ref(false)
   const recentMemoryRecalled = ref(false)
   let healthCheckTimer: ReturnType<typeof setInterval> | undefined
+  let lifecycleGeneration = 0
+  let pendingReleaseChatBridgePromise: Promise<void> | undefined
   const HEALTH_CHECK_INTERVAL_MSEC = 5 * 60 * 1000
+
+  function isActiveGeneration(generation: number) {
+    return generation === lifecycleGeneration && leaseAcquired.value
+  }
+
+  async function waitForPendingRelease() {
+    const pendingRelease = pendingReleaseChatBridgePromise
+    if (!pendingRelease)
+      return
+
+    try {
+      await pendingRelease
+    }
+    catch {
+      // Release failures are already reported where the promise is created.
+    }
+  }
 
   async function performHealthCheck() {
     try {
@@ -164,7 +183,13 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
   }
 
   async function initialize() {
-    if (initializing.value || disposeFns.value.length > 0)
+    if (initializing.value || leaseAcquired.value || disposeFns.value.length > 0)
+      return
+
+    const generation = lifecycleGeneration + 1
+    lifecycleGeneration = generation
+    await waitForPendingRelease()
+    if (generation !== lifecycleGeneration || initializing.value || leaseAcquired.value || disposeFns.value.length > 0)
       return
 
     initializing.value = true
@@ -173,8 +198,22 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
       lease = await acquireChatBridge({ ownerId })
     }
     catch (error) {
-      initializing.value = false
+      if (generation === lifecycleGeneration)
+        initializing.value = false
       console.warn('[plast-mem-chat-memory] failed to acquire chat bridge lease:', errorMessageFrom(error) ?? String(error))
+      return
+    }
+
+    if (generation !== lifecycleGeneration) {
+      if (lease.acquired) {
+        const releasePromise = releaseChatBridge({ ownerId }).catch((error) => {
+          console.warn('[plast-mem-chat-memory] failed to release stale lease:', errorMessageFrom(error) ?? String(error))
+        }).finally(() => {
+          if (pendingReleaseChatBridgePromise === releasePromise)
+            pendingReleaseChatBridgePromise = undefined
+        })
+        pendingReleaseChatBridgePromise = releasePromise
+      }
       return
     }
 
@@ -191,6 +230,7 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
 
     disposeFns.value.push(
       chatOrchestrator.onBeforeMessageComposed(async (message, context) => {
+        const hookGeneration = lifecycleGeneration
         const query = message.trim()
         const turnKey = turnKeyFromContext(context, query)
         const assistantName = assistantNameFromCard(activeCard.value)
@@ -218,6 +258,8 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
           : Promise.resolve(undefined)
 
         const [recallResult, preRetrieveResult] = await Promise.all([recallPromise, preRetrievePromise])
+        if (!isActiveGeneration(hookGeneration))
+          return
 
         if (recallResult.error) {
           lastRecallAt.value = Date.now()
@@ -256,6 +298,9 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
         if (!recentMemoryRecalled.value) {
           recentMemoryRecalled.value = true
           void recentMemory({ ownerId, limit: 10 }).then((recentResult) => {
+            if (!isActiveGeneration(hookGeneration))
+              return
+
             if (recentResult.contextBlock) {
               chatContext.ingestContextMessage(createChatMemoryContext(
                 PLAST_MEM_RECENT_MEMORY_CONTEXT_ID,
@@ -268,6 +313,7 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
         }
       }),
       chatOrchestrator.onChatTurnComplete(async (chat, context) => {
+        const hookGeneration = lifecycleGeneration
         const userContent = textFromContent(context.message.content)
         const assistantContent = textFromContent(chat.output.content) || chat.outputText.trim()
         const turnKey = turnKeyFromContext(context, userContent)
@@ -303,6 +349,9 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
           return
 
         const result = await ingestChatMessages({ messages, ownerId })
+        if (!isActiveGeneration(hookGeneration))
+          return
+
         lastIngestAt.value = Date.now()
         lastIngestMessageCount.value = messages.length
         if (result.error) {
@@ -319,19 +368,36 @@ export const usePlastMemChatMemoryStore = defineStore('stage-tamagotchi:plast-me
   }
 
   function dispose() {
-    for (const disposeFn of disposeFns.value)
-      disposeFn()
+    lifecycleGeneration += 1
+    initializing.value = false
 
+    const currentDisposeFns = disposeFns.value
     disposeFns.value = []
+    for (const disposeFn of currentDisposeFns) {
+      try {
+        disposeFn()
+      }
+      catch (error) {
+        console.warn('[plast-mem-chat-memory] dispose hook failed:', errorMessageFrom(error) ?? String(error))
+      }
+    }
+
     if (healthCheckTimer) {
       clearInterval(healthCheckTimer)
       healthCheckTimer = undefined
     }
+    recentMemoryRecalled.value = false
+    assistantNameByTurnKey.clear()
+    recentHookSignatures.clear()
     if (leaseAcquired.value) {
       leaseAcquired.value = false
-      void releaseChatBridge({ ownerId }).catch((error) => {
+      const releasePromise = releaseChatBridge({ ownerId }).catch((error) => {
         console.warn('[plast-mem-chat-memory] failed to release lease:', error)
+      }).finally(() => {
+        if (pendingReleaseChatBridgePromise === releasePromise)
+          pendingReleaseChatBridgePromise = undefined
       })
+      pendingReleaseChatBridgePromise = releasePromise
     }
   }
 

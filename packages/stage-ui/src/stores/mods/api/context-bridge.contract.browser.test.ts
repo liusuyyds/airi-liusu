@@ -634,4 +634,61 @@ describe('context bridge contract', () => {
 
     await store.dispose()
   })
+
+  // ROOT CAUSE:
+  //
+  // Token hooks were cloning the full stream context on every chunk.
+  // Long responses paid that deep-clone cost repeatedly even though the stream context stays
+  // stable for the lifetime of a single assistant turn.
+  //
+  // Before patch: each token event hit structuredClone for the whole context again.
+  // After patch: repeated token events reuse one cached snapshot, while assistant-end still
+  // gets a fresh clone so late finalization is preserved.
+  it('reuses token stream context snapshots while keeping final snapshots fresh', async () => {
+    const structuredCloneSpy = vi.spyOn(globalThis, 'structuredClone')
+
+    try {
+      const outgoingStreamMessages = collectChannelMessages<{
+        type: 'token-special' | 'assistant-end'
+        context: { composedMessage: Array<{ role: string, content: string }> }
+      }>(CHAT_STREAM_CHANNEL_NAME)
+
+      const store = useContextBridgeStore()
+      await store.initialize()
+      structuredCloneSpy.mockClear()
+
+      const context = {
+        message: { role: 'user', content: 'ping' },
+        contexts: {},
+        composedMessage: [] as Array<{ role: string, content: string }>,
+      }
+
+      await chatOrchestratorMock.emitTokenSpecialHooks('manual-special', context)
+      await chatOrchestratorMock.emitTokenSpecialHooks('manual-special-2', context)
+
+      await vi.waitFor(() => {
+        expect(outgoingStreamMessages.filter(message => message.type === 'token-special')).toHaveLength(2)
+      })
+
+      expect(structuredCloneSpy).toHaveBeenCalledTimes(1)
+
+      context.composedMessage.push({
+        role: 'assistant',
+        content: 'finalized composition',
+      })
+
+      await chatOrchestratorMock.emitAssistantResponseEndHooks('final answer', context)
+
+      await vi.waitFor(() => {
+        expect(outgoingStreamMessages.find(message => message.type === 'assistant-end')).toBeTruthy()
+      })
+
+      expect(outgoingStreamMessages.find(message => message.type === 'assistant-end')?.context.composedMessage).toHaveLength(1)
+
+      await store.dispose()
+    }
+    finally {
+      structuredCloneSpy.mockRestore()
+    }
+  })
 })

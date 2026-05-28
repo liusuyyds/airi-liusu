@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {
+  PluginHostModuleSummary,
   PluginHostSessionSummary,
   PluginManifestSummary,
 } from '@proj-airi/stage-ui/stores/devtools/plugin-host-debug'
@@ -45,6 +46,17 @@ const readyCapabilitiesCount = computed(() => {
   return store.capabilities.filter(capability => capability.state === 'ready').length
 })
 
+const inspectedModules = computed(() => {
+  return store.modules
+    .slice()
+    .sort((left, right) => {
+      if (left.updatedAt !== right.updatedAt)
+        return right.updatedAt - left.updatedAt
+
+      return left.moduleId.localeCompare(right.moduleId)
+    })
+})
+
 function chipClasses(theme: 'neutral' | 'emerald' | 'amber') {
   if (theme === 'emerald') {
     return [
@@ -86,6 +98,18 @@ function phaseChipTheme(phase: string) {
   if (phase === 'loading' || phase === 'authenticating' || phase === 'preparing')
     return 'amber'
   return 'neutral'
+}
+
+function moduleStateChipTheme(state: PluginHostModuleSummary['state']) {
+  if (state === 'active')
+    return 'emerald'
+  if (state === 'degraded')
+    return 'amber'
+  return 'neutral'
+}
+
+function formatTimestamp(value: number) {
+  return new Date(value).toLocaleString()
 }
 
 async function refresh() {
@@ -224,6 +248,14 @@ onMounted(async () => {
         </div>
         <div :class="['text-2xl', 'font-semibold']">
           {{ store.kits.length }}
+        </div>
+      </div>
+      <div :class="['rounded-xl', 'bg-neutral-100', 'p-3', 'dark:bg-neutral-900/70']">
+        <div :class="['text-xs', 'uppercase', 'opacity-70']">
+          Modules
+        </div>
+        <div :class="['text-2xl', 'font-semibold']">
+          {{ store.modules.length }}
         </div>
       </div>
     </div>
@@ -435,6 +467,45 @@ onMounted(async () => {
     </Section>
 
     <Section
+      title="Modules"
+      icon="i-solar:widget-5-bold-duotone"
+      inner-class="gap-2"
+    >
+      <div
+        v-if="inspectedModules.length === 0"
+        :class="['text-sm', 'opacity-70']"
+      >
+        No modules registered.
+      </div>
+      <div v-else :class="['grid', 'gap-2']">
+        <div
+          v-for="module in inspectedModules"
+          :key="module.moduleId"
+          :class="['rounded-lg', 'border', 'border-neutral-300', 'bg-white/60', 'p-3', 'dark:border-neutral-800', 'dark:bg-neutral-950/60']"
+        >
+          <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-2']">
+            <span :class="['font-mono', 'text-xs', 'sm:text-sm']">{{ module.moduleId }}</span>
+            <span :class="['rounded-full', 'border', 'px-2', 'py-0.5', 'text-xs', ...chipClasses(moduleStateChipTheme(module.state))]">
+              {{ module.state }}
+            </span>
+          </div>
+          <div :class="['mt-2', 'grid', 'gap-2', 'text-xs', 'opacity-80', 'sm:grid-cols-2']">
+            <span>plugin: {{ module.ownerPluginId }}</span>
+            <span>session: {{ module.ownerSessionId }}</span>
+            <span>kit: {{ module.kitId }}</span>
+            <span>module type: {{ module.kitModuleType }}</span>
+            <span>runtime: {{ module.runtime }}</span>
+            <span>revision: {{ module.revision }}</span>
+          </div>
+          <div :class="['mt-2', 'text-xs', 'opacity-70']">
+            updated: {{ formatTimestamp(module.updatedAt) }}
+          </div>
+          <pre :class="['mt-2', 'overflow-auto', 'rounded-lg', 'bg-neutral-100', 'p-2', 'text-xs', 'dark:bg-neutral-900/70']">{{ JSON.stringify(module.config, null, 2) }}</pre>
+        </div>
+      </div>
+    </Section>
+
+    <Section
       title="Capabilities"
       icon="i-solar:widget-2-bold-duotone"
       inner-class="gap-2"
@@ -458,7 +529,7 @@ onMounted(async () => {
             </span>
           </div>
           <div :class="['mt-2', 'text-xs', 'opacity-70']">
-            updated: {{ new Date(capability.updatedAt).toLocaleString() }}
+            updated: {{ formatTimestamp(capability.updatedAt) }}
           </div>
           <pre :class="['mt-2', 'overflow-auto', 'rounded-lg', 'bg-neutral-100', 'p-2', 'text-xs', 'dark:bg-neutral-900/70']">{{ JSON.stringify(capability.metadata ?? {}, null, 2) }}</pre>
         </div>

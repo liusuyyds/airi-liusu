@@ -1,3 +1,4 @@
+import { errorMessageFrom } from '@moeru/std'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
@@ -90,6 +91,7 @@ export const usePluginHostInspectorStore = defineStore('devtools:plugin-host-deb
   const registry = ref<PluginRegistrySnapshot>()
   const sessions = ref<PluginHostSessionSummary[]>([])
   const kits = ref<PluginHostKitSummary[]>([])
+  const modules = ref<PluginHostModuleSummary[]>([])
   const capabilities = ref<PluginCapabilityState[]>([])
   const refreshedAt = ref<number>()
   const error = ref<string>()
@@ -118,6 +120,7 @@ export const usePluginHostInspectorStore = defineStore('devtools:plugin-host-deb
     assignRegistry(snapshot.registry)
     sessions.value = snapshot.sessions
     kits.value = snapshot.kits
+    modules.value = snapshot.modules
     capabilities.value = snapshot.capabilities
     refreshedAt.value = snapshot.refreshedAt
   }
@@ -146,7 +149,7 @@ export const usePluginHostInspectorStore = defineStore('devtools:plugin-host-deb
       return await run(bridge.value)
     }
     catch (cause) {
-      error.value = cause instanceof Error ? cause.message : 'Plugin host debug request failed.'
+      error.value = errorMessageFrom(cause) ?? 'Plugin host debug request failed.'
       throw cause
     }
     finally {
@@ -209,6 +212,7 @@ export const usePluginHostInspectorStore = defineStore('devtools:plugin-host-deb
     registry,
     sessions,
     kits,
+    modules,
     capabilities,
     refreshedAt,
     loading,
