@@ -22,11 +22,18 @@ import { errorMessageFrom } from '@moeru/std'
 import { useElectronEventaInvoke } from '@proj-airi/electron-vueuse'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
-import { Button, Callout, Collapsible, DoubleCheckButton, FieldCheckbox, FieldInput, FieldSelect, Input, Textarea } from '@proj-airi/ui'
+import { Button, Callout, Collapsible, DoubleCheckButton, FieldInput, Textarea } from '@proj-airi/ui'
 import { useDebounceFn } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+
+import MemoryLongTermAboutPanel from './components/memoryLongTermAboutPanel.vue'
+import MemoryLongTermConfigPanel from './components/memoryLongTermConfigPanel.vue'
+import MemoryLongTermDiagnosticsPanel from './components/memoryLongTermDiagnosticsPanel.vue'
+import MemoryLongTermRecentPanel from './components/memoryLongTermRecentPanel.vue'
+import MemoryLongTermRuntimePanel from './components/memoryLongTermRuntimePanel.vue'
+import MemoryLongTermToolsPanel from './components/memoryLongTermToolsPanel.vue'
 
 import {
   defaultElectronPlastMemConfig,
@@ -56,8 +63,6 @@ import {
   electronPlastMemUpdateSemanticMemory,
 } from '../../../../shared/eventa'
 
-type BridgeStatusKind = 'checking' | 'disabled' | 'offline' | 'online'
-type ConnectionCheckKind = 'error' | 'ok' | 'unknown'
 type ConfigSaveSyncMode = 'always' | 'ifStable' | 'never'
 type DetailPanelId = 'config' | 'runtime' | 'diagnostics' | 'tools' | 'recent' | 'health' | 'about'
 type HealthInspectorId = 'conversation-messages' | 'episode-spans' | 'episodic-memories' | 'semantic-memories' | 'active-semantic-memories' | 'pending-reviews'
@@ -97,48 +102,6 @@ const invokeUpdateSemanticMemory = useElectronEventaInvoke(electronPlastMemUpdat
 const invokeDeleteSemanticMemory = useElectronEventaInvoke(electronPlastMemDeleteSemanticMemory)
 const chatSessionStore = useChatSessionStore()
 const { activeCard } = storeToRefs(useAiriCardStore())
-
-const bridgeFacts = [
-  {
-    icon: 'i-solar:verified-check-bold-duotone',
-    titleKey: 'settings.pages.modules.memory-long-term.sections.plast-mem-bridge.facts.reviewed.title',
-    descriptionKey: 'settings.pages.modules.memory-long-term.sections.plast-mem-bridge.facts.reviewed.description',
-  },
-  {
-    icon: 'i-solar:database-bold-duotone',
-    titleKey: 'settings.pages.modules.memory-long-term.sections.plast-mem-bridge.facts.external.title',
-    descriptionKey: 'settings.pages.modules.memory-long-term.sections.plast-mem-bridge.facts.external.description',
-  },
-  {
-    icon: 'i-solar:shield-warning-bold-duotone',
-    titleKey: 'settings.pages.modules.memory-long-term.sections.plast-mem-bridge.facts.low-authority.title',
-    descriptionKey: 'settings.pages.modules.memory-long-term.sections.plast-mem-bridge.facts.low-authority.description',
-  },
-]
-
-const bridgeEnvVars = [
-  'COMPUTER_USE_PLAST_MEM_ENABLED',
-  'COMPUTER_USE_PLAST_MEM_BASE_URL',
-  'COMPUTER_USE_PLAST_MEM_CONVERSATION_ID',
-  'COMPUTER_USE_PLAST_MEM_WORKSPACE_KEY',
-  'COMPUTER_USE_PLAST_MEM_CONTEXT_PRE_RETRIEVE_ENABLED',
-  'COMPUTER_USE_PLAST_MEM_CHAT_RETRIEVE_ENABLED',
-  'COMPUTER_USE_PLAST_MEM_RECENT_MEMORY_ENABLED',
-  'COMPUTER_USE_PLAST_MEM_CHAT_INGEST_ENABLED',
-  'COMPUTER_USE_PLAST_MEM_SEMANTIC_LIMIT',
-  'COMPUTER_USE_PLAST_MEM_MAX_CONTEXT_CHARS',
-  'COMPUTER_USE_PLAST_MEM_TIMEOUT_MS',
-  'DATABASE_URL',
-  'OPENAI_CHAT_BASE_URL',
-  'OPENAI_CHAT_API_KEY',
-  'OPENAI_CHAT_MODEL',
-  'OPENAI_EMBEDDING_BASE_URL',
-  'OPENAI_EMBEDDING_API_KEY',
-  'OPENAI_EMBEDDING_MODEL',
-  'OPENAI_CHAT_MAX_TOKENS',
-  'OPENAI_REQUEST_TIMEOUT_SECONDS',
-  'PLAST_MEM_REVIEW_WINDOW_HOURS',
-]
 
 const reviewWindowOptions = [
   { label: '24h', value: 24 },
@@ -223,68 +186,6 @@ let pendingConfigSyncDraft: ConfigSaveSyncMode = 'never'
 let suppressConfigAutoSave = false
 let configDraftRevision = 0
 
-const statusKind = computed<BridgeStatusKind>(() => {
-  if (!status.value)
-    return 'checking'
-  if (!status.value.enabled)
-    return 'disabled'
-  return status.value.reachable ? 'online' : 'offline'
-})
-
-const statusBadgeClass = computed(() => {
-  const classes: Record<BridgeStatusKind, string> = {
-    checking: 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300',
-    disabled: 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300',
-    offline: 'bg-red-500/15 text-red-700 dark:text-red-300',
-    online: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
-  }
-
-  return classes[statusKind.value]
-})
-
-const mcpServerStatus = computed(() => status.value?.mcpServer?.state)
-const mcpServerLabel = computed(() => {
-  const state = mcpServerStatus.value
-  if (!state)
-    return tn('runtime.mcp.missing')
-
-  return tn(`runtime.mcp.${state}`)
-})
-
-const mcpServerBadgeClass = computed(() => {
-  if (mcpServerStatus.value === 'running')
-    return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-  if (mcpServerStatus.value === 'error')
-    return 'bg-red-500/15 text-red-700 dark:text-red-300'
-
-  return 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300'
-})
-
-const checkedAt = computed(() => {
-  if (!status.value)
-    return '-'
-
-  return new Date(status.value.checkedAt).toLocaleTimeString()
-})
-
-const recallDiagnostics = computed(() => status.value?.chatDiagnostics?.recall ?? { status: 'idle' as const })
-const ingestDiagnostics = computed(() => status.value?.chatDiagnostics?.ingest ?? { status: 'idle' as const })
-const contextDiagnostics = computed(() => status.value?.chatDiagnostics?.contexts ?? [])
-const capturedIngestMessages = computed(() => ingestDiagnostics.value.messages ?? [])
-const hasCapturedIngestMessages = computed(() => capturedIngestMessages.value.length > 0)
-const apiKeyInputType = computed(() => apiKeyVisible.value ? 'text' : 'password')
-const recallStatusBadgeClass = computed(() => chatAttemptBadgeClass(recallDiagnostics.value.status))
-const ingestStatusBadgeClass = computed(() => chatAttemptBadgeClass(ingestDiagnostics.value.status))
-const recallStatusLabel = computed(() => tn(`chat-diagnostics.recall.status.${recallDiagnostics.value.status}`))
-const ingestStatusLabel = computed(() => tn(`chat-diagnostics.ingest.status.${ingestDiagnostics.value.status}`))
-const recallContextPreview = computed(() => recallDiagnostics.value.contextBlock?.trim() ?? '')
-const hasRecallContextPreview = computed(() => recallContextPreview.value.length > 0)
-const advancedConfigSummary = computed(() => [
-  tn('config.fields.conversation-id.label'),
-  tn('config.fields.workspace-key.label'),
-  tn('config.fields.review-window-hours.label'),
-  tn('config.fields.request-timeout-msec.label'),
-].join(' / '))
 const normalizedManualImportMessageLimit = computed(() => Math.max(1, Number(manualImportMessageLimit.value) || 20))
 const manualImportAssistantName = computed(() => assistantNameFromCard(activeCard.value))
 const importableChatMessages = computed(() => chatSessionStore.messages
@@ -293,28 +194,6 @@ const importableChatMessages = computed(() => chatSessionStore.messages
   .slice(-normalizedManualImportMessageLimit.value))
 const selectedSourceMemories = computed(() => recentMemories.value.filter(memory => selectedSourceMemoryIds.value.includes(memory.id)))
 const missingSourceMemoryIds = computed(() => selectedSourceMemoryIds.value.filter(id => !selectedSourceMemories.value.some(memory => memory.id === id)))
-const sidecarState = computed(() => sidecarStatus.value?.state ?? 'stopped')
-const sidecarStatusLabel = computed(() => {
-  if (sidecarStatus.value?.external)
-    return tn('runtime.sidecar.status.external')
-
-  return tn(`runtime.sidecar.status.${sidecarState.value}`)
-})
-const sidecarStatusBadgeClass = computed(() => {
-  if (sidecarStatus.value?.external)
-    return 'bg-sky-500/15 text-sky-700 dark:text-sky-300'
-  if (sidecarState.value === 'running')
-    return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-  if (sidecarState.value === 'starting' || sidecarState.value === 'stopping')
-    return 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
-  if (sidecarState.value === 'error')
-    return 'bg-red-500/15 text-red-700 dark:text-red-300'
-
-  return 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300'
-})
-const sidecarCanStart = computed(() => !['starting', 'running', 'stopping'].includes(sidecarState.value))
-const sidecarCanStop = computed(() => Boolean(sidecarStatus.value?.pid) && ['starting', 'running'].includes(sidecarState.value))
-const sidecarCanRestart = computed(() => !sidecarStatus.value?.external && sidecarState.value !== 'stopping')
 const healthServiceOk = computed(() => Boolean(health.value && !health.value.error))
 const healthCheckedAt = computed(() => health.value?.serverTime ? new Date(health.value.serverTime).toLocaleTimeString() : '-')
 const healthServiceBadgeClass = computed(() => healthStatusBadgeClass(healthServiceOk.value ? true : health.value ? false : undefined))
@@ -338,56 +217,6 @@ const modelHealthError = computed(() => {
 
   return errors.join('\n')
 })
-const modelProvidersConfigured = computed(() => {
-  const currentStatus = status.value
-  if (!currentStatus)
-    return false
-
-  const chatConfigured = (currentStatus.openaiChatBaseUrlConfigured ?? currentStatus.openaiBaseUrlConfigured)
-    && (currentStatus.openaiChatApiKeyConfigured ?? currentStatus.openaiApiKeyConfigured)
-    && Boolean(currentStatus.openaiChatModel)
-  const embeddingConfigured = (currentStatus.openaiEmbeddingBaseUrlConfigured ?? currentStatus.openaiBaseUrlConfigured)
-    && (currentStatus.openaiEmbeddingApiKeyConfigured ?? currentStatus.openaiApiKeyConfigured)
-    && Boolean(currentStatus.openaiEmbeddingModel)
-
-  return chatConfigured && embeddingConfigured
-})
-const connectionChecks = computed<Array<{ detail: string, icon: string, kind: ConnectionCheckKind, label: string }>>(() => [
-  {
-    detail: status.value?.error ?? status.value?.baseUrl ?? tn('config.test.details.service'),
-    icon: 'i-solar:server-square-bold-duotone',
-    kind: status.value ? (status.value.reachable ? 'ok' : 'error') : 'unknown',
-    label: tn('config.test.items.service'),
-  },
-  {
-    detail: health.value?.databaseError ?? (health.value ? tn('config.test.details.database') : tn('config.test.details.waiting')),
-    icon: 'i-solar:database-bold-duotone',
-    kind: health.value ? (health.value.databaseOk ? 'ok' : 'error') : 'unknown',
-    label: tn('config.test.items.database'),
-  },
-  {
-    detail: health.value?.conversationId ?? status.value?.workspaceKey ?? tn('config.test.details.conversation'),
-    icon: 'i-solar:dialog-2-bold-duotone',
-    kind: status.value ? (status.value.conversationIdConfigured ? 'ok' : 'error') : 'unknown',
-    label: tn('config.test.items.conversation'),
-  },
-  {
-    detail: modelHealthError.value || (status.value?.openaiChatModel ?? status.value?.openaiEmbeddingModel ?? tn('config.test.details.models')),
-    icon: 'i-solar:cpu-bold-duotone',
-    kind: modelHealthError.value
-      ? 'error'
-      : status.value
-        ? (modelProvidersConfigured.value ? 'ok' : 'error')
-        : 'unknown',
-    label: tn('config.test.items.models'),
-  },
-  {
-    detail: sidecarStatus.value?.lastError ?? sidecarStatusLabel.value,
-    icon: 'i-solar:restart-bold-duotone',
-    kind: sidecarStatus.value ? (sidecarStatus.value.external || sidecarStatus.value.state === 'running' ? 'ok' : 'error') : 'unknown',
-    label: tn('config.test.items.sidecar'),
-  },
-])
 const detailPanelOptions = computed<Array<{ icon: string, label: string, value: DetailPanelId }>>(() => [
   {
     icon: 'i-solar:tuning-square-bold-duotone',
@@ -425,46 +254,6 @@ const detailPanelOptions = computed<Array<{ icon: string, label: string, value: 
     value: 'about',
   },
 ])
-const recallDetail = computed(() => {
-  if (recallDiagnostics.value.status === 'recalled') {
-    return tn('chat-diagnostics.recall.detail.recalled', {
-      characters: recallDiagnostics.value.contextCharacters ?? 0,
-    })
-  }
-  if (recallDiagnostics.value.status === 'error') {
-    return tn('chat-diagnostics.recall.detail.error', {
-      error: recallDiagnostics.value.error ?? '-',
-    })
-  }
-
-  return tn(`chat-diagnostics.recall.detail.${recallDiagnostics.value.status}`)
-})
-const ingestDetail = computed(() => {
-  if (ingestDiagnostics.value.status === 'accepted') {
-    return tn('chat-diagnostics.ingest.detail.accepted', {
-      count: ingestDiagnostics.value.messageCount ?? 0,
-    })
-  }
-  if (ingestDiagnostics.value.status === 'error') {
-    return tn('chat-diagnostics.ingest.detail.error', {
-      error: ingestDiagnostics.value.error ?? '-',
-    })
-  }
-
-  return tn(`chat-diagnostics.ingest.detail.${ingestDiagnostics.value.status}`)
-})
-
-function chatAttemptBadgeClass(state: string) {
-  if (state === 'recalled' || state === 'accepted')
-    return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-  if (state === 'empty')
-    return 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
-  if (state === 'error' || state === 'rejected')
-    return 'bg-red-500/15 text-red-700 dark:text-red-300'
-
-  return 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300'
-}
-
 function healthStatusBadgeClass(ok: boolean | undefined) {
   if (ok === true)
     return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
@@ -472,19 +261,6 @@ function healthStatusBadgeClass(ok: boolean | undefined) {
     return 'bg-red-500/15 text-red-700 dark:text-red-300'
 
   return 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300'
-}
-
-function connectionCheckBadgeClass(kind: ConnectionCheckKind) {
-  if (kind === 'ok')
-    return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-  if (kind === 'error')
-    return 'bg-red-500/15 text-red-700 dark:text-red-300'
-
-  return 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300'
-}
-
-function connectionCheckStatusLabel(kind: ConnectionCheckKind) {
-  return tn(`config.test.status.${kind}`)
 }
 
 function extractErrorCode(error: string) {
@@ -562,35 +338,6 @@ function toPlastMemChatMessage(message: ChatHistoryItem, assistantName?: string)
     ...(speakerName ? { name: speakerName } : {}),
     ...(createdAt ? { timestamp: createdAt } : {}),
   }
-}
-
-function formatAttemptTime(value: number | undefined) {
-  if (!value)
-    return tn('chat-diagnostics.never')
-
-  return new Date(value).toLocaleTimeString()
-}
-
-function formatCapturedMessageSpeaker(message: ElectronPlastMemChatMessage) {
-  const name = message.name?.trim()
-  if (name)
-    return tn('chat-diagnostics.ingest.capture.speaker-named', { name, role: message.role })
-  if (message.role === 'user')
-    return tn('chat-diagnostics.ingest.capture.role.user')
-  if (message.role === 'assistant')
-    return tn('chat-diagnostics.ingest.capture.role.assistant')
-  return message.role
-}
-
-function formatCapturedMessageTime(value: number | string | undefined) {
-  if (!value)
-    return ''
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime()))
-    return String(value)
-
-  return date.toLocaleTimeString()
 }
 
 function mergeConfigSaveSyncMode(current: ConfigSaveSyncMode, next: ConfigSaveSyncMode): ConfigSaveSyncMode {
@@ -1585,10 +1332,6 @@ watch(() => configDraft.value, () => {
   debouncedAutoSaveConfig()
 }, { deep: true })
 
-function contextSourceLabel(source: string) {
-  return tn(`chat-diagnostics.contexts.source.${source}`)
-}
-
 onMounted(() => {
   void refreshConfig()
   void refreshStatus()
@@ -1716,656 +1459,44 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section
+      <MemoryLongTermConfigPanel
         v-if="activeDetailPanel === 'config'"
-        :class="[
-          'flex',
-          'flex-col',
-          'gap-4',
-          'rounded-lg',
-          'border',
-          'border-neutral-200/70',
-          'bg-white/70',
-          'p-3',
-          'dark:border-neutral-800/70',
-          'dark:bg-neutral-900/30',
-        ]"
-      >
-        <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-3']">
-          <div :class="['flex', 'items-center', 'gap-2']">
-            <div :class="['i-solar:tuning-square-bold-duotone', 'text-xl', 'text-primary-500', 'dark:text-primary-300']" />
-            <h3 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-              {{ tn('config.title') }}
-            </h3>
-          </div>
-          <span
-            :class="[
-              'inline-flex',
-              'items-center',
-              'gap-1.5',
-              'rounded-full',
-              'bg-neutral-500/15',
-              'px-2.5',
-              'py-1',
-              'text-xs',
-              'font-medium',
-              'text-neutral-600',
-              'dark:text-neutral-300',
-            ]"
-          >
-            <span :class="['size-1.5', 'rounded-full', 'bg-current']" />
-            {{ status?.configuredByUser ? tn('config.source.ui') : tn('config.source.env') }}
-          </span>
-        </div>
+        v-model="configDraft"
+        v-model:api-key-visible="apiKeyVisible"
+        v-model:advanced-config-visible="advancedConfigVisible"
+        :configured-by-user="status?.configuredByUser"
+        :config-error="configError"
+        :config-saved-message="configSavedMessage"
+        :is-loading-config="isLoadingConfig"
+        :is-refreshing="isRefreshing"
+        :is-saving-config="isSavingConfig"
+        :is-testing-connection="isTestingConnection"
+        :review-window-options="reviewWindowOptions"
+        @reload="refreshConfig"
+        @save="saveConfig({ refreshAfterSave: true, showSavedMessage: true, syncDraft: 'always' })"
+        @save-and-check="testConnection(true)"
+      />
 
-        <div :class="['grid', 'grid-cols-1', 'gap-3', 'lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)]']">
-          <Callout theme="primary" :label="tn('config.notice.title')">
-            {{ tn('config.notice.description') }}
-          </Callout>
-
-          <div
-            :class="[
-              'grid',
-              'grid-cols-2',
-              'gap-2',
-              'rounded-md',
-              'bg-neutral-100/70',
-              'p-3',
-              'dark:bg-neutral-950/30',
-            ]"
-          >
-            <div :class="['flex', 'items-center', 'gap-2']">
-              <div :class="['i-solar:power-bold-duotone', 'text-lg', configDraft.enabled ? 'text-emerald-500' : 'text-neutral-400']" />
-              <div :class="['min-w-0', 'flex', 'flex-col']">
-                <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
-                  {{ tn('config.quick.enabled') }}
-                </span>
-                <span :class="['truncate', 'text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                  {{ configDraft.enabled ? tn('runtime.status.online') : tn('runtime.status.disabled') }}
-                </span>
-              </div>
-            </div>
-            <div :class="['flex', 'items-center', 'gap-2']">
-              <div :class="['i-solar:restart-bold-duotone', 'text-lg', configDraft.autoStart ? 'text-sky-500' : 'text-neutral-400']" />
-              <div :class="['min-w-0', 'flex', 'flex-col']">
-                <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
-                  {{ tn('config.quick.autostart') }}
-                </span>
-                <span :class="['truncate', 'text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                  {{ configDraft.autoStart ? tn('health.status.ok') : tn('runtime.status.disabled') }}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div :class="['grid', 'grid-cols-1', 'gap-4', 'xl:grid-cols-[minmax(0,1.05fr)_minmax(20rem,0.95fr)]']">
-          <div :class="['flex', 'flex-col', 'gap-4']">
-            <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
-              <div :class="['flex', 'items-start', 'gap-2']">
-                <div :class="['i-solar:plug-circle-bold-duotone', 'mt-0.5', 'text-lg', 'text-primary-500', 'dark:text-primary-300']" />
-                <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
-                  <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                    {{ tn('config.groups.connection.title') }}
-                  </h4>
-                  <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
-                    {{ tn('config.groups.connection.description') }}
-                  </p>
-                </div>
-              </div>
-
-              <div :class="['grid', 'grid-cols-1', 'gap-4', 'lg:grid-cols-2']">
-                <FieldCheckbox
-                  v-model="configDraft.enabled"
-                  :label="tn('config.fields.enabled.label')"
-                  :description="tn('config.fields.enabled.description')"
-                />
-                <FieldCheckbox
-                  v-model="configDraft.autoStart"
-                  :label="tn('config.fields.auto-start.label')"
-                  :description="tn('config.fields.auto-start.description')"
-                />
-                <FieldInput
-                  v-model="configDraft.baseUrl"
-                  :label="tn('config.fields.base-url.label')"
-                  :description="tn('config.fields.base-url.description')"
-                  placeholder="http://127.0.0.1:3000"
-                />
-                <FieldInput
-                  v-model="configDraft.databaseUrl"
-                  :label="tn('config.fields.database-url.label')"
-                  :description="tn('config.fields.database-url.description')"
-                  placeholder="postgres://plastmem:plastmem@localhost:5433/plastmem"
-                />
-              </div>
-            </section>
-
-            <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
-              <div :class="['flex', 'items-start', 'gap-2']">
-                <div :class="['i-solar:cpu-bold-duotone', 'mt-0.5', 'text-lg', 'text-primary-500', 'dark:text-primary-300']" />
-                <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
-                  <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                    {{ tn('config.groups.models.title') }}
-                  </h4>
-                  <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
-                    {{ tn('config.groups.models.description') }}
-                  </p>
-                </div>
-              </div>
-
-              <div :class="['grid', 'grid-cols-1', 'gap-4', '2xl:grid-cols-2']">
-                <div :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'border', 'border-neutral-200/70', 'p-3', 'dark:border-neutral-800/70']">
-                  <div :class="['flex', 'flex-col', 'gap-1']">
-                    <h5 :class="['text-xs', 'font-semibold', 'uppercase', 'text-neutral-500', 'dark:text-neutral-400']">
-                      {{ tn('config.groups.models.chat.title') }}
-                    </h5>
-                    <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
-                      {{ tn('config.groups.models.chat.description') }}
-                    </p>
-                  </div>
-
-                  <div :class="['grid', 'grid-cols-1', 'gap-4', 'lg:grid-cols-2']">
-                    <FieldInput
-                      v-model="configDraft.openaiChatModel"
-                      :label="tn('config.fields.openai-chat-model.label')"
-                      :description="tn('config.fields.openai-chat-model.description')"
-                      placeholder="Qwen/Qwen3.5-9B"
-                    />
-                    <FieldInput
-                      v-model="configDraft.openaiChatBaseUrl"
-                      :label="tn('config.fields.openai-chat-base-url.label')"
-                      :description="tn('config.fields.openai-chat-base-url.description')"
-                      placeholder="https://api.z.ai/api/paas/v4/"
-                    />
-
-                    <div :class="['max-w-full', 'lg:col-span-2', '2xl:col-span-1']">
-                      <label :class="['flex', 'flex-col', 'gap-4']">
-                        <div>
-                          <div :class="['flex', 'items-center', 'gap-1', 'text-sm', 'font-medium']">
-                            {{ tn('config.fields.openai-chat-api-key.label') }}
-                          </div>
-                          <div :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']" text-wrap>
-                            {{ tn('config.fields.openai-chat-api-key.description') }}
-                          </div>
-                        </div>
-                        <div :class="['flex', 'items-center', 'gap-2']">
-                          <Input
-                            v-model="configDraft.openaiChatApiKey"
-                            :type="apiKeyInputType"
-                            placeholder="sk-..."
-                          />
-                          <Button
-                            type="button"
-                            variant="secondary-muted"
-                            size="sm"
-                            shape="square"
-                            :icon="apiKeyVisible ? 'i-solar:eye-closed-bold-duotone' : 'i-solar:eye-bold-duotone'"
-                            :aria-label="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
-                            :title="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
-                            @click="apiKeyVisible = !apiKeyVisible"
-                          />
-                        </div>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
-                <div :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'border', 'border-neutral-200/70', 'p-3', 'dark:border-neutral-800/70']">
-                  <div :class="['flex', 'flex-col', 'gap-1']">
-                    <h5 :class="['text-xs', 'font-semibold', 'uppercase', 'text-neutral-500', 'dark:text-neutral-400']">
-                      {{ tn('config.groups.models.embedding.title') }}
-                    </h5>
-                    <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
-                      {{ tn('config.groups.models.embedding.description') }}
-                    </p>
-                  </div>
-
-                  <div :class="['grid', 'grid-cols-1', 'gap-4', 'lg:grid-cols-2']">
-                    <FieldInput
-                      v-model="configDraft.openaiEmbeddingModel"
-                      :label="tn('config.fields.openai-embedding-model.label')"
-                      :description="tn('config.fields.openai-embedding-model.description')"
-                      placeholder="Qwen/Qwen3-Embedding-0.6B"
-                    />
-                    <FieldInput
-                      v-model="configDraft.openaiEmbeddingBaseUrl"
-                      :label="tn('config.fields.openai-embedding-base-url.label')"
-                      :description="tn('config.fields.openai-embedding-base-url.description')"
-                      placeholder="https://api.siliconflow.cn/v1/"
-                    />
-
-                    <div :class="['max-w-full', 'lg:col-span-2', '2xl:col-span-1']">
-                      <label :class="['flex', 'flex-col', 'gap-4']">
-                        <div>
-                          <div :class="['flex', 'items-center', 'gap-1', 'text-sm', 'font-medium']">
-                            {{ tn('config.fields.openai-embedding-api-key.label') }}
-                          </div>
-                          <div :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']" text-wrap>
-                            {{ tn('config.fields.openai-embedding-api-key.description') }}
-                          </div>
-                        </div>
-                        <div :class="['flex', 'items-center', 'gap-2']">
-                          <Input
-                            v-model="configDraft.openaiEmbeddingApiKey"
-                            :type="apiKeyInputType"
-                            placeholder="sk-..."
-                          />
-                          <Button
-                            type="button"
-                            variant="secondary-muted"
-                            size="sm"
-                            shape="square"
-                            :icon="apiKeyVisible ? 'i-solar:eye-closed-bold-duotone' : 'i-solar:eye-bold-duotone'"
-                            :aria-label="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
-                            :title="apiKeyVisible ? tn('config.hide-api-key') : tn('config.show-api-key')"
-                            @click="apiKeyVisible = !apiKeyVisible"
-                          />
-                        </div>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </section>
-          </div>
-
-          <div :class="['flex', 'flex-col', 'gap-4']">
-            <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
-              <div :class="['flex', 'items-start', 'gap-2']">
-                <div :class="['i-solar:chat-round-like-bold-duotone', 'mt-0.5', 'text-lg', 'text-primary-500', 'dark:text-primary-300']" />
-                <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
-                  <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                    {{ tn('config.groups.behavior.title') }}
-                  </h4>
-                  <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
-                    {{ tn('config.groups.behavior.description') }}
-                  </p>
-                </div>
-              </div>
-
-              <div :class="['grid', 'grid-cols-1', 'gap-3']">
-                <FieldCheckbox
-                  v-model="configDraft.enableContextPreRetrieve"
-                  :label="tn('config.fields.enable-context-pre-retrieve.label')"
-                  :description="tn('config.fields.enable-context-pre-retrieve.description')"
-                />
-                <FieldCheckbox
-                  v-model="configDraft.enableChatRetrieve"
-                  :label="tn('config.fields.enable-chat-retrieve.label')"
-                  :description="tn('config.fields.enable-chat-retrieve.description')"
-                />
-                <FieldCheckbox
-                  v-model="configDraft.enableRecentMemory"
-                  :label="tn('config.fields.enable-recent-memory.label')"
-                  :description="tn('config.fields.enable-recent-memory.description')"
-                />
-                <FieldCheckbox
-                  v-model="configDraft.enableChatIngest"
-                  :label="tn('config.fields.enable-chat-ingest.label')"
-                  :description="tn('config.fields.enable-chat-ingest.description')"
-                />
-              </div>
-            </section>
-
-            <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
-              <div :class="['flex', 'items-start', 'gap-2']">
-                <div :class="['i-solar:settings-minimalistic-bold-duotone', 'mt-0.5', 'text-lg', 'text-primary-500', 'dark:text-primary-300']" />
-                <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
-                  <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                    {{ tn('config.groups.limits.title') }}
-                  </h4>
-                  <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
-                    {{ tn('config.groups.limits.description') }}
-                  </p>
-                </div>
-              </div>
-
-              <div :class="['grid', 'grid-cols-1', 'gap-4', 'sm:grid-cols-2']">
-                <FieldInput
-                  v-model="configDraft.category"
-                  :label="tn('config.fields.category.label')"
-                  :description="tn('config.fields.category.description')"
-                  placeholder=""
-                />
-                <FieldInput
-                  v-model="configDraft.episodicLimit"
-                  type="number"
-                  :label="tn('config.fields.episodic-limit.label')"
-                  :description="tn('config.fields.episodic-limit.description')"
-                  placeholder="4"
-                />
-                <FieldInput
-                  v-model="configDraft.semanticLimit"
-                  type="number"
-                  :label="tn('config.fields.semantic-limit.label')"
-                  :description="tn('config.fields.semantic-limit.description')"
-                  placeholder="8"
-                />
-                <FieldInput
-                  v-model="configDraft.maxContextCharacters"
-                  type="number"
-                  :label="tn('config.fields.max-context-characters.label')"
-                  :description="tn('config.fields.max-context-characters.description')"
-                  placeholder="6000"
-                />
-                <FieldSelect
-                  v-model="configDraft.reviewWindowHours"
-                  :label="tn('config.fields.review-window-hours.label')"
-                  :description="tn('config.fields.review-window-hours.description')"
-                  :options="reviewWindowOptions"
-                />
-              </div>
-            </section>
-
-            <section :class="['rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
-              <Collapsible v-model="advancedConfigVisible">
-                <template #trigger="slotProps">
-                  <button
-                    type="button"
-                    :class="[
-                      'w-full',
-                      'flex',
-                      'items-center',
-                      'justify-between',
-                      'gap-3',
-                      'text-left',
-                      'outline-none',
-                      'transition-all',
-                      'duration-250',
-                      'ease-in-out',
-                    ]"
-                    @click="slotProps.setVisible(!slotProps.visible)"
-                  >
-                    <div :class="['min-w-0', 'flex', 'items-start', 'gap-2']">
-                      <div :class="['i-solar:tuning-square-bold-duotone', 'mt-0.5', 'text-lg', 'text-primary-500', 'dark:text-primary-300']" />
-                      <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
-                        <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                          {{ t('settings.pages.providers.common.section.advanced.title') }}
-                        </h4>
-                        <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
-                          {{ advancedConfigSummary }}
-                        </p>
-                      </div>
-                    </div>
-                    <div
-                      :class="[
-                        'shrink-0',
-                        'text-neutral-400',
-                        'transition-transform',
-                        'duration-250',
-                        'dark:text-neutral-500',
-                        'i-solar:alt-arrow-down-linear',
-                        slotProps.visible ? 'rotate-180' : 'rotate-0',
-                      ]"
-                    />
-                  </button>
-                </template>
-
-                <div :class="['mt-3', 'grid', 'grid-cols-1', 'gap-4', 'sm:grid-cols-2']">
-                  <FieldInput
-                    v-model="configDraft.conversationId"
-                    :label="tn('config.fields.conversation-id.label')"
-                    :description="tn('config.fields.conversation-id.description')"
-                    placeholder="c2cb0334-d2ed-4989-8659-7ead6b5f4d3c"
-                  />
-                  <FieldInput
-                    v-model="configDraft.workspaceKey"
-                    :label="tn('config.fields.workspace-key.label')"
-                    :description="tn('config.fields.workspace-key.description')"
-                    placeholder="airi-main"
-                  />
-                  <FieldInput
-                    v-model="configDraft.requestTimeoutMsec"
-                    type="number"
-                    :label="tn('config.fields.request-timeout-msec.label')"
-                    :description="tn('config.fields.request-timeout-msec.description')"
-                    placeholder="10000"
-                  />
-                  <FieldInput
-                    v-model="configDraft.openaiChatMaxTokens"
-                    type="number"
-                    :label="tn('config.fields.openai-chat-max-tokens.label')"
-                    :description="tn('config.fields.openai-chat-max-tokens.description')"
-                    placeholder="2048"
-                  />
-                  <FieldInput
-                    v-model="configDraft.openaiRequestTimeoutSeconds"
-                    type="number"
-                    :label="tn('config.fields.openai-request-timeout.label')"
-                    :description="tn('config.fields.openai-request-timeout.description')"
-                    placeholder="120"
-                  />
-                </div>
-              </Collapsible>
-            </section>
-          </div>
-        </div>
-
-        <Callout v-if="configError" theme="orange" :label="tn('config.error')">
-          {{ configError }}
-        </Callout>
-        <Callout v-else-if="configSavedMessage" theme="lime" :label="configSavedMessage">
-          {{ tn('config.saved-description') }}
-        </Callout>
-
-        <div :class="['flex', 'flex-wrap', 'items-center', 'justify-end', 'gap-2']">
-          <Button
-            variant="secondary" size="sm" :loading="isLoadingConfig"
-            icon="i-solar:refresh-bold-duotone" :label="tn('config.reload')"
-            @click="refreshConfig"
-          />
-          <Button
-            variant="secondary" size="sm" :loading="isSavingConfig"
-            icon="i-solar:diskette-bold-duotone" :label="tn('config.save')"
-            @click="saveConfig({ refreshAfterSave: true, showSavedMessage: true, syncDraft: 'always' })"
-          />
-          <Button
-            size="sm" :loading="isTestingConnection || isSavingConfig || isRefreshing"
-            icon="i-solar:plug-circle-bold-duotone" :label="tn('config.save-and-check')"
-            @click="testConnection(true)"
-          />
-        </div>
-      </section>
-
-      <section
+      <MemoryLongTermRuntimePanel
         v-else-if="activeDetailPanel === 'runtime'"
-        :class="[
-          'flex',
-          'flex-col',
-          'gap-4',
-          'rounded-lg',
-          'border',
-          'border-neutral-200/70',
-          'bg-white/70',
-          'p-3',
-          'dark:border-neutral-800/70',
-          'dark:bg-neutral-900/30',
-        ]"
-      >
-        <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-3']">
-          <div :class="['flex', 'items-center', 'gap-2']">
-            <div :class="['i-solar:pulse-2-bold-duotone', 'text-xl', 'text-primary-500', 'dark:text-primary-300']" />
-            <h3 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-              {{ tn('runtime.title') }}
-            </h3>
-          </div>
-          <span
-            :class="[
-              'inline-flex',
-              'items-center',
-              'gap-1.5',
-              'rounded-full',
-              'px-2.5',
-              'py-1',
-              'text-xs',
-              'font-medium',
-              statusBadgeClass,
-            ]"
-          >
-            <span :class="['size-1.5', 'rounded-full', 'bg-current']" />
-            {{ tn(`runtime.status.${statusKind}`) }}
-          </span>
-        </div>
-
-        <div :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
-          <div :class="['flex', 'flex-wrap', 'items-start', 'justify-between', 'gap-3']">
-            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
-              <div :class="['flex', 'items-center', 'gap-2']">
-                <div :class="['i-solar:server-square-bold-duotone', 'text-lg', 'text-neutral-500']" />
-                <span :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ tn('runtime.sidecar.title') }}</span>
-              </div>
-              <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
-                {{ tn('runtime.sidecar.description') }}
-              </p>
-            </div>
-            <span :class="['rounded-full', 'px-2', 'py-0.5', 'text-xs', 'font-medium', sidecarStatusBadgeClass]">
-              {{ sidecarStatusLabel }}
-            </span>
-          </div>
-
-          <div :class="['grid', 'grid-cols-1', 'gap-2', 'md:grid-cols-3']">
-            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
-              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.sidecar.pid') }}</span>
-              <span :class="['font-mono', 'text-xs', 'text-neutral-700', 'dark:text-neutral-200']">{{ sidecarStatus?.pid ?? '-' }}</span>
-            </div>
-            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
-              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.sidecar.command') }}</span>
-              <span :class="['truncate', 'font-mono', 'text-xs', 'text-neutral-700', 'dark:text-neutral-200']">{{ sidecarStatus?.command ?? '-' }}</span>
-            </div>
-            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
-              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.sidecar.cwd') }}</span>
-              <span :class="['truncate', 'font-mono', 'text-xs', 'text-neutral-700', 'dark:text-neutral-200']">{{ sidecarStatus?.cwd ?? '-' }}</span>
-            </div>
-          </div>
-
-          <Callout v-if="sidecarError || sidecarStatus?.lastError" theme="orange" :label="tn('runtime.sidecar.error')">
-            {{ sidecarError || sidecarStatus?.lastError }}
-          </Callout>
-
-          <div :class="['flex', 'flex-wrap', 'items-center', 'justify-end', 'gap-2']">
-            <Button
-              variant="secondary" size="sm" :loading="isRefreshingSidecar"
-              icon="i-solar:refresh-bold-duotone" :label="tn('runtime.sidecar.refresh')"
-              @click="refreshSidecarStatus"
-            />
-            <Button
-              variant="secondary" size="sm" :loading="isStartingSidecar || isSavingConfig"
-              :disabled="!sidecarCanStart"
-              icon="i-solar:play-circle-bold-duotone" :label="tn('runtime.sidecar.start')"
-              @click="startSidecar"
-            />
-            <Button
-              variant="secondary" size="sm" :loading="isStoppingSidecar"
-              :disabled="!sidecarCanStop"
-              icon="i-solar:stop-circle-bold-duotone" :label="tn('runtime.sidecar.stop')"
-              @click="stopSidecar"
-            />
-            <Button
-              size="sm" :loading="isRestartingSidecar || isSavingConfig"
-              :disabled="!sidecarCanRestart"
-              icon="i-solar:restart-circle-bold-duotone" :label="tn('runtime.sidecar.restart')"
-              @click="restartSidecar"
-            />
-          </div>
-        </div>
-
-        <div :class="['grid', 'grid-cols-1', 'gap-2', 'md:grid-cols-2']">
-          <div :class="['min-w-0', 'flex', 'items-center', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'dark:bg-neutral-950/30']">
-            <div :class="['i-solar:plug-circle-bold-duotone', 'text-lg', 'text-neutral-500']" />
-            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
-              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.mcp-server') }}</span>
-              <span :class="['w-fit', 'rounded-full', 'px-2', 'py-0.5', 'text-xs', 'font-medium', mcpServerBadgeClass]">{{ mcpServerLabel }}</span>
-            </div>
-          </div>
-
-          <div :class="['min-w-0', 'flex', 'items-center', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'px-3', 'py-2', 'dark:bg-neutral-950/30']">
-            <div :class="['i-solar:folder-with-files-bold-duotone', 'text-lg', 'text-neutral-500']" />
-            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-0.5']">
-              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">{{ tn('runtime.workspace') }}</span>
-              <span :class="['truncate', 'font-mono', 'text-xs', 'text-neutral-700', 'dark:text-neutral-200']">{{ status?.workspaceKey ?? '-' }}</span>
-            </div>
-          </div>
-        </div>
-
-        <Callout v-if="statusError" theme="orange" :label="tn('runtime.status-error')">
-          {{ statusError }}
-        </Callout>
-        <Callout v-else-if="status && !status.mcpServer" theme="orange" :label="tn('runtime.mcp-missing-title')">
-          {{ tn('runtime.mcp-missing') }}
-        </Callout>
-        <Callout v-else-if="status?.error" theme="orange" :label="tn('runtime.service-error')">
-          {{ status.error }}
-        </Callout>
-        <Callout v-else-if="status?.enabled && !status.conversationIdConfigured" theme="orange" :label="tn('runtime.conversation-missing-title')">
-          {{ tn('runtime.conversation-missing') }}
-        </Callout>
-
-        <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
-          <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-3']">
-            <div :class="['flex', 'items-start', 'gap-2']">
-              <div :class="['i-solar:shield-check-bold-duotone', 'mt-0.5', 'text-lg', 'text-primary-500', 'dark:text-primary-300']" />
-              <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
-                <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                  {{ tn('config.test.title') }}
-                </h4>
-                <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
-                  {{ tn('config.test.description') }}
-                </p>
-              </div>
-            </div>
-            <Button
-              size="sm"
-              :loading="isTestingConnection"
-              icon="i-solar:play-circle-bold-duotone"
-              :label="tn('config.test.action')"
-              @click="testConnection(false)"
-            />
-          </div>
-
-          <div :class="['grid', 'grid-cols-1', 'gap-2', 'md:grid-cols-2', 'xl:grid-cols-5']">
-            <div
-              v-for="check in connectionChecks"
-              :key="check.label"
-              :class="[
-                'min-w-0',
-                'flex',
-                'flex-col',
-                'gap-2',
-                'rounded-md',
-                'bg-white/70',
-                'p-2.5',
-                'dark:bg-neutral-900/70',
-              ]"
-            >
-              <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
-                <div :class="['min-w-0', 'flex', 'items-center', 'gap-2']">
-                  <div :class="[check.icon, 'shrink-0', 'text-base', 'text-neutral-500']" />
-                  <span :class="['truncate', 'text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                    {{ check.label }}
-                  </span>
-                </div>
-                <span :class="['shrink-0', 'rounded-full', 'px-2', 'py-0.5', 'text-[10px]', 'font-medium', connectionCheckBadgeClass(check.kind)]">
-                  {{ connectionCheckStatusLabel(check.kind) }}
-                </span>
-              </div>
-              <p :class="['line-clamp-2', 'break-words', 'text-[11px]', 'text-neutral-500', 'leading-4', 'dark:text-neutral-400']">
-                {{ check.detail }}
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-2']">
-          <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
-            {{ tn('runtime.checked-at', { time: checkedAt }) }}
-          </span>
-          <Button
-            variant="secondary" size="sm" :loading="isRefreshing"
-            icon="i-solar:refresh-bold-duotone" :label="tn('runtime.refresh')"
-            @click="refreshStatus"
-          />
-        </div>
-      </section>
+        :health="health"
+        :is-checking-health="isCheckingHealth"
+        :is-refreshing="isRefreshing"
+        :is-refreshing-sidecar="isRefreshingSidecar"
+        :is-restarting-sidecar="isRestartingSidecar"
+        :is-saving-config="isSavingConfig"
+        :is-starting-sidecar="isStartingSidecar"
+        :is-stopping-sidecar="isStoppingSidecar"
+        :status-error="statusError"
+        :sidecar-status="sidecarStatus"
+        :status="status"
+        @refresh-health="refreshHealth(true)"
+        @refresh-status="refreshStatus"
+        @refresh-sidecar="refreshSidecarStatus"
+        @restart-sidecar="restartSidecar"
+        @start-sidecar="startSidecar"
+        @stop-sidecar="stopSidecar"
+      />
 
       <section
         v-else-if="activeDetailPanel === 'health'"
@@ -3272,443 +2403,37 @@ onBeforeUnmount(() => {
         </Callout>
       </section>
 
-      <section
+      <MemoryLongTermDiagnosticsPanel
         v-else-if="activeDetailPanel === 'diagnostics'"
-        :class="[
-          'flex',
-          'flex-col',
-          'gap-4',
-          'rounded-lg',
-          'border',
-          'border-neutral-200/70',
-          'bg-white/70',
-          'p-3',
-          'dark:border-neutral-800/70',
-          'dark:bg-neutral-900/30',
-        ]"
-      >
-        <div :class="['flex', 'items-center', 'gap-2']">
-          <div :class="['i-solar:chat-round-dots-bold-duotone', 'text-xl', 'text-primary-500', 'dark:text-primary-300']" />
-          <h3 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-            {{ tn('chat-diagnostics.title') }}
-          </h3>
-        </div>
+        :status="status"
+      />
 
-        <div :class="['grid', 'grid-cols-1', 'gap-3', 'md:grid-cols-2']">
-          <div :class="['min-w-0', 'flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
-            <div :class="['flex', 'items-center', 'justify-between', 'gap-3']">
-              <div :class="['flex', 'items-center', 'gap-2']">
-                <div :class="['i-solar:book-bookmark-bold-duotone', 'text-lg', 'text-neutral-500']" />
-                <span :class="['text-sm', 'font-medium', 'text-neutral-700', 'dark:text-neutral-200']">{{ tn('chat-diagnostics.recall.title') }}</span>
-              </div>
-              <span :class="['rounded-full', 'px-2', 'py-0.5', 'text-xs', 'font-medium', recallStatusBadgeClass]">
-                {{ recallStatusLabel }}
-              </span>
-            </div>
-            <div :class="['flex', 'flex-col', 'gap-1']">
-              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
-                {{ tn('chat-diagnostics.recall.time', { time: formatAttemptTime(recallDiagnostics.at) }) }}
-              </span>
-              <p :class="['break-words', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
-                {{ recallDetail }}
-              </p>
-              <div v-if="hasRecallContextPreview" :class="['mt-2', 'flex', 'flex-col', 'gap-2']">
-                <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
-                  <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
-                    {{ tn('chat-diagnostics.recall.preview') }}
-                  </span>
-                  <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
-                    {{ formatCount(recallContextPreview.length) }}
-                  </span>
-                </div>
-                <pre :class="['max-h-44', 'overflow-auto', 'whitespace-pre-wrap', 'break-words', 'rounded-md', 'bg-white/70', 'p-2', 'font-mono', 'text-[11px]', 'text-neutral-600', 'leading-4', 'dark:bg-neutral-900/70', 'dark:text-neutral-300']">{{ recallContextPreview }}</pre>
-              </div>
-            </div>
-          </div>
-
-          <div :class="['min-w-0', 'flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
-            <div :class="['flex', 'items-center', 'justify-between', 'gap-3']">
-              <div :class="['flex', 'items-center', 'gap-2']">
-                <div :class="['i-solar:database-bold-duotone', 'text-lg', 'text-neutral-500']" />
-                <span :class="['text-sm', 'font-medium', 'text-neutral-700', 'dark:text-neutral-200']">{{ tn('chat-diagnostics.ingest.title') }}</span>
-              </div>
-              <span :class="['rounded-full', 'px-2', 'py-0.5', 'text-xs', 'font-medium', ingestStatusBadgeClass]">
-                {{ ingestStatusLabel }}
-              </span>
-            </div>
-            <div :class="['flex', 'flex-col', 'gap-1']">
-              <span :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
-                {{ tn('chat-diagnostics.ingest.time', { time: formatAttemptTime(ingestDiagnostics.at) }) }}
-              </span>
-              <p :class="['break-words', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
-                {{ ingestDetail }}
-              </p>
-              <div v-if="hasCapturedIngestMessages" :class="['mt-2', 'flex', 'flex-col', 'gap-2']">
-                <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
-                  <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">
-                    {{ tn('chat-diagnostics.ingest.capture.title') }}
-                  </span>
-                  <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
-                    {{ tn('chat-diagnostics.ingest.capture.count', { count: capturedIngestMessages.length }) }}
-                  </span>
-                </div>
-                <div :class="['flex', 'max-h-56', 'flex-col', 'gap-2', 'overflow-auto', 'rounded-md', 'bg-white/70', 'p-2', 'dark:bg-neutral-900/70']">
-                  <div
-                    v-for="(message, index) in capturedIngestMessages"
-                    :key="`${message.role}:${message.timestamp ?? index}:${index}`"
-                    :class="['min-w-0', 'flex', 'flex-col', 'gap-1', 'rounded-md', 'bg-neutral-100/70', 'p-2', 'dark:bg-neutral-950/50']"
-                  >
-                    <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-2']">
-                      <span :class="['text-[11px]', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                        {{ formatCapturedMessageSpeaker(message) }}
-                      </span>
-                      <span v-if="message.timestamp" :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
-                        {{ formatCapturedMessageTime(message.timestamp) }}
-                      </span>
-                    </div>
-                    <p :class="['whitespace-pre-wrap', 'break-words', 'text-[11px]', 'text-neutral-600', 'leading-4', 'dark:text-neutral-300']">
-                      {{ message.content }}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
-          <div :class="['flex', 'items-center', 'justify-between', 'gap-3']">
-            <div :class="['flex', 'items-center', 'gap-2']">
-              <div :class="['i-solar:layers-minimalistic-bold-duotone', 'text-lg', 'text-neutral-500']" />
-              <span :class="['text-sm', 'font-medium', 'text-neutral-700', 'dark:text-neutral-200']">
-                {{ tn('chat-diagnostics.contexts.title') }}
-              </span>
-            </div>
-            <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
-              {{ formatCount(contextDiagnostics.length) }}
-            </span>
-          </div>
-
-          <div v-if="contextDiagnostics.length === 0" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
-            {{ tn('chat-diagnostics.contexts.empty') }}
-          </div>
-
-          <div v-else :class="['grid', 'grid-cols-1', 'gap-2', 'xl:grid-cols-3']">
-            <div
-              v-for="context in contextDiagnostics"
-              :key="context.source"
-              :class="['min-w-0', 'flex', 'flex-col', 'gap-2', 'rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']"
-            >
-              <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
-                <span :class="['text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                  {{ contextSourceLabel(context.source) }}
-                </span>
-                <span :class="['rounded-full', 'px-2', 'py-0.5', 'text-[10px]', 'font-medium', chatAttemptBadgeClass(context.status)]">
-                  {{ tn(`chat-diagnostics.recall.status.${context.status}`) }}
-                </span>
-              </div>
-
-              <div :class="['flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
-                <span>{{ tn('chat-diagnostics.contexts.time', { time: formatAttemptTime(context.at) }) }}</span>
-                <span>{{ tn('chat-diagnostics.contexts.characters', { characters: context.contextCharacters ?? 0 }) }}</span>
-                <span v-if="context.queryCharacters != null">{{ tn('chat-diagnostics.contexts.query', { characters: context.queryCharacters }) }}</span>
-              </div>
-
-              <p v-if="context.error" :class="['break-words', 'text-xs', 'text-red-600', 'leading-5', 'dark:text-red-300']">
-                {{ context.error }}
-              </p>
-
-              <pre
-                v-if="context.contextBlock?.trim()"
-                :class="['max-h-36', 'overflow-auto', 'whitespace-pre-wrap', 'break-words', 'rounded-md', 'bg-neutral-100/70', 'p-2', 'font-mono', 'text-[11px]', 'text-neutral-600', 'leading-4', 'dark:bg-neutral-950/50', 'dark:text-neutral-300']"
-              >{{ context.contextBlock.trim() }}</pre>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section
+      <MemoryLongTermToolsPanel
         v-else-if="activeDetailPanel === 'tools'"
-        :class="[
-          'flex',
-          'flex-col',
-          'gap-4',
-          'rounded-lg',
-          'border',
-          'border-neutral-200/70',
-          'bg-white/70',
-          'p-3',
-          'dark:border-neutral-800/70',
-          'dark:bg-neutral-900/30',
-        ]"
-      >
-        <div :class="['flex', 'items-center', 'gap-2']">
-          <div :class="['i-solar:toolbox-bold-duotone', 'text-xl', 'text-primary-500', 'dark:text-primary-300']" />
-          <h3 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-            {{ tn('tools.title') }}
-          </h3>
-        </div>
+        v-model:manual-import-message-limit="manualImportMessageLimit"
+        v-model:preview-query="previewQuery"
+        :importable-chat-messages="importableChatMessages"
+        :is-manual-importing="isManualImporting"
+        :is-previewing-recall="isPreviewingRecall"
+        :manual-import-error="manualImportError"
+        :manual-import-message="manualImportMessage"
+        :preview-error="previewError"
+        :preview-result="previewResult"
+        @import="importRecentChatMessages"
+        @preview="previewMemoryRecall"
+      />
 
-        <div :class="['grid', 'grid-cols-1', 'gap-3', 'xl:grid-cols-2']">
-          <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
-            <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-3']">
-              <div :class="['flex', 'items-start', 'gap-2']">
-                <div :class="['i-solar:import-bold-duotone', 'mt-0.5', 'text-lg', 'text-neutral-500']" />
-                <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
-                  <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                    {{ tn('manual-import.title') }}
-                  </h4>
-                  <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
-                    {{ tn('manual-import.description', { count: importableChatMessages.length }) }}
-                  </p>
-                </div>
-              </div>
-              <Button
-                size="sm"
-                :loading="isManualImporting"
-                icon="i-solar:upload-square-bold-duotone"
-                :label="tn('manual-import.action')"
-                @click="importRecentChatMessages"
-              />
-            </div>
-
-            <FieldInput
-              v-model="manualImportMessageLimit"
-              type="number"
-              :label="tn('manual-import.limit.label')"
-              :description="tn('manual-import.limit.description')"
-              placeholder="20"
-            />
-            <Callout v-if="manualImportError" theme="orange" :label="tn('manual-import.error')">
-              {{ manualImportError }}
-            </Callout>
-            <Callout v-else-if="manualImportMessage" theme="lime" :label="manualImportMessage">
-              {{ tn('manual-import.saved-description') }}
-            </Callout>
-          </section>
-
-          <section :class="['flex', 'flex-col', 'gap-3', 'rounded-md', 'bg-neutral-100/70', 'p-3', 'dark:bg-neutral-950/30']">
-            <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-3']">
-              <div :class="['flex', 'items-start', 'gap-2']">
-                <div :class="['i-solar:magnifer-bold-duotone', 'mt-0.5', 'text-lg', 'text-neutral-500']" />
-                <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
-                  <h4 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                    {{ tn('recall-preview.title') }}
-                  </h4>
-                  <p :class="['text-xs', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
-                    {{ tn('recall-preview.description') }}
-                  </p>
-                </div>
-              </div>
-              <Button
-                size="sm"
-                :loading="isPreviewingRecall"
-                icon="i-solar:eye-bold-duotone"
-                :label="tn('recall-preview.action')"
-                @click="previewMemoryRecall"
-              />
-            </div>
-
-            <FieldInput
-              v-model="previewQuery"
-              :label="tn('recall-preview.query.label')"
-              :description="tn('recall-preview.query.description')"
-              :placeholder="tn('recall-preview.query.placeholder')"
-            />
-            <Callout v-if="previewError" theme="orange" :label="tn('recall-preview.error')">
-              {{ previewError }}
-            </Callout>
-            <div
-              v-if="previewResult"
-              :class="['grid', 'grid-cols-2', 'gap-2']"
-            >
-              <div :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']">
-                <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">{{ tn('recall-preview.semantic') }}</span>
-                <span :class="['block', 'font-mono', 'text-lg', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ formatCount(previewResult.semantic.length) }}</span>
-              </div>
-              <div :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']">
-                <span :class="['text-[10px]', 'font-medium', 'uppercase', 'text-neutral-400', 'dark:text-neutral-500']">{{ tn('recall-preview.episodic') }}</span>
-                <span :class="['block', 'font-mono', 'text-lg', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ formatCount(previewResult.episodic.length) }}</span>
-              </div>
-            </div>
-            <div v-if="previewResult" :class="['flex', 'flex-col', 'gap-2', 'max-h-72', 'overflow-y-auto']">
-              <div
-                v-for="memory in previewResult.semantic"
-                :key="`semantic-${memory.id}`"
-                :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']"
-              >
-                <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
-                  <span :class="['text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ memory.category || tn('semantic-memories.uncategorized') }}</span>
-                  <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">{{ memory.score.toFixed(4) }}</span>
-                </div>
-                <p :class="['mt-1', 'line-clamp-3', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
-                  {{ memory.fact }}
-                </p>
-              </div>
-              <div
-                v-for="memory in previewResult.episodic"
-                :key="`episodic-${memory.id}`"
-                :class="['rounded-md', 'bg-white/70', 'p-2.5', 'dark:bg-neutral-900/70']"
-              >
-                <div :class="['flex', 'items-center', 'justify-between', 'gap-2']">
-                  <span :class="['text-xs', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">{{ memory.title || tn('recent-memories.untitled') }}</span>
-                  <span :class="['font-mono', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">{{ memory.score.toFixed(4) }}</span>
-                </div>
-                <p :class="['mt-1', 'line-clamp-3', 'text-xs', 'text-neutral-600', 'leading-5', 'dark:text-neutral-300']">
-                  {{ memory.content }}
-                </p>
-              </div>
-            </div>
-          </section>
-        </div>
-      </section>
-
-      <section
+      <MemoryLongTermRecentPanel
         v-else-if="activeDetailPanel === 'recent'"
-        :class="[
-          'flex',
-          'flex-col',
-          'gap-4',
-          'rounded-lg',
-          'border',
-          'border-neutral-200/70',
-          'bg-white/70',
-          'p-3',
-          'dark:border-neutral-800/70',
-          'dark:bg-neutral-900/30',
-        ]"
-      >
-        <div :class="['flex', 'flex-wrap', 'items-center', 'justify-between', 'gap-3']">
-          <div :class="['flex', 'items-center', 'gap-2']">
-            <div :class="['i-solar:brain-bold-duotone', 'text-xl', 'text-primary-500', 'dark:text-primary-300']" />
-            <h3 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-              {{ tn('recent-memories.title') }}
-            </h3>
-          </div>
-          <Button
-            variant="secondary" size="sm" :loading="isLoadingRecentMemories"
-            icon="i-solar:refresh-bold-duotone" :label="tn('recent-memories.refresh')"
-            @click="refreshRecentMemories"
-          />
-        </div>
+        :is-loading-recent-memories="isLoadingRecentMemories"
+        :recent-memories="recentMemories"
+        :recent-memories-error="recentMemoriesError"
+        @refresh="refreshRecentMemories"
+      />
 
-        <Callout v-if="recentMemoriesError" theme="orange" :label="tn('recent-memories.error')">
-          {{ recentMemoriesError }}
-        </Callout>
-
-        <div v-if="recentMemories.length === 0 && !recentMemoriesError && !isLoadingRecentMemories" :class="['text-xs', 'text-neutral-500', 'dark:text-neutral-400']">
-          {{ tn('recent-memories.empty') }}
-        </div>
-
-        <div :class="['flex', 'flex-col', 'gap-2', 'max-h-80', 'overflow-y-auto']">
-          <div
-            v-for="memory in recentMemories"
-            :key="memory.id"
-            :class="[
-              'flex',
-              'flex-col',
-              'gap-1.5',
-              'rounded-md',
-              'border',
-              'border-neutral-200/50',
-              'bg-neutral-50/70',
-              'p-2.5',
-              'dark:border-neutral-800/50',
-              'dark:bg-neutral-950/30',
-            ]"
-          >
-            <div :class="['flex', 'items-start', 'justify-between', 'gap-2']">
-              <span :class="['text-sm', 'font-medium', 'text-neutral-700', 'dark:text-neutral-200']">
-                {{ memory.title || tn('recent-memories.untitled') }}
-              </span>
-              <span
-                v-if="memory.classification"
-                :class="[
-                  'shrink-0', 'rounded-full', 'px-1.5', 'py-0.5', 'text-[10px]', 'font-medium',
-                  memory.classification === 'informative'
-                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                    : 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-300',
-                ]"
-              >
-                {{ classificationLabel(memory.classification) }}
-              </span>
-            </div>
-            <p :class="['text-xs', 'text-neutral-500', 'leading-4', 'dark:text-neutral-400', 'line-clamp-3']">
-              {{ memory.content }}
-            </p>
-            <div :class="['flex', 'flex-wrap', 'gap-x-3', 'gap-y-1', 'text-[10px]', 'text-neutral-400', 'dark:text-neutral-500']">
-              <span>{{ tn('recent-memories.created', { time: formatMemoryTime(memory.created_at) }) }}</span>
-              <span v-if="memory.surprise != null && memory.surprise > 0">{{ tn('recent-memories.surprise', { value: memory.surprise.toFixed(2) }) }}</span>
-              <span v-if="memory.consolidated_at">{{ tn('recent-memories.consolidated') }}</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section
+      <MemoryLongTermAboutPanel
         v-else-if="activeDetailPanel === 'about'"
-        :class="[
-          'flex',
-          'flex-col',
-          'gap-4',
-          'rounded-lg',
-          'border',
-          'border-neutral-200/70',
-          'bg-white/70',
-          'p-3',
-          'dark:border-neutral-800/70',
-          'dark:bg-neutral-900/30',
-        ]"
-      >
-        <div :class="['grid', 'grid-cols-1', 'gap-3', 'lg:grid-cols-3']">
-          <div
-            v-for="fact in bridgeFacts"
-            :key="fact.titleKey"
-            :class="[
-              'flex',
-              'gap-3',
-              'rounded-md',
-              'bg-neutral-100/70',
-              'p-3',
-              'dark:bg-neutral-950/30',
-            ]"
-          >
-            <div :class="[fact.icon, 'mt-0.5', 'text-xl', 'text-primary-500', 'dark:text-primary-300']" />
-            <div :class="['min-w-0', 'flex', 'flex-col', 'gap-1']">
-              <h3 :class="['text-sm', 'font-semibold', 'text-neutral-700', 'dark:text-neutral-200']">
-                {{ t(fact.titleKey) }}
-              </h3>
-              <p :class="['text-sm', 'text-neutral-500', 'leading-5', 'dark:text-neutral-400']">
-                {{ t(fact.descriptionKey) }}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div :class="['flex', 'flex-col', 'gap-3']">
-          <h3 :class="['text-sm', 'font-semibold', 'text-neutral-600', 'dark:text-neutral-300']">
-            {{ t('settings.pages.modules.memory-long-term.sections.plast-mem-bridge.env.title') }}
-          </h3>
-          <div :class="['flex', 'flex-wrap', 'gap-2']">
-            <code
-              v-for="envVar in bridgeEnvVars"
-              :key="envVar"
-              :class="[
-                'rounded-md',
-                'bg-neutral-200/70',
-                'px-2',
-                'py-1',
-                'text-xs',
-                'text-neutral-700',
-                'dark:bg-neutral-800/80',
-                'dark:text-neutral-300',
-              ]"
-            >
-              {{ envVar }}
-            </code>
-          </div>
-        </div>
-      </section>
+      />
     </section>
   </div>
 
